@@ -5,7 +5,7 @@
 Found something? Email **info@labyrinth.vision**. Please do not open a public
 issue for anything exploitable; everything else is welcome in the tracker.
 
-There is no bounty programme. There is credit, gratitude, and a fix.
+There is no bounty program. There is credit, gratitude, and a fix.
 
 ## Status, honestly
 
@@ -17,7 +17,7 @@ hold funds you would miss with anything built on it.
 
 ## The threat model, in one table
 
-| Threat | Defence | Where |
+| Threat | Defense | Where |
 |---|---|---|
 | Key theft over the network | There is no network code, enforced by a test that walks the source and a build that loads no DOM types | `test/no-network.test.ts` |
 | Compromised companion sends a valid-but-hostile transaction | The confirmation screen; the vault renders everything and a person approves | `src/keys/psbt.ts` |
@@ -57,7 +57,7 @@ npm test      # 244 tests, including the cross-implementation vectors
 npm run typecheck
 ```
 
-The claims above are tests, not prose: delete a defence and the suite goes
-red. Several were verified by mutation — the change-swap check, the sighash
+The claims above are tests, not prose: delete a defense and the suite goes
+red. Several were verified by mutation. The change-swap check, the sighash
 check, the KDF ceilings, the part-count caps and the approval digest were each
 removed in turn to confirm tests actually fail.

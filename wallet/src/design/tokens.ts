@@ -21,11 +21,11 @@
  *
  * `#050506` rather than `#000000` because true black on OLED turns the panel
  * off, and the boundary between an off pixel and a lit one crawls during a
- * scroll. A single point of grey costs nothing and holds still.
+ * scroll. A single point of gray costs nothing and holds still.
  *
- * ## Why the colour is rationed
+ * ## Why the color is rationed
  *
- * There are exactly five colours in this application that are not a grey: two
+ * There are exactly five colors in this application that are not a gray: two
  * for the assets, three for state. Everything else is warm white on near-black
  * at varying weight. That is not minimalism as a style — it is what makes a
  * red mean something. A wallet where every card has a gradient has no way left
@@ -36,9 +36,9 @@
  *
  * Bitcoin is amber and Monero is a paler gold. They are close enough to be
  * family and far enough apart to tell at a glance in a list — which is the
- * only place they are ever adjacent. Neither is the logo colour. Neither is
+ * only place they are ever adjacent. Neither is the logo color. Neither is
  * saturated enough to fight the typography. The asset is named in words
- * anyway, because colour alone is not an accessible way to say which chain
+ * anyway, because color alone is not an accessible way to say which chain
  * somebody is about to spend from, and the amounts involved make that
  * unusually not-negotiable.
  */
@@ -61,7 +61,7 @@ export const color = {
   rule: 'rgba(242, 238, 231, 0.07)',
   ruleStrong: 'rgba(242, 238, 231, 0.14)',
 
-  /** Warm white. The colour of everything that matters. */
+  /** Warm white. The color of everything that matters. */
   bone: '#F3F0E9',
   /** Secondary text: readable, quieter, still passes contrast on `void`. */
   ash: '#8F8D96',

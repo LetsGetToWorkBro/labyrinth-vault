@@ -53,7 +53,7 @@ character there against 8 bits per byte in binary mode. Base32 costs 8
 characters per 5 bytes but each character is cheap, so the code comes out
 sparser: bigger modules, read from further away, by the mediocre camera on a
 seven-year-old phone. That is the premise of the product, so the wire is
-optimised for it.
+optimized for it.
 
 **Why 400 bytes a frame.** A version-20 QR at error correction M holds roughly
 850 alphanumeric characters. 400 payload bytes is 640 characters of base32
@@ -85,7 +85,7 @@ vault renders what it is about to sign, in full, and a person approves it:
 amounts, destinations, change, fee. The digest protects against noise. The
 person protects against malice. Neither substitutes for the other, and any
 version of this app that hides the details behind a "Sign" button has thrown
-away the only defence that matters.
+away the only defense that matters.
 
 ## Fail-closed, enumerated
 
@@ -127,7 +127,7 @@ ur:crypto-psbt/2-3/lpaoaxcsoscyjnbdzevdhdetaoteurykahae...
 Three pieces sit under it, and all three are transcriptions of somebody else's
 decisions rather than designs of ours:
 
-- **Bytewords** — bytes as a fixed list of 256 four-letter English words, no
+- **Bytewords**. Bytes as a fixed list of 256 four-letter English words, no
   two sharing both first and last letter, so "minimal" style spends two
   characters a byte and stays inside QR's alphanumeric mode.
 - **CBOR**, in a deliberately small subset: unsigned integers, byte strings,

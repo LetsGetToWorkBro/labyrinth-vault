@@ -116,7 +116,7 @@ export function FiatLine({
 }
 
 /**
- * One asset in a list: name, holding, value, and a colour that is doing the
+ * One asset in a list: name, holding, value, and a color that is doing the
  * least work on the row rather than the most.
  */
 export function AssetLine({

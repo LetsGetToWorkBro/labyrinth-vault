@@ -32,9 +32,9 @@
  * they are about to sign, and this device's only job is to say so clearly and
  * then be quiet.
  *
- * There is no timeout on it. A timeout would mean cancelling a transaction
+ * There is no timeout on it. A timeout would mean canceling a transaction
  * because somebody took too long reading a destination, which is the one
- * behaviour this system should never punish.
+ * behavior this system should never punish.
  */
 
 import type { Draft } from './model';

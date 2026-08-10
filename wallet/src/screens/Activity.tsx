@@ -180,7 +180,7 @@ export function TransactionScreen({ navigation, route }: Nav<'Transaction'>) {
               <Gap size={space.section} />
               <Notice title="RECEIVING NEEDS NO SIGNATURE">
                 Nothing was signed for this. An address is public, and money arriving at one is the chain's
-                business rather than this wallet's — which is why receiving works whether or not your vault
+                business rather than this wallet's, which is why receiving works whether or not your vault
                 is anywhere nearby.
               </Notice>
             </>

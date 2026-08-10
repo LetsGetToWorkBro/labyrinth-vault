@@ -17,7 +17,7 @@
  * ## What keeps this from becoming the thing the product exists to prevent
  *
  * The rule the whole system rests on is that a private key never enters the
- * online half. This file is a deliberate, quarantined, labelled exception for
+ * online half. This file is a deliberate, quarantined, labeled exception for
  * a build with no vault, and it is arranged so it cannot quietly stop being
  * one:
  *
@@ -25,7 +25,7 @@
  *     screens' demo controls imports it;
  *   - every path into it is behind `DEMO`, which is a constant in this file;
  *   - the user interface never calls it silently. The control is visible, it
- *     is labelled `STAND-IN VAULT`, and the screen says in plain words that
+ *     is labeled `STAND-IN VAULT`, and the screen says in plain words that
  *     this device is signing for itself because there is no vault here;
  *   - it takes the words as an argument with no default, so no code path picks
  *     up a key by omission.
@@ -63,9 +63,9 @@ export type StandinBehaviour =
  * Deliberately not sharing code with `verifySigned`: the checker and the thing
  * being checked should agree only by both being right.
  */
-export function standInVault(draft: Draft, words: string, behaviour: StandinBehaviour = 'sign'): Uint8Array | null {
+export function standInVault(draft: Draft, words: string, behavior: StandinBehaviour = 'sign'): Uint8Array | null {
   if (!DEMO) return null;
-  if (behaviour === 'silent') return null;
+  if (behavior === 'silent') return null;
   if (draft.asset !== 'BTC') return null;
 
   const original = btc.Transaction.fromPSBT(draft.unsigned, {
@@ -75,7 +75,7 @@ export function standInVault(draft: Draft, words: string, behaviour: StandinBeha
   });
 
   let tx = original;
-  if (behaviour === 'tamper') {
+  if (behavior === 'tamper') {
     /* The attack, exactly: same coins, same amount, same fee, one different
      * destination, and a real signature over all of it. */
     const hostile = new btc.Transaction();

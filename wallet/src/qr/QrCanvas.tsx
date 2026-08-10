@@ -8,7 +8,7 @@
  * compromise — so the rules below are in that order.
  *
  * **The code is white on black, not tinted.** Nothing here is amber. A reader
- * thresholds luminance, and every point of contrast given up to brand colour is
+ * thresholds luminance, and every point of contrast given up to brand color is
  * a point of margin taken from somebody in a dim room. The frame around it is
  * where the design happens.
  *
@@ -99,7 +99,7 @@ export function QrCanvas({ value, size, level = 'M', paper = color.codeLight, in
       <Svg width={size} height={size}>
         <Rect x={0} y={0} width={size} height={size} fill={paper} />
         <Path d={drawing.data} fill={ink} />
-        {/* The ring: one module thick, stroked down the centre of the module
+        {/* The ring: one module thick, stroked down the center of the module
             band so it covers exactly the seven-by-seven pattern's outer row. */}
         {drawing.finders.map((finder, index) => (
           <Rect
@@ -114,7 +114,7 @@ export function QrCanvas({ value, size, level = 'M', paper = color.codeLight, in
             strokeWidth={drawing.unit}
           />
         ))}
-        {/* The pupil: the three-by-three block at the centre. */}
+        {/* The pupil: the three-by-three block at the center. */}
         {drawing.finders.map((finder, index) => (
           <Rect
             key={`pupil-${index}`}

@@ -4,11 +4,11 @@
  * The motif has one job in this product and it is not decoration: it is how a
  * transaction's progress is drawn. A payment here does not have a progress
  * bar, because it is not one process — it is a path that leaves this device,
- * goes somewhere this device cannot see, and comes back. A line travelling
+ * goes somewhere this device cannot see, and comes back. A line traveling
  * inward through a labyrinth says that. A bar filling up says "loading".
  *
  * So the geometry is a single unbroken path, entered at the top, turning
- * inward, ending at the centre. Six stages of a transaction light six stretches
+ * inward, ending at the center. Six stages of a transaction light six stretches
  * of it. When a payment is confirmed the line has reached the middle, and
  * nothing else on the screen has to say so.
  *
@@ -25,7 +25,7 @@
  *
  * This file is pure geometry and no React, which is why `test/geometry.test.ts`
  * can assert the useful properties: the path never doubles back on itself, the
- * turns are all right angles, and it ends near the centre at every size.
+ * turns are all right angles, and it ends near the center at every size.
  */
 
 export type Point = readonly [number, number];
@@ -44,7 +44,7 @@ export function spiral(size: number, gap: number): Point[] {
   let right = size;
   let bottom = size;
 
-  /* The entrance. Top centre, which is where the eye starts and where every
+  /* The entrance. Top center, which is where the eye starts and where every
    * screen that uses this puts the thing that begins the journey. */
   points.push([size / 2, top]);
   points.push([right, top]);
@@ -118,7 +118,7 @@ function round(value: number): number {
 // ---------------------------------------------------------------- the mark
 
 /**
- * The identity glyph: four turns, entered from the top, ending at the centre.
+ * The identity glyph: four turns, entered from the top, ending at the center.
  *
  * Deliberately the same construction as the journey path, at a coarser gap, so
  * the mark in the navigation bar and the animation on a transaction screen are

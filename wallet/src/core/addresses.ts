@@ -24,7 +24,7 @@
  * That the string was not corrupted between one place and another. Nothing
  * else. Clipboard malware substitutes an address that checksums perfectly, and
  * every wallet that has ever lost money this way was, at the moment it lost
- * it, showing a valid address. The defence is a person reading the destination
+ * it, showing a valid address. The defense is a person reading the destination
  * on the vault's screen — a second device, with its own copy of the bytes,
  * that the malware on this one does not control.
  *

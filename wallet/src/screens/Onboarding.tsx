@@ -10,7 +10,7 @@
  *
  * So the four panels are: you have two halves; here is what each does; they
  * never share a key; here is how they speak. No jargon until the fourth, and
- * the only animation is the labyrinth line and the dashes travelling between
+ * the only animation is the labyrinth line and the dashes traveling between
  * two points — which are the two visual ideas the rest of the product is
  * built from, introduced here where they can be explained.
  */
@@ -89,7 +89,7 @@ export function OnboardingScreen({ navigation }: Nav<'Onboarding'>) {
           <Gap size={space.gap} />
           <Body>
             Nothing secret crosses between them, ever. What crosses is a transaction that has not been
-            signed, and then the same transaction after it has been — both of which are things you are
+            signed, and then the same transaction after it has been. Both of them are things you are
             about to publish to the world anyway.
           </Body>
         </Panel>
@@ -101,7 +101,7 @@ export function OnboardingScreen({ navigation }: Nav<'Onboarding'>) {
           <Gap size={space.gap} />
           <Body>
             One screen draws, one camera reads, one direction at a time. There is no pairing, no
-            Bluetooth and no cable — which means there is nothing to intercept and nothing to
+            Bluetooth and no cable, which means there is nothing to intercept and nothing to
             misconfigure.
           </Body>
           <Gap size={space.gap} />

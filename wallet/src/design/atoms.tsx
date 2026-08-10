@@ -120,7 +120,7 @@ export function Press({
  * The primary action. One per screen, at the bottom, full width.
  *
  * Filled in warm white on near-black, which is the strongest thing this
- * palette can say — deliberately stronger than any asset colour, because the
+ * palette can say — deliberately stronger than any asset color, because the
  * most important control on a screen should not be competing with a currency.
  */
 export function Action({
@@ -201,7 +201,7 @@ export function Cell({
 /**
  * The status dot.
  *
- * Three states, and the difference between them is legible without colour:
+ * Three states, and the difference between them is legible without color:
  * `ready` is filled, `offline` is an outline, `working` pulses. A person who
  * cannot tell the green from the amber can still tell a filled circle from a
  * hollow one, and this dot is how the application says whether signing is

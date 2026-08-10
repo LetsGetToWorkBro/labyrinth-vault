@@ -398,7 +398,7 @@ function Review({ onBack }: { onBack: () => void }) {
         <Gap size={space.section} />
         <Notice tone="warn" title="THIS TRANSACTION IS NOT SIGNED">
           This device built it and cannot sign it. Your vault holds the keys, and it will show you the
-          amount, the destination, the fee and the change before anything happens. Read that screen — it
+          amount, the destination, the fee and the change before anything happens. Read that screen. It
           is the one that matters, not this one.
         </Notice>
 
@@ -523,13 +523,13 @@ function Awaiting({ onBack }: { onBack: () => void }) {
       <View style={{ paddingHorizontal: space.gutter }}>
         <Rule />
         <FactRow label="AMOUNT">
-          {draft ? <Amount atoms={draft.amount} asset={draft.asset} size="strong" /> : <Strong>—</Strong>}
+          {draft ? <Amount atoms={draft.amount} asset={draft.asset} size="strong" /> : <Strong>not yet</Strong>}
         </FactRow>
         <FactRow label="DESTINATION">
-          <Mono size={13}>{draft ? elide(draft.recipient, 10, 8) : '—'}</Mono>
+          <Mono size={13}>{draft ? elide(draft.recipient, 10, 8) : 'not yet'}</Mono>
         </FactRow>
         <FactRow label="FEE">
-          {draft ? <Amount atoms={draft.fee} asset={draft.asset} size="strong" /> : <Strong>—</Strong>}
+          {draft ? <Amount atoms={draft.fee} asset={draft.asset} size="strong" /> : <Strong>not yet</Strong>}
         </FactRow>
         <FactRow label="CHANGE" last>
           <Mono size={13}>
@@ -540,7 +540,7 @@ function Awaiting({ onBack }: { onBack: () => void }) {
         <Gap size={space.gap} />
         <Notice title="THIS DEVICE IS NOT PART OF THIS STEP">
           The vault is offline and has no way to tell this wallet what it is showing you. Compare those
-          four things against its screen yourself. If any of them differ, refuse it there — nothing has
+          four things against its screen yourself. If any of them differ, refuse it there. Nothing has
           been signed and nothing can be spent.
         </Notice>
 
@@ -559,7 +559,7 @@ function Awaiting({ onBack }: { onBack: () => void }) {
  *
  * In a build with a vault this is the camera, and the frames arrive the same
  * way they left. There is no vault in this build, so the camera is still
- * offered and a labelled stand-in sits under it — see `demo/standin.ts` for
+ * offered and a labeled stand-in sits under it — see `demo/standin.ts` for
  * why that exists and what keeps it from becoming the thing this product is
  * against.
  */
@@ -610,7 +610,7 @@ function Receiving({ onBack }: { onBack: () => void }) {
         <Gap size={space.step} />
         <Body tone={color.slate}>
           There is no vault to scan here, so this phone can sign for itself with the seed phrase
-          published in BIP84 — the one every wallet tests against, which controls nothing. It is the
+          published in BIP84, the one every wallet tests against, which controls nothing. It is the
           only way these last screens can be walked rather than imagined.
         </Body>
         <Gap size={space.step} />
@@ -857,7 +857,7 @@ function Failed({ onBack }: { onBack: () => void }) {
         <Gap size={space.section} />
         <Notice tone="warn" title={signed ? 'THE TRANSACTION IS STILL GOOD' : 'NOTHING WAS SIGNED'}>
           {signed
-            ? 'It is signed and this device still has it. Try broadcasting again — there is no need to go back to the vault.'
+            ? 'It is signed and this device still has it. Try broadcasting again. There is no need to go back to the vault.'
             : 'No signature came back, so nothing can be spent. Show the codes to the vault again when you are ready.'}
         </Notice>
 

@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { markPath, pathFrom, pathLength, spiral, stageStops } from '../src/design/geometry';
 
 describe('the path', () => {
-  it('starts at the entrance, top centre', () => {
+  it('starts at the entrance, top center', () => {
     const points = spiral(100, 12);
     expect(points[0]).toEqual([50, 0]);
   });
@@ -42,9 +42,9 @@ describe('the path', () => {
     for (const size of [16, 24, 44, 120, 320]) {
       const points = spiral(size, size / 6);
       const end = points[points.length - 1]!;
-      const centre = size / 2;
-      expect(Math.abs(end[0] - centre), `x at size ${size}`).toBeLessThan(size / 4);
-      expect(Math.abs(end[1] - centre), `y at size ${size}`).toBeLessThan(size / 4);
+      const center = size / 2;
+      expect(Math.abs(end[0] - center), `x at size ${size}`).toBeLessThan(size / 4);
+      expect(Math.abs(end[1] - center), `y at size ${size}`).toBeLessThan(size / 4);
     }
   });
 
@@ -81,7 +81,7 @@ describe('measuring it', () => {
 });
 
 describe('where the stages fall along it', () => {
-  it('ends at the centre, exactly', () => {
+  it('ends at the center, exactly', () => {
     const stops = stageStops(6);
     expect(stops[stops.length - 1]).toBe(1);
   });

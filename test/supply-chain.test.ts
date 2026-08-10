@@ -57,7 +57,7 @@ describe('what this project is allowed to depend on', () => {
 
   it('keeps the whole transitive runtime closure inside the same family', () => {
     /* The packages depend on each other (@scure/bip32 uses @noble/curves, the
-     * signer uses micro-packed for serialisation) and all of it is the same
+     * signer uses micro-packed for serialization) and all of it is the same
      * author's audited family. What must never happen silently is the closure
      * growing a stranger: one `npm install left-pad` deep in a dependency and
      * the review surface is no longer what everybody thinks it is. So the

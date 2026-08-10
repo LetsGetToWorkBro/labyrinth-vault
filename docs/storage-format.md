@@ -37,9 +37,9 @@ one at a time, and asserts each flip fails.
 
 ## Decisions, with reasons
 
-**Argon2id (RFC 9106)** because passphrases are guessable and the defence is
+**Argon2id (RFC 9106)** because passphrases are guessable and the defense is
 making each guess cost real memory, which is the resource a GPU farm cannot
-fake. Defaults are 64 MiB, t=3, lanes=1 — RFC 9106's second recommended
+fake. Defaults are 64 MiB, t=3, lanes=1, which is RFC 9106's second recommended
 setting, which lands around a second on decade-old phones. Lanes stay at 1
 because JavaScript runs them sequentially: raising it would cost the owner
 time without costing an attacker anything.

@@ -8,7 +8,7 @@
  *                 a payment moves through the two devices. This is the one
  *                 that matters.
  *   `Link`      — the connection between the halves: two points and the
- *                 distance between them, with light travelling one way at a
+ *                 distance between them, with light traveling one way at a
  *                 time. Not a network cable. A camera looking at a screen.
  *
  * ## What the journey glyph is instead of

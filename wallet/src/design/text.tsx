@@ -23,7 +23,7 @@ import { color, face, tabular, type } from './tokens';
 interface Props {
   children: ReactNode;
     style?: StyleProp<TextStyle> | undefined;
-  /** Override the default colour for this role. */
+  /** Override the default color for this role. */
     tone?: string | undefined;
     numberOfLines?: number | undefined;
   /** Turn on tabular figures. Default true for the big readouts. */

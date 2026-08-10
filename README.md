@@ -9,7 +9,7 @@ your drawer.**
 > derivation, and the transaction reader. They are tested, and that is not the
 > same as being safe to hold your savings.
 >
-> The online half now has a frontend (`wallet/`), and it is a frontend — there
+> The online half now has a frontend (`wallet/`), and it is a frontend: there
 > is no node client behind it, so every number it displays comes from a fixture
 > that it labels as one on screen.
 >
@@ -66,7 +66,7 @@ byte is valid and the money goes to someone else. No checksum catches that. No
 encryption catches that. A person reading the destination catches that.
 
 Any build of this app that hides those details behind a friendly "Sign" button
-has thrown away the only defence it had. The checksum on the wire is there to
+has thrown away the only defense it had. The checksum on the wire is there to
 catch a misread camera frame, and that is all it claims.
 
 There is one thing the vault can do beyond showing you, and it does it: it
@@ -86,12 +86,12 @@ fail-closed rules, and what the threat model does and does not cover.
 
 Early. What exists and is tested:
 
-- **The airgap wire** (`src/airgap/envelope.ts`) — chunking a payload across
+- **The airgap wire** (`src/airgap/envelope.ts`). Chunking a payload across
   many QR frames, reading them back out of order and repeated, and refusing to
   assemble anything that does not match its own digest. 18 tests, most of them
   about the refusing.
 
-- **BC-UR** (`src/airgap/ur.ts`) — the format Sparrow, Electrum, Keystone and
+- **BC-UR** (`src/airgap/ur.ts`). The format Sparrow, Electrum, Keystone and
   Cupcake already animate, so the vault can be pointed at the wallet somebody
   already uses instead of only at ours. Bytewords, a CBOR subset, and the
   fountain code that lets a scan finish even when the camera missed a frame.
@@ -107,13 +107,13 @@ Early. What exists and is tested:
   loop without being told which, and keeps both going, so pointing it at a
   different wallet mid-scan is not a restart.
 
-- **The keys** (`src/keys/`) — Monero seed phrases, addresses and view keys;
+- **The keys** (`src/keys/`). Monero seed phrases, addresses and view keys;
   Bitcoin BIP84 derivation, addresses and watch-only export. Ported from the
   sibling project with their tests, and deliberately not rewritten: the
   derivation there has been checked against the official wallets, and tidying
   it here would throw that away.
 
-- **The confirmation screen's contents** (`src/keys/psbt.ts`) — the part that
+- **The confirmation screen's contents** (`src/keys/psbt.ts`). The part that
   is actually the security. It reads an unsigned transaction and says what it
   does, then signs it or refuses.
 
@@ -132,7 +132,7 @@ Early. What exists and is tested:
   top of this README is checked against the actual source on every run rather
   than trusted to stay true.
 
-- **The sealed vault** (`src/keys/seal.ts`) — what the seed looks like at
+- **The sealed vault** (`src/keys/seal.ts`). What the seed looks like at
   rest: Argon2id (memory-hard, calibrated on the device itself) into
   XChaCha20-Poly1305, with the KDF parameters authenticated alongside the
   ciphertext so a file cannot be talked into weakening itself. Both primitives
@@ -152,16 +152,16 @@ Early. What exists and is tested:
   stay inside the audited noble/scure family. An upgrade is a visible diff,
   never a side effect.
 
-- **One launch gate** (`src/selftest.ts`) — every module that can lose money
+- **One launch gate** (`src/selftest.ts`). Every module that can lose money
   proves itself against outside vectors on the device, at every launch, and
   the rule is that nothing runs if anything fails. See
   [SECURITY.md](SECURITY.md) for the threat model in one table.
 
-- **The online half** (`wallet/`) — Labyrinth Wallet, the everyday app that
+- **The online half** (`wallet/`). Labyrinth Wallet, the everyday app that
   watches the chain, builds the payments, shows them to the vault as QR frames
   and broadcasts what comes back. A native iOS application, and the whole
   interface exists: the send flow end to end, the vault screen, the security
-  centre, and the state that matters most, which is a returned transaction that
+  center, and the state that matters most, which is a returned transaction that
   does not match the one that was approved.
 
   It imports the wire and the address rules from `src/` rather than copying
@@ -176,7 +176,7 @@ Next, in order:
    behind it exists and is tested; what does not exist is the screen.
 2. A real watcher behind the wallet: Electrum servers for Bitcoin, a daemon for
    Monero. The interface it plugs into is written and the fixture behind it is
-   labelled as one.
+   labeled as one.
 3. Monero transaction signing, which needs wallet2's unsigned-set format rather
    than only the transport that carries it.
 

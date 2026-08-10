@@ -1,7 +1,7 @@
 /**
  * Headers, and the status line that is the point of the product.
  *
- * The header is not a navigation bar. It has no centred title and no chevron,
+ * The header is not a navigation bar. It has no centered title and no chevron,
  * because a large title that scrolls under a blurred bar is an iOS convention
  * for content, and these screens are not content — they are an instrument with
  * a name at the top of it. The back affordance is a small mark on the left and

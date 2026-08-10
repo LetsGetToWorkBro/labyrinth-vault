@@ -1,5 +1,5 @@
 /**
- * The vault screen, and the security centre.
+ * The vault screen, and the security center.
  *
  * ## The hardest thing to get right in the product
  *
@@ -18,7 +18,7 @@
  * The one exception is `IN SESSION`, during a handoff, and even that means
  * "codes are on a screen right now" rather than "a link is open".
  *
- * ## The security centre
+ * ## The security center
  *
  * Four statements, in the order somebody would ask them, and each one is a
  * fact about this build rather than a reassurance. The last is the one most
@@ -179,7 +179,7 @@ export function PairScreen({ navigation }: Nav<'Pair'>) {
           <Step
             number="01"
             title="On the vault"
-            body="Open Labyrinth Vault, choose Export Watch-Only, and let it draw its codes. It will show an account key — a public one. It never shows a private key, and there is no screen in it that could."
+            body="Open Labyrinth Vault, choose Export Watch-Only, and let it draw its codes. It will show an account key, a public one. It never shows a private key, and there is no screen in it that could."
           />
           <Step
             number="02"
@@ -232,7 +232,7 @@ function Step({ number, title, body }: { number: string; title: string; body: st
   );
 }
 
-// ---------------------------------------------------------- security centre
+// ---------------------------------------------------------- security center
 
 export function SecurityScreen({ navigation }: Nav<'Security'>) {
   const { vault, now } = useStore();
@@ -258,7 +258,7 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
 
           <Statement label="NETWORK" value="ENABLED" tone={color.warn}>
             This half is online, on purpose. It also runs on a phone with an app store, a browser and
-            several hundred dependencies underneath it. That is not a flaw in the design — it is the
+            several hundred dependencies underneath it. That is not a flaw in the design. It is the
             reason the keys live somewhere else.
           </Statement>
 
@@ -275,7 +275,7 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
           <Notice tone="alarm" title="WHAT THIS CANNOT PROTECT YOU FROM">
             A person who approves a payment on the vault without reading it. The vault renders the amount,
             the destination and the fee precisely so that a compromised wallet cannot pay somebody else
-            quietly — but nothing in either half substitutes for reading that screen.
+            quietly, but nothing in either half substitutes for reading that screen.
           </Notice>
 
           <Gap size={space.section} />

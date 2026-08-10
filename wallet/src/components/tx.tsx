@@ -166,7 +166,7 @@ export function Timeline({
                     ? 'Waiting on the other device'
                     : current
                       ? 'Now'
-                      : '—'}
+                      : 'not yet'}
               </Small>
             </View>
           </View>

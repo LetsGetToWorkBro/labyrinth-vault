@@ -41,7 +41,7 @@
  * ## The comparison is on meaning, not on bytes
  *
  * A signed transaction is not the unsigned one with a signature glued on. The
- * witness appears, the input scripts change, and the serialisation differs
+ * witness appears, the input scripts change, and the serialization differs
  * throughout, so a byte comparison would fail every time and teach everybody
  * to ignore it. What has to be identical is what the transaction *does*: the
  * same inputs spent, the same outputs paid, the same amounts, in the same
@@ -215,7 +215,7 @@ export function digestOf(bytes: Uint8Array): string {
  *
  * Change is marked with its derivation path so the vault can *re-derive* it
  * and check the script matches. It will not take our word for which output is
- * change — see the change-swap defence in `src/keys/psbt.ts` — and the path is
+ * change — see the change-swap defense in `src/keys/psbt.ts` — and the path is
  * what lets it do the check rather than what convinces it.
  */
 export function prepare(params: PrepareParams): Prepared {
@@ -275,7 +275,7 @@ export function prepare(params: PrepareParams): Prepared {
 /**
  * Monero, and what is not finished.
  *
- * Monero's unsigned transaction is `wallet2`'s own serialised set, and this
+ * Monero's unsigned transaction is `wallet2`'s own serialized set, and this
  * repository does not speak it yet — the README says so, in the list of what
  * comes next, and it is still true. What exists is the transport that would
  * carry it (`XMRUNSIGNED` on the wire, animated in BC-UR frames the way

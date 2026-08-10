@@ -93,7 +93,7 @@ describe('what the camera and the clipboard hand over', () => {
 });
 
 describe('paying yourself', () => {
-  it('is recognised, because it is usually a mistake and sometimes not', () => {
+  it('is recognized, because it is usually a mistake and sometimes not', () => {
     expect(isOwnAddress(BTC, [BTC, LEGACY])).toBe(true);
     expect(isOwnAddress(LEGACY, [BTC])).toBe(false);
   });

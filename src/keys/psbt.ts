@@ -143,7 +143,7 @@ export interface PsbtSummary {
   returning: bigint;
   /** Null when any input value is unknown, because then it is unknowable. */
   fee: bigint | null;
-  /** An estimate in sat/vB, and labelled as one: the real size is not known
+  /** An estimate in sat/vB, and labeled as one: the real size is not known
    *  until the signatures exist. */
   feeRate: number | null;
   warnings: PsbtWarning[];
@@ -233,7 +233,7 @@ class OwnScripts {
  * Four hundred public keys is a fraction of a second on a laptop and a visible
  * pause on a seven-year-old phone, which is the device this is for. Describing
  * a transaction happens every time a scan completes, including the scans that
- * get cancelled, so doing this work once per wallet rather than once per look
+ * get canceled, so doing this work once per wallet rather than once per look
  * is the difference between a screen that appears and a screen that hesitates.
  *
  * Weak, so a wallet that is closed takes its derived keys with it rather than
@@ -297,7 +297,7 @@ export interface DescribeOptions {
  * Everything reported as ours has been re-derived and compared here. Anything
  * this function is unsure about is reported as *not* ours, which overstates
  * what is leaving rather than understating it: the failure mode of being
- * cautious is a person seeing a scary number and cancelling, and the failure
+ * cautious is a person seeing a scary number and canceling, and the failure
  * mode of being trusting is a signature.
  */
 export function describePsbt(

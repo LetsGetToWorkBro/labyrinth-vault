@@ -36,8 +36,8 @@ import type { Routes } from './src/nav/routes';
 
 const Stack = createNativeStackNavigator<Routes>();
 
-/** The navigator's own colours, so the space behind a sheet mid-transition is
- *  the same near-black as everything else rather than the system's grey. */
+/** The navigator's own colors, so the space behind a sheet mid-transition is
+ *  the same near-black as everything else rather than the system's gray. */
 const theme: Theme = {
   dark: true,
   colors: {

@@ -131,8 +131,8 @@ export function ReceiveScreen({ navigation, route }: Nav<'Receive'>) {
               <Gap size={space.step} />
               <Body>
                 Ask your vault to show the address at this path. It derives it from the keys it holds; this
-                wallet derives it from a public key. If the two screens disagree, do not use this address —
-                one of the two devices is not showing you the truth.
+                wallet derives it from a public key. If the two screens disagree, do not use this address.
+                One of the two devices is not showing you the truth.
               </Body>
             </>
           ) : null}

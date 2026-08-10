@@ -138,7 +138,7 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
             <Gap size={space.step} />
             <Body>
               Every frame arrived and the payload matches its own digest. Nothing was assembled from parts
-              of two different scans — the collector refuses that outright.
+              of two different scans. The collector refuses that outright.
             </Body>
             <Gap size={space.section} />
             <Action label="CONTINUE" onPress={() => navigation.goBack()} />
@@ -180,7 +180,7 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
             ) : (
               <Notice title="A SCAN EITHER FINISHES OR IT DOES NOT">
                 Frames can arrive out of order and repeat; that is normal and the reader expects it. What
-                cannot happen is a half-assembled payload being accepted — if the digest disagrees, the whole
+                cannot happen is a half-assembled payload being accepted. If the digest disagrees, the whole
                 scan is thrown away and started again.
               </Notice>
             )}
