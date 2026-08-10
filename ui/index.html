@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Labyrinth Vault — interface concept</title>
+<!-- Local only. No fonts, no CDN, no images: the vault runs with its radios off,
+     so the prototype of it has to open from a file:// URL on a plane. -->
+<link rel="stylesheet" href="vault.css">
+</head>
+<body>
+
+<div class="bench">
+
+  <!-- Review surface. Not part of the product: the vault itself has four
+       destinations and no index. -->
+  <nav class="rail">
+    <div class="rail__h">
+      <b>LABYRINTH</b>
+      <span>VAULT · INTERFACE CONCEPT</span>
+      <span style="margin-top:12px;color:rgb(239 234 226 / .28)">← → TO WALK THE DECK</span>
+    </div>
+  </nav>
+
+  <main>
+    <div class="device" data-stage></div>
+  </main>
+
+</div>
+
+<button class="railbtn">INDEX</button>
+
+<script src="vault.js"></script>
+</body>
+</html>
