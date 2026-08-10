@@ -347,7 +347,12 @@ struct ReceivedView: View {
                     }
                     .padding(.horizontal, 24)
                     Spacer()
-                    Lever(title: "READ THE TRANSACTION") { vault.go(.review(Fixtures.tx)) }
+                    /* No lever here on purpose. A completed scan is described
+                     * by the engine the moment the last frame lands, and the
+                     * result decides where it goes — review, or a refusal. A
+                     * button that walked to the review screen would be a route
+                     * into it that never passed the reader. */
+                    Lever(title: "SCAN SOMETHING ELSE") { vault.scanAgain() }
                         .padding(.horizontal, 24)
                         .padding(.bottom, 12)
                 }

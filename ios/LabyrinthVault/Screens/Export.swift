@@ -9,10 +9,19 @@ struct ExportView: View {
     @EnvironmentObject private var vault: Vault
     @State private var revealed = false
 
-    /// STAGED: on device these are the ACCOUNT frames the envelope encoder
-    /// produces from the real zpub (src/keys/bitcoin.ts watch-only export).
-    private var frames: [String] {
-        (1...6).map { "LV1:ACCOUNT:\($0):6:7f21a9c4:\(Fixtures.xpub.prefix(60))F\($0)" }
+    /// The real ACCOUNT frames, from the engine's watch-only export.
+    @State private var frames: [String] = []
+    @State private var zpub = ""
+    @State private var problem: String?
+
+    private func load(_ vault: Vault) {
+        do {
+            let exported = try vault.exportAccount(chain: "btc")
+            frames = exported.frames
+            zpub = exported.account.zpub
+        } catch {
+            problem = error.localizedDescription
+        }
     }
 
     var body: some View {
@@ -57,7 +66,7 @@ struct ExportView: View {
                         }
                         .buttonStyle(.plain)
 
-                        Text(Fixtures.xpub)
+                        Text(zpub)
                             .font(Type.mono(11))
                             .lineSpacing(5)
                             .foregroundStyle(Ink.paperDim)

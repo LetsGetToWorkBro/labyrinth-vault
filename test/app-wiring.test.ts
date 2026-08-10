@@ -437,3 +437,59 @@ describe('the screen model matches the wire, field for field', () => {
     }
   });
 });
+
+describe('Swift calls only functions the engine actually has', () => {
+  /* The third cross-language contract in this file, and the one with the most
+   * room to rot: Swift names host functions as *strings*, so a typo or a
+   * renamed export compiles fine and fails on a phone, at the moment somebody
+   * is trying to sign something. */
+
+  const host = readFileSync('src/bridge/host.ts', 'utf8');
+  const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+
+  /** Every key of the exported `api` object. */
+  const hostFunctions = (() => {
+    const start = host.indexOf('export const api = {');
+    expect(start, 'the host api object moved').toBeGreaterThan(-1);
+    const body = host.slice(start, host.indexOf('\n};', start));
+    return new Set([...body.matchAll(/^  (\w+):\s*guarded\(/gm)].map((m) => m[1]!));
+  })();
+
+  /** Every name Swift passes to call/callVoid/raw. */
+  const swiftCalls = new Set(
+    [...engine.matchAll(/\b(?:call|callVoid|raw)\w*\(\s*"(\w+)"/g)].map((m) => m[1]!),
+  );
+
+  it('found both lists, so a pass means something', () => {
+    expect(hostFunctions.size).toBeGreaterThan(8);
+    expect(swiftCalls.size).toBeGreaterThan(8);
+  });
+
+  it('names nothing the host does not export', () => {
+    const missing = [...swiftCalls].filter((name) => !hostFunctions.has(name)).sort();
+    expect(missing, 'Swift calls these and the engine has no such function').toEqual([]);
+  });
+
+  it('pins the engine contract version on both sides', () => {
+    const hostVersion = /export const HOST_VERSION = (\d+)/.exec(host)?.[1];
+    const swiftVersion = /static let expectedVersion = (\d+)/.exec(engine)?.[1];
+    expect(hostVersion).toBeDefined();
+    expect(swiftVersion, 'Engine.swift does not pin a version').toBe(hostVersion);
+  });
+
+  it('has no path that returns a private key across the bridge', () => {
+    /* The bridge hands out descriptions and signatures. If a function ever
+     * returns key material, it becomes a string in Swift, unwipeable, one
+     * `print` away from a log. */
+    for (const banned of ['privateKey', 'spendSecret', 'viewSecret', 'seedHex', 'entropyHex']) {
+      expect(hostFunctions.has(banned), `${banned} is an engine entry point`).toBe(false);
+      expect(engine, `Engine.swift decodes ${banned}`).not.toMatch(new RegExp(`let ${banned}\\b`));
+    }
+  });
+
+  it('keeps the reveal of recovery words conspicuous on both sides', () => {
+    // It is allowed to exist. It is not allowed to be called something bland.
+    expect(hostFunctions.has('revealBackup')).toBe(true);
+    expect(engine).toMatch(/func revealBackup\(\)/);
+  });
+});

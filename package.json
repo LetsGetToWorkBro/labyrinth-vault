@@ -6,10 +6,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "npm run build:bundle && vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "node scripts/build-bundle.mjs"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   },

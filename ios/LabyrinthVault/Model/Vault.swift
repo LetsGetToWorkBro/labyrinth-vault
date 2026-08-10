@@ -132,6 +132,24 @@ enum Refusal: Equatable {
     /// A fatal code this build does not have a case for. Refuses anyway.
     case unrecognised(String)
 
+    /// Map a fatal warning code from src/keys/psbt.ts onto a screen.
+    ///
+    /// The default is `unrecognised`, and `unrecognised` refuses. A code this
+    /// build has no words for is still a reason to stop, and the one thing
+    /// this initialiser must never do is return nil and let a caller carry on.
+    init(code: String) {
+        switch code {
+        case "output-path-mismatch": self = .changeMismatch
+        case "unknown-input-value": self = .unknowableFee
+        case "unusual-sighash": self = .sighashFlags
+        case "duplicate-input": self = .duplicateInput
+        case "opaque-output": self = .opaqueOutput
+        case "watch-only": self = .noKeys
+        case "unreadable": self = .unreadable
+        default: self = .unrecognised(code)
+        }
+    }
+
     var headline: [String] {
         switch self {
         case .changeMismatch: ["CANNOT", "SIGN"]
@@ -328,8 +346,10 @@ enum Route: Equatable {
     /// transaction can pay several, and each is checked on its own.
     case destination(TxSummary, TxOutput)
     case approve(TxSummary, reviewedDigest: String)
-    case signed(TxSummary)
-    case signedQR(TxSummary)
+    /// The signed result travels with the summary: the frames to show and
+    /// the txid come from the engine, not from a fixture.
+    case signed(TxSummary, Engine.SignReply)
+    case signedQR(TxSummary, Engine.SignReply)
     case refused(Refusal)
     case settings
     case bitcoin
@@ -347,6 +367,129 @@ enum SetupStage: Equatable {
 final class Vault: ObservableObject {
     @Published private(set) var route: Route = .launch
     @Published var setupComplete = false
+    /// The launch gate's verdict. Nothing else runs until this passes.
+    @Published private(set) var checks: [Engine.SelfTestReply.Check] = []
+    @Published private(set) var engineProblem: String?
+    /// Frames gathered so far, for the scanner's progress line.
+    @Published private(set) var scanProgress: (have: Int, total: Int) = (0, 0)
+
+    private var engine: Engine?
+    /// The transaction currently being read, kept so signing uses the same
+    /// bytes the description was made from.
+    private var pendingPsbtHex: String?
+
+    var isUnlocked: Bool { engine?.isUnlocked() ?? false }
+
+    /// A short name for this vault, derived from its own account key rather
+    /// than invented. Two devices holding the same keys show the same id, and
+    /// that is the point: it is how somebody checks they are looking at the
+    /// wallet they think they are.
+    @Published private(set) var vaultID = "•••• •••• ••••"
+    @Published private(set) var fingerprint = "········"
+
+    func exportAccount(chain: String) throws -> Engine.ExportReply {
+        guard let engine else { throw EngineError.bundleMissing }
+        return try engine.exportAccount(chain: chain)
+    }
+
+    /// The recovery words, for the one screen that asks somebody to write them
+    /// down. Nothing caches the result.
+    func revealBackup() throws -> Engine.BackupReply {
+        guard let engine else { throw EngineError.bundleMissing }
+        return try engine.revealBackup()
+    }
+
+    // MARK: - Launch
+
+    /// Load the engine and make it prove itself.
+    ///
+    /// A failure here is terminal by design. There is no "continue anyway":
+    /// a device whose derivation no longer matches the published vectors has
+    /// one honest behaviour, and it is to say so and stop.
+    func boot() {
+        do {
+            let engine = try Engine()
+            self.engine = engine
+            let result = try engine.selfTest()
+            checks = result.checks
+            engineProblem = result.passed ? nil : "The vault failed its own checks."
+        } catch {
+            checks = []
+            engineProblem = error.localizedDescription
+        }
+    }
+
+    var launchPassed: Bool { engineProblem == nil && !checks.isEmpty && checks.allSatisfy(\.ok) }
+
+    // MARK: - The session
+
+    func unlock(passphrase: String, sealedHex: String) -> String? {
+        guard let engine else { return "The vault engine is not loaded." }
+        do {
+            let opened = try engine.unlock(sealedHex: sealedHex, passphrase: passphrase)
+            // Identity from the account key, so it means something.
+            let tail = String(opened.btcAccount.zpub.suffix(12)).uppercased()
+            vaultID = stride(from: 0, to: tail.count, by: 4)
+                .map { i -> String in
+                    let s = tail.index(tail.startIndex, offsetBy: i)
+                    let e = tail.index(s, offsetBy: min(4, tail.count - i))
+                    return String(tail[s..<e])
+                }
+                .joined(separator: " ")
+            fingerprint = String(opened.btcAccount.first.suffix(8)).uppercased()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Called on lock, on backgrounding and on the app switcher. Wipes keys.
+    func lock() {
+        engine?.lock()
+        pendingPsbtHex = nil
+        scanProgress = (0, 0)
+        vaultID = "•••• •••• ••••"
+        fingerprint = "········"
+    }
+
+    // MARK: - Scanning, and what a completed scan becomes
+
+    func scanAgain() {
+        Haptic.tick()
+        engine?.scanReset()
+        pendingPsbtHex = nil
+        scanProgress = (0, 0)
+        go(.scanner)
+    }
+
+    /// Offer one frame from the camera.
+    ///
+    /// When a payload completes, it is described immediately and the result
+    /// decides the route: a refusal goes to the refusal screen and cannot
+    /// reach review at all, which is the property the routes exist to encode.
+    func offer(frame text: String) {
+        guard let engine else { return }
+        guard let reply = try? engine.scan(text) else { return }
+        scanProgress = (reply.have, reply.total)
+        guard let payload = reply.payload else { return }
+
+        pendingPsbtHex = payload
+        do {
+            let summary = try engine.describe(psbtHex: payload)
+            if let code = summary.refusal {
+                Haptic.refuse()
+                go(.refused(Refusal(code: code)))
+            } else {
+                Haptic.tick()
+                go(.review(summary))
+            }
+        } catch {
+            Haptic.refuse()
+            go(.refused(.unreadable))
+        }
+    }
+
+    // MARK: - Signing
 
     /// Every transition is animated the same way: slow, mechanical, settled.
     func go(_ to: Route) {
@@ -355,25 +498,31 @@ final class Vault: ObservableObject {
         }
     }
 
-    /// The only exit from a refusal. Called by the single control on those
-    /// screens; nothing else in the app navigates away from `.refused`.
-    func scanAgain() {
-        Haptic.tick()
-        go(.scanner)
-    }
-
-    /// Signing succeeds only when the digest carried through approval is the
-    /// digest of the summary being signed. In the shipped app this check is
-    /// the bridge's (`signPsbt` takes the shown summary and verifies it); the
-    /// shell enforces the same shape so a future regression cannot route
-    /// around it.
+    /// Sign, quoting the digest of the summary that was on screen.
+    ///
+    /// Two checks, deliberately not one. The shell compares the digest it is
+    /// carrying against the summary it is about to sign, and the engine
+    /// compares that digest against the description it produced. Either alone
+    /// would do on a good day; the point is that a refactor has to defeat
+    /// both.
     func completeSigning(_ tx: TxSummary, reviewedDigest: String) {
         guard reviewedDigest == tx.digest else {
             Haptic.refuse()
             go(.refused(.digestMismatch))
             return
         }
-        Haptic.signed()
-        go(.signed(tx))
+        guard let engine, let psbt = pendingPsbtHex else {
+            Haptic.refuse()
+            go(.refused(.unreadable))
+            return
+        }
+        do {
+            let signed = try engine.sign(psbtHex: psbt, approvedDigest: reviewedDigest)
+            Haptic.signed()
+            go(.signed(tx, signed))
+        } catch {
+            Haptic.refuse()
+            go(.refused(.digestMismatch))
+        }
     }
 }

@@ -122,6 +122,20 @@ export function mnemonicFromEntropy(system: Uint8Array, extra: Uint8Array = new 
   }
 }
 
+/**
+ * The phrase for entropy that was already generated and stored.
+ *
+ * Distinct from `mnemonicFromEntropy`, which *makes* entropy by hashing a
+ * CSPRNG draw. This one takes the 16 bytes BIP39 actually encodes and turns
+ * them into the words, so a vault reopened tomorrow shows the same phrase it
+ * showed today. Feeding stored bytes back through the hashing path instead
+ * would work and would be one indirection nobody could follow.
+ */
+export function mnemonicFromStoredEntropy(entropy: Uint8Array): string {
+  if (entropy.length !== 16) throw new Error('BIP39 entropy for a 12-word phrase is 16 bytes.');
+  return entropyToMnemonic(entropy, wordlist);
+}
+
 /** Whitespace-normalise and checksum-check a typed seed phrase. */
 export function checkMnemonic(text: string): { ok: boolean; words?: string; problem?: string } {
   const words = String(text ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ');

@@ -5,13 +5,13 @@ your drawer.**
 
 > ### Do not put money on this yet
 >
-> There is no app. This repository is the libraries underneath one: the QR
-> wire, the key derivation, and the transaction reader. They are tested, and
-> that is not the same as being safe to hold your savings.
+> The libraries are tested and the app is wired to them, but nothing here has
+> been independently audited and the iOS target has never been compiled — there
+> is no Swift toolchain where it was written. Tested is not the same as safe to
+> hold your savings.
 >
-> Nothing here has been independently audited, and the confirmation screen that
-> the whole design rests on has not been built. Read it, break it, tell us what
-> is wrong with it. Do not trust it with a balance you would miss.
+> Read it, break it, tell us what is wrong with it. Do not trust it with a
+> balance you would miss.
 
 The old phone you stopped using is a computer with a screen, a camera, a
 secure enclave and a battery. Take the SIM out, turn the radios off, install
@@ -161,10 +161,18 @@ Early. What exists and is tested:
   the rule is that nothing runs if anything fails. See
   [SECURITY.md](SECURITY.md) for the threat model in one table.
 
+- **The engine** (`src/bridge/host.ts`, `ios/.../Engine.swift`) — the app does
+  not reimplement any of the above. The TypeScript is compiled to one file and
+  run on the device in JavaScriptCore, so there is exactly one implementation
+  of what a transaction says and it is the one under test. The bundle is
+  rebuilt and driven end to end by `test/bundle.test.ts`: make a vault, unlock,
+  export, read a transaction, sign, lock. See [docs/engine.md](docs/engine.md).
+
 Next, in order:
 
-1. The iOS shell, and the confirmation screen itself. The data behind it exists
-   and is tested; what does not exist is the screen.
+1. Build the iOS target in Xcode. The Swift sources have never been compiled —
+   there is no Swift toolchain where this was written — so that is the first
+   real check on them.
 2. Monero transaction signing, which needs wallet2's unsigned-set format rather
    than only the transport that carries it.
 

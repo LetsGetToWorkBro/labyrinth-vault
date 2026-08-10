@@ -14,8 +14,34 @@ declare module 'node:fs' {
     options: { withFileTypes: true },
   ): { name: string; isDirectory(): boolean }[];
   export function readFileSync(path: string, encoding: 'utf8'): string;
+  /** Without an encoding: the bytes, for hashing and comparing artefacts. */
+  export function readFileSync(path: string): {
+    length: number;
+    equals(other: { length: number }): boolean;
+  };
+}
+
+declare module 'node:crypto' {
+  export function createHash(algorithm: string): {
+    update(data: unknown): { digest(encoding: 'hex'): string };
+  };
+}
+
+declare module 'node:child_process' {
+  export function execFileSync(
+    file: string,
+    args: string[],
+    options?: { stdio?: string },
+  ): unknown;
 }
 
 declare module 'node:path' {
   export function join(...parts: string[]): string;
 }
+
+/**
+ * A monotonic clock, for the one test that measures work avoided rather than
+ * a value returned. `Date.now()` would do, but it moves when the system clock
+ * does and this is a duration.
+ */
+declare const performance: { now(): number };

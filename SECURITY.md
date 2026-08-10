@@ -73,7 +73,7 @@ hold funds you would miss with anything built on it.
 git clone https://github.com/LetsGetToWorkBro/labyrinth-vault
 cd labyrinth-vault
 npm ci        # installs exactly the lockfile, integrity-checked
-npm test      # 317 tests, including the cross-implementation vectors
+npm test      # 339 tests, including the cross-implementation vectors
 npm run typecheck
 ```
 

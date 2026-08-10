@@ -19,6 +19,7 @@
 import { describe, expect, it } from 'vitest';
 import { chooseDegree, chooseFragments, shuffle, Xoshiro } from '../src/airgap/fountain';
 import { cborEncode } from '../src/airgap/cbor';
+import { bytewordsDecode } from '../src/airgap/bytewords';
 import {
   UrCollector,
   UrEncoder,
@@ -256,23 +257,31 @@ describe('our own frames, our own reader', () => {
 
 describe('bounds on a single frame', () => {
   it('refuses an oversized single-part body without doing the work first', () => {
-    /* Timed, and the reason is worth writing down: the cap is a
-     * denial-of-service guard, not a correctness guard. An oversized body
-     * decodes to null either way, because it fails its checksum, so the return
-     * value cannot tell you whether the cap is there at all. The first version
-     * of this test asserted only the null and passed with the cap deleted,
-     * which is a test proving nothing.
+    /* The cap is a denial-of-service guard, not a correctness guard: an
+     * oversized body decodes to null either way, because it fails its
+     * checksum. The return value cannot tell you whether the cap is there —
+     * the first version of this test asserted only the null and passed with
+     * the cap deleted.
      *
-     * The observable difference is the work avoided: measured at ~4000ms
-     * uncapped against sub-millisecond capped. The bound below sits an order of
-     * magnitude clear of both, so it fails loudly if the cap goes and does not
-     * flake on a slow machine.
+     * So the work avoided is measured. An absolute millisecond bound was the
+     * obvious next move and it flaked the moment the suite got busier, so the
+     * comparison is relative instead: the same input, through the capped path
+     * and through the decoder the cap is protecting. Both feel the same
+     * machine, so load cancels out.
      *
      * 'aa' rather than random letters because it is a real minimal pair, so
      * nothing short-circuits early on an unknown word. */
     const huge = 'aa'.repeat(20_000_000);
-    const before = Date.now();
+
+    const cappedStart = performance.now();
     expect(parseUr(`ur:bytes/${huge}`)).toBeNull();
-    expect(Date.now() - before, 'the cap must reject before decoding').toBeLessThan(400);
+    const capped = performance.now() - cappedStart;
+
+    const rawStart = performance.now();
+    expect(bytewordsDecode(huge, 'minimal')).toBeNull();
+    const raw = performance.now() - rawStart;
+
+    expect(raw, 'the unguarded decode should be slow enough to be worth guarding').toBeGreaterThan(100);
+    expect(capped * 20, `capped ${capped.toFixed(1)}ms vs raw ${raw.toFixed(1)}ms`).toBeLessThan(raw);
   });
 });

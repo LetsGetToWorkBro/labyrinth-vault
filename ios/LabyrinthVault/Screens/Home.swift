@@ -56,7 +56,7 @@ struct HomeView: View {
                                 HStack {
                                     Eyebrow("VAULT ID")
                                     Spacer()
-                                    Text(Fixtures.vaultID).font(Type.mono(13)).foregroundStyle(Ink.paper)
+                                    Text(vault.vaultID).font(Type.mono(13)).foregroundStyle(Ink.paper)
                                 }
                                 HStack {
                                     Eyebrow("LAST VERIFIED")

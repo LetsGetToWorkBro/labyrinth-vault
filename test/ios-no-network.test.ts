@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { codeOnly } from './support/source';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -53,7 +54,7 @@ describe('the iOS shell has no network code in it', () => {
 
   for (const { pattern, what } of FORBIDDEN) {
     it(`does not reach for ${what}`, () => {
-      const guilty = files.filter((f) => pattern.test(f.text)).map((f) => f.path);
+      const guilty = files.filter((f) => pattern.test(codeOnly(f.text))).map((f) => f.path);
       expect(guilty, `${what} appears in these files`).toEqual([]);
     });
   }
@@ -62,7 +63,10 @@ describe('the iOS shell has no network code in it', () => {
     /* The refusal screens are load-bearing UI: exactly one action. Guard the
      * words that would appear if someone added a second one. */
     const escapes = /(continue\s*anyway|i\s*understand\s*the\s*risk|override\s*refusal|sign\s*anyway)/i;
-    const guilty = files.filter((f) => escapes.test(f.text)).map((f) => f.path);
+    /* Comments stripped first. A doc comment promising there is no escape
+     * hatch is the documentation working, not the rule breaking, and this
+     * guard has now caught its own prose three times across the suite. */
+    const guilty = files.filter((f) => escapes.test(codeOnly(f.text))).map((f) => f.path);
     expect(guilty, 'a refusal escape hatch appears in these files').toEqual([]);
   });
 });

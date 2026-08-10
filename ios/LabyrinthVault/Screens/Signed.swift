@@ -7,6 +7,7 @@
 import SwiftUI
 
 struct SignedView: View {
+    let result: Engine.SignReply
     @EnvironmentObject private var vault: Vault
     let tx: TxSummary
 
@@ -29,9 +30,9 @@ struct SignedView: View {
                         .padding(.top, 2)
 
                     Hairline(weight: 2, color: Ink.ruleHeavy).padding(.top, 28)
-                    FieldRow(label: "SIGNATURES", value: "\(tx.inputs.filter(\.mine).count) OF \(tx.inputs.count)")
+                    FieldRow(label: "SIGNATURES", value: "\(result.signed) OF \(tx.inputs.count)")
                     FieldRow(label: "SIGHASH", value: "ALL")
-                    FieldRow(label: "TXID", value: String(Fixtures.txid.prefix(16)) + "…")
+                    FieldRow(label: "TXID", value: result.txid.map { String($0.prefix(16)) + "…" } ?? "NOT FINAL")
                     FieldRow(label: "SENT ANYWHERE", value: "NO", tone: .verified)
 
                     Text("Nothing has left this device and nothing will. The vault has no way " +
@@ -44,7 +45,7 @@ struct SignedView: View {
                 }
                 .padding(.horizontal, 24)
                 Spacer()
-                Lever(title: "SHOW TO COMPANION", hint: "QR") { vault.go(.signedQR(tx)) }
+                Lever(title: "SHOW TO COMPANION", hint: "QR") { vault.go(.signedQR(tx, result)) }
                     .padding(.horizontal, 24)
                     .padding(.bottom, 12)
             }
@@ -53,13 +54,17 @@ struct SignedView: View {
 }
 
 struct SignedQRView: View {
+    let result: Engine.SignReply
     @EnvironmentObject private var vault: Vault
     let tx: TxSummary
 
     /// STAGED: on device these are the real TXSIGNED frames from the envelope
     /// encoder in src/airgap/envelope.ts. Twelve frames, same wire format.
     private var frames: [String] {
-        (1...12).map { "LV1:TXSIGNED:\($0):12:9f2a1c04:\(Fixtures.txid)F\($0)" }
+        /* The real frames the engine produced. A signed transaction that
+         * cannot be finalised (someone else still has to sign) has none, and
+         * the screen says so rather than animating something invented. */
+        result.frames ?? []
     }
 
     var body: some View {

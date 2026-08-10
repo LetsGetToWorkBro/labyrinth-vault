@@ -50,7 +50,7 @@ struct SettingsView: View {
 
                         FieldRow(label: "APP VERSION", value: "0.1.0").padding(.top, 22)
                         FieldRow(label: "WIRE", value: "LV1 · BC-UR")
-                        FieldRow(label: "VAULT ID", value: Fixtures.vaultID)
+                        FieldRow(label: "VAULT ID", value: vault.vaultID)
 
                         VStack(alignment: .leading, spacing: 10) {
                             Eyebrow("WHAT IS NOT HERE", color: Ink.paper)
@@ -152,16 +152,23 @@ struct RecoveryView: View {
         }
     }
 
+    /// The words, fetched only when this screen asks for them.
+    ///
+    /// `revealBackup` is the one call that turns a secret into text, and it is
+    /// named that way on both sides of the bridge. Held in @State for as long
+    /// as the screen is up and no longer.
+    @State private var words: [String] = []
+
     private var seedGrid: some View {
         let columns = [GridItem(.flexible(), spacing: 1), GridItem(.flexible(), spacing: 1)]
         return LazyVGrid(columns: columns, spacing: 1) {
-            ForEach(Fixtures.seed.indices, id: \.self) { i in
+            ForEach(words.indices, id: \.self) { i in
                 HStack(spacing: 10) {
                     Text("\(i + 1)")
                         .font(Type.mono(10))
                         .foregroundStyle(Ink.paperGhost)
                         .frame(width: 16, alignment: .leading)
-                    Text(Fixtures.seed[i])
+                    Text(words[i])
                         .font(Type.mono(12.5))
                         .foregroundStyle(Ink.paper)
                     Spacer()

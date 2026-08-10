@@ -45,7 +45,7 @@ struct AirgapView: View {
                         section("BUILD")
                         FieldRow(label: "NETWORK CODE IN BINARY", value: "NONE", tone: .verified)
                         FieldRow(label: "WIRE", value: "LV1 · BC-UR")
-                        FieldRow(label: "VAULT ID", value: Fixtures.vaultID)
+                        FieldRow(label: "VAULT ID", value: vault.vaultID)
 
                         Text("Every reading above is checkable on this phone, in Settings, by you. " +
                              "The vault requests no network permission, so the absence is a fact " +

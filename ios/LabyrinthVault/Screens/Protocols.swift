@@ -21,7 +21,7 @@ struct BitcoinView: View {
 
                         FieldRow(label: "DERIVATION", value: "m/84'/0'/0'")
                         FieldRow(label: "SCRIPT", value: "P2WPKH · NATIVE SEGWIT")
-                        FieldRow(label: "FINGERPRINT", value: Fixtures.fingerprint)
+                        FieldRow(label: "FINGERPRINT", value: vault.fingerprint)
                         FieldRow(label: "ADDRESS GAP SCAN", value: "200")
                         FieldRow(label: "SIGNING", value: "INSTALLED", tone: .verified)
 
