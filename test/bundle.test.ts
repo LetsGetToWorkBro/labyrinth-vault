@@ -20,6 +20,8 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import * as btc from '@scure/btc-signer';
 import { addressAt, openWatch } from '../src/keys/bitcoin';
+import { passphraseToBytes } from '../src/keys/seal';
+import { codeOnly } from './support/source';
 
 const BUNDLE = 'ios/LabyrinthVault/Resources/vault.bundle.js';
 
@@ -57,6 +59,37 @@ describe('the built bundle', () => {
     expect(built).toBe(recorded);
   });
 
+  it('tells Swift the same digest it wrote next to the bundle', () => {
+    /* The app hashes the bundle at launch and compares it against a constant
+     * compiled into the binary. That is only worth something if the constant
+     * is generated from the same build — a hand-edited digest is a launch
+     * check that passes for whatever it is pointed at. */
+    const recorded = readFileSync(`${BUNDLE}.sha256`, 'utf8').trim();
+    const swift = readFileSync('ios/LabyrinthVault/Support/BundleDigest.swift', 'utf8');
+    const declared = /static let sha256 = "([0-9a-f]{64})"/.exec(swift)?.[1];
+    expect(declared, 'BundleDigest.swift declares no digest').toBe(recorded);
+    expect(swift, 'the generated file should say it is generated').toMatch(/Do not edit/);
+  });
+
+  it('checks that digest before it runs a line of the bundle', () => {
+    /* Order is the whole point. Hashing after evaluating would prove the file
+     * was intact right after it had already had its way with the process.
+     *
+     * Comments stripped first, and not as a formality: the first version of
+     * this test failed because the doc comment above the check says the word
+     * "evaluateScript" while explaining that the check comes before it. That
+     * is the fourth time a source guard in this repository has matched the
+     * prose describing the rule instead of the rule. */
+    const engine = codeOnly(readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8'));
+    const compare = engine.indexOf('BundleDigest.sha256');
+    const evaluate = engine.indexOf('evaluateScript');
+    expect(compare, 'Engine.swift never mentions the digest').toBeGreaterThan(-1);
+    expect(evaluate).toBeGreaterThan(-1);
+    expect(compare, 'the digest is checked after the bundle has already run').toBeLessThan(evaluate);
+    // And it must be a refusal, not a log line.
+    expect(engine).toMatch(/guard measured == BundleDigest\.sha256 else \{[\s\S]*?throw/);
+  });
+
   it('builds byte-for-byte the same way twice', () => {
     const before = readFileSync(BUNDLE);
     execFileSync('node', ['scripts/build-bundle.mjs'], { stdio: 'pipe' });
@@ -74,7 +107,7 @@ describe('the built bundle', () => {
 
   it('needs nothing from Node to run', () => {
     // It loaded in a bare context in beforeAll; this asserts the consequence.
-    expect(call(api, 'version')).toEqual({ ok: true, version: 1 });
+    expect(call(api, 'version')).toEqual({ ok: true, version: 2 });
   });
 
   it('passes its own self-test inside the bundle', () => {
@@ -88,11 +121,15 @@ describe('the whole flow, through the bundle', () => {
   const api = loadBundle();
   /** Fixed randomness so the vault is the same one every run. */
   const random = hex(Uint8Array.from({ length: 88 }, (_, i) => (i * 7 + 11) & 0xff));
+  /* The passphrase crosses as bytes, which is what Swift sends: a plain array
+   * of numbers, never a string. `passphraseToBytes` is the only thing allowed
+   * to turn text into these. */
+  const passphrase = [...passphraseToBytes('a passphrase')];
   let sealed = '';
   let zpub = '';
 
   it('makes a vault and hands back only ciphertext', () => {
-    const made = call(api, 'create', random, 'a passphrase', '');
+    const made = call(api, 'create', random, passphrase, '');
     expect(made.ok).toBe(true);
     sealed = made.sealed;
     expect(sealed).toMatch(/^[0-9a-f]+$/);
@@ -108,8 +145,8 @@ describe('the whole flow, through the bundle', () => {
   });
 
   it('opens with the passphrase and not without it', () => {
-    expect(call(api, 'unlock', sealed, 'wrong').ok).toBe(false);
-    const opened = call(api, 'unlock', sealed, 'a passphrase');
+    expect(call(api, 'unlock', sealed, [...passphraseToBytes('wrong')]).ok).toBe(false);
+    const opened = call(api, 'unlock', sealed, passphrase);
     expect(opened.ok).toBe(true);
     zpub = opened.btcAccount.zpub;
     expect(zpub.startsWith('zpub')).toBe(true);
@@ -181,6 +218,22 @@ describe('the whole flow, through the bundle', () => {
     expect(wrong.problem).toMatch(/does not match|nothing was signed/i);
   });
 
+  it('will not take a passphrase as text, through the bundle', () => {
+    /* The rule that makes the whole byte-passphrase change worth anything: if
+     * a string is quietly accepted and encoded, the unwipeable path is the
+     * convenient path and the rule stops being true within a release or two.
+     * Driven through the built bundle because that is the artefact the phone
+     * runs, and because the guard has to survive esbuild. */
+    for (const badly of ['a passphrase', '', 61, null, [], [1, 2, 999], [1, 2, -1], [1, 'x'], [1.5]]) {
+      const created = call(api, 'create', random, badly, '');
+      expect(created.ok, `create accepted ${JSON.stringify(badly)}`).toBe(false);
+      const opened = call(api, 'unlock', sealed, badly);
+      expect(opened.ok, `unlock accepted ${JSON.stringify(badly)}`).toBe(false);
+    }
+    // And it says what the contract is, rather than "the vault did not open".
+    expect(call(api, 'unlock', sealed, 'a passphrase').problem).toMatch(/bytes, not as text/);
+  });
+
   it('names a Monero wallet file instead of calling it junk', () => {
     /* The whole point of recognising these: somebody holding a perfectly good
      * unsigned_monero_tx should be told what the vault cannot do with it, not
@@ -234,7 +287,7 @@ describe('the whole flow, through the bundle', () => {
   });
 
   it('opens again to the same wallet, because the seal is the wallet', () => {
-    const reopened = call(api, 'unlock', sealed, 'a passphrase');
+    const reopened = call(api, 'unlock', sealed, passphrase);
     expect(reopened.btcAccount.zpub).toBe(zpub);
   });
 });

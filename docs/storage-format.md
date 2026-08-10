@@ -64,6 +64,15 @@ the derived key itself is fresh per seal and nonce reuse cannot arise.
 **NFKD normalisation** of the passphrase, the same rule BIP39 uses, so the
 passphrase typed on one keyboard opens the vault sealed from another.
 
+`passphraseToBytes` in `src/keys/seal.ts` is the one place text becomes bytes,
+and `seal`/`unseal` take only bytes — a string cannot be wiped, and the
+passphrase is the one secret a person types. The app normalises in Swift, since
+the text has to stop being text before it crosses into the engine, which makes
+this the single behaviour in the project implemented twice on purpose. Both
+implementations are checked against `test/fixtures/primitives.json` rather than
+against each other. A disagreement there would not fail loudly: it would
+produce a vault that opens on the device that sealed it and on nothing else.
+
 **No empty passphrases.** A caller wanting device-only protection generates a
 random passphrase and keeps it in the platform keystore. That makes "the
 keystore is the only lock" an explicit decision instead of an empty string

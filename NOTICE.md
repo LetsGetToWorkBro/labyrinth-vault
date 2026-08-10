@@ -74,3 +74,11 @@ the **Argon2 reference implementation** (via argon2-cffi) and **libsodium**
 (via libsodium-wrappers), so agreement there is agreement with code that
 shares nothing with this repository. Neither is a dependency; they were used
 once, to produce the expected answers.
+
+Those same vectors also live in `test/fixtures/primitives.json`, in a form
+either language can read. That file exists because
+[docs/native-primitives.md](docs/native-primitives.md) leaves the door open to a
+native Argon2id one day, and because one behaviour — NFKD passphrase
+normalisation — is already implemented twice, in `src/keys/seal.ts` and in
+`ios/LabyrinthVault/Support/Passphrase.swift`. Neither side of that is allowed
+to be the oracle for the other: both are checked against the file.

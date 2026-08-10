@@ -180,6 +180,36 @@ Early. What exists and is tested:
   the rule is that nothing runs if anything fails. See
   [SECURITY.md](SECURITY.md) for the threat model in one table.
 
+- **The passphrase is bytes, not text** (`src/keys/seal.ts`,
+  `ios/.../Passphrase.swift`). Everything secret in this project is a
+  `Uint8Array`, because a string cannot be overwritten — and the passphrase used
+  to be the exception, which is the worst possible thing to make an exception
+  of. It was crossing into the engine as text, so the one secret a person
+  actually types existed unwipeable in two heaps at once.
+
+  It now becomes NFKD bytes at the keyboard, crosses as bytes, and is zeroed on
+  every path including the throwing one. The bridge *refuses* a string rather
+  than encoding one, so the convenient path cannot quietly become the
+  unwipeable path again.
+
+  That normalisation is the one behaviour in this repository deliberately
+  implemented twice, in Swift and in TypeScript, because the text has to stop
+  being text before it crosses. It is allowed to be twice because
+  `test/fixtures/primitives.json` pins the exact bytes for the inputs where two
+  platforms could disagree — ligatures, half-width characters, two spellings of
+  é — and both sides are checked against the file rather than against each
+  other. Get it wrong and nothing fails loudly: you get a vault that opens on
+  the phone that sealed it and on no other device.
+
+- **The engine is verified before it runs** (`scripts/build-bundle.mjs`,
+  `ios/.../Engine.swift`). The app is a signed binary plus half a megabyte of
+  *data* that it then evaluates as code. Code signing covers that resource at
+  install and nothing revisits it, so the app revisits it: the build writes the
+  bundle's SHA-256 into a Swift constant, and the engine hashes what it loaded
+  and refuses to evaluate anything that does not match. The digest lives in the
+  signed text segment and the bundle does not, which is the asymmetry that
+  makes the check worth making.
+
 - **The engine** (`src/bridge/host.ts`, `ios/.../Engine.swift`) — the app does
   not reimplement any of the above. The TypeScript is compiled to one file and
   run on the device in JavaScriptCore, so there is exactly one implementation
@@ -191,7 +221,15 @@ Next, in order:
 
 1. Build the iOS target in Xcode. The Swift sources have never been compiled —
    there is no Swift toolchain where this was written — so that is the first
-   real check on them.
+   real check on them. Two things are waiting on it specifically: the Swift
+   half of the passphrase contract
+   (`ios/LabyrinthVaultTests/PassphraseContractTests.swift`, written and never
+   run), and the one measurement that decides whether the key derivation should
+   be native. `npm run bench:kdf` says 1554 ms for the default parameters on a
+   server CPU *with* a JIT; JavaScriptCore in an app has no JIT, and how much
+   worse that is on a decade-old phone is a number nobody should guess. See
+   [docs/native-primitives.md](docs/native-primitives.md), which is also the
+   argument for what should and should not ever be ported to Swift.
 2. Monero transaction signing. The primitives are built and pinned to Monero's
    own vectors; what is left is CryptoNight, a Boost portable-binary-archive
    reader, wallet2's `unsigned_tx_set` structure and CLSAG with Bulletproofs+.

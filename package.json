@@ -8,7 +8,8 @@
   "scripts": {
     "test": "npm run build:bundle && vitest run",
     "typecheck": "tsc --noEmit",
-    "build:bundle": "node scripts/build-bundle.mjs"
+    "build:bundle": "node scripts/build-bundle.mjs",
+    "bench:kdf": "node scripts/bench-kdf.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

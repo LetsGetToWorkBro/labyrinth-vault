@@ -16,10 +16,20 @@
  * **Argon2id** (RFC 9106) because passphrases are guessable and the defence is
  * making each guess expensive in *memory*, which is the one resource a GPU
  * farm cannot fake cheaply. Parameters are stored in the header and default to
- * 64 MiB, t=3, tuned for a decade-old phone to take about a second. Both
- * primitives here are checked in the tests against implementations that share
- * no code with ours: Argon2id against the reference C implementation, the AEAD
- * against libsodium.
+ * RFC 9106's second recommendation, 64 MiB with t=3. Both primitives here are
+ * checked in the tests against implementations that share no code with ours:
+ * Argon2id against the reference C implementation, the AEAD against libsodium.
+ *
+ * That default is not cheap in JavaScript, and this file used to claim it was.
+ * Measured: `npm run bench:kdf` on a modern server CPU with a JIT takes about
+ * 1.5 seconds for one derivation. JavaScriptCore inside an iOS app has no JIT
+ * — the entitlement is Apple's, not ours — so on the decade-old phone this is
+ * for, expect substantially worse. See docs/native-primitives.md, which is
+ * about what to do with that number rather than about hiding it.
+ *
+ * The important half is that it is a *latency* problem and not a strength
+ * problem: `calibrateKdf` starts at this default and only ever walks upward,
+ * so a slow device gets a slow unlock, never a weaker vault.
  *
  * **XChaCha20-Poly1305** because its 24-byte nonce is big enough to draw at
  * random without birthday arithmetic, and because it is authenticated: a
@@ -42,6 +52,27 @@
  *
  * What this does not defend: a compromised vault device that captures the
  * passphrase as it is typed. Nothing at rest can; that is the airgap's job.
+ *
+ * ## The passphrase is bytes, not a string
+ *
+ * Everything else in this project that holds a secret holds a `Uint8Array`,
+ * because a JavaScript string cannot be overwritten. The passphrase used to be
+ * the exception, and it is the worst possible thing to make an exception of:
+ * it is the one secret a person types, the one that opens everything else, and
+ * it was living as an immutable string in two heaps at once — Swift's and
+ * JavaScriptCore's — with no way to zero either.
+ *
+ * So these functions take bytes. `passphraseToBytes` is the one place a string
+ * becomes them, it is named for what it does, and what it returns is the
+ * caller's to wipe.
+ *
+ * The NFKD normalisation that used to be hidden inside `deriveKey` lives there
+ * too, in the open, because it is a cross-language contract now: the app does
+ * the same normalisation in Swift before it sends bytes across the bridge, and
+ * `test/fixtures/primitives.json` pins the exact bytes for the inputs where
+ * two implementations could plausibly disagree. Getting that wrong does not
+ * fail loudly — it produces a vault that opens on the phone that sealed it and
+ * nowhere else.
  */
 
 import { argon2id } from '@noble/hashes/argon2.js';
@@ -71,9 +102,10 @@ export interface KdfParams {
 }
 
 /**
- * Defaults per RFC 9106's second recommendation (64 MiB, t=3), which lands
- * near a second on the old hardware this app is for. Slow is the feature: the
- * person unseals a few times a day, the attacker wants to try millions.
+ * RFC 9106's second recommendation. Slow is the feature: the person unseals a
+ * few times a day, the attacker wants to try millions. What it costs on this
+ * engine is measured rather than asserted — see the header comment and
+ * `scripts/bench-kdf.mjs`.
  */
 export const DEFAULT_KDF: KdfParams = { t: 3, m: 65536, p: 1 };
 
@@ -112,21 +144,27 @@ function paramsAcceptable(params: KdfParams): boolean {
 }
 
 /**
- * NFKD, the same normalisation BIP39 applies to its passphrases, so the
- * passphrase that seals on this phone unseals on any other device regardless
- * of how its keyboard composed the characters.
+ * The one place a typed passphrase becomes bytes.
+ *
+ * NFKD, the same normalisation BIP39 applies to its passphrases, so a
+ * passphrase that seals on this phone opens on any other device regardless of
+ * how its keyboard composed the characters. Then UTF-8.
+ *
+ * Two things about calling this. The string that goes in cannot be wiped —
+ * that is the property being worked around, not solved — so the useful move is
+ * to call it as close to the keyboard as possible and pass bytes from there
+ * on. And the bytes that come out are the caller's to wipe: this function does
+ * not know when they have finished being useful.
+ *
+ * Exported rather than private because it is a contract the Swift side has to
+ * match, and a contract nobody can name is a contract nobody can check.
  */
-function passphraseBytes(passphrase: string): Uint8Array {
-  return new TextEncoder().encode(passphrase.normalize('NFKD'));
+export function passphraseToBytes(passphrase: string): Uint8Array {
+  return new TextEncoder().encode(String(passphrase ?? '').normalize('NFKD'));
 }
 
-function deriveKey(passphrase: string, salt: Uint8Array, params: KdfParams): Uint8Array {
-  const pass = passphraseBytes(passphrase);
-  try {
-    return argon2id(pass, salt, { t: params.t, m: params.m, p: params.p, dkLen: KEY_BYTES });
-  } finally {
-    wipe(pass);
-  }
+function deriveKey(passphrase: Uint8Array, salt: Uint8Array, params: KdfParams): Uint8Array {
+  return argon2id(passphrase, salt, { t: params.t, m: params.m, p: params.p, dkLen: KEY_BYTES });
 }
 
 export interface SealResult {
@@ -147,7 +185,7 @@ export interface SealResult {
  */
 export function seal(
   secret: Uint8Array,
-  passphrase: string,
+  passphrase: Uint8Array,
   random: Uint8Array,
   params: KdfParams = DEFAULT_KDF,
 ): SealResult {
@@ -218,7 +256,7 @@ export function looksSealed(blob: Uint8Array): boolean {
  * the header comment. The KDF ceilings are enforced *before* deriving, because
  * the allocation happens before the authentication possibly can.
  */
-export function unseal(blob: Uint8Array, passphrase: string): UnsealResult {
+export function unseal(blob: Uint8Array, passphrase: Uint8Array): UnsealResult {
   if (!looksSealed(blob)) return { ok: false, problem: 'That is not a sealed vault.' };
   if (blob[3] !== SEAL_VERSION) {
     return { ok: false, problem: 'That vault was sealed by a newer version of this app.' };
@@ -274,7 +312,7 @@ export function calibrateKdf(
   targetMs: number,
   timer: () => number,
   runner: (params: KdfParams) => void = (params) => {
-    deriveKey('calibration passphrase', new Uint8Array(SALT_BYTES), params);
+    wipe(deriveKey(passphraseToBytes('calibration passphrase'), new Uint8Array(SALT_BYTES), params));
   },
 ): KdfParams {
   let m = DEFAULT_KDF.m;

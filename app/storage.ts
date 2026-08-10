@@ -27,6 +27,7 @@ import {
   seal,
   unseal,
   type KdfParams,
+  passphraseToBytes,
 } from '../src/keys/seal';
 import { withSecret, wipe } from '../src/keys/wipe';
 
@@ -67,15 +68,34 @@ function fromHex(hex: string): Uint8Array {
 }
 
 /**
- * The passphrase the blob is actually sealed under.
+ * The passphrase the blob is actually sealed under, as bytes.
  *
  * The device passphrase always participates. A user passphrase, when present,
  * is layered after a newline — a character the hex alphabet cannot contain,
  * so the two layers cannot collide into each other. Layering means AND: to
  * unseal you need what the Keychain guards *and* what the person knows.
+ *
+ * Built by joining *normalised parts* rather than by normalising a joined
+ * string, so the user's passphrase is never copied into a longer string that
+ * nothing can wipe. The two are supposed to produce identical bytes — U+000A
+ * is a starter, so NFKD cannot compose or reorder across it — but "supposed
+ * to" is how subtle Unicode bugs get in, and a vault that seals under one
+ * byte sequence and unseals under another opens on no device at all. So
+ * `test/app-wiring.test.ts` asserts the two forms agree, over inputs chosen
+ * to break the assumption if it is breakable.
+ *
+ * The caller owns what comes back and should wipe it.
  */
-function effectivePassphrase(deviceHex: string, userPassphrase?: string): string {
-  return userPassphrase ? `${deviceHex}\n${userPassphrase}` : deviceHex;
+function effectivePassphrase(deviceHex: string, userPassphrase?: string): Uint8Array {
+  const device = passphraseToBytes(deviceHex);
+  if (!userPassphrase) return device;
+  const user = passphraseToBytes(userPassphrase);
+  const out = new Uint8Array(device.length + 1 + user.length);
+  out.set(device, 0);
+  out[device.length] = 0x0a;
+  out.set(user, device.length + 1);
+  wipe(device, user);
+  return out;
 }
 
 /**
@@ -112,12 +132,13 @@ export async function createVault(
   const deviceHex = toHex(deviceSecret);
   wipe(deviceSecret);
 
-  const sealed = seal(
-    seed,
-    effectivePassphrase(deviceHex, options.userPassphrase),
-    rng(SEAL_RANDOM_BYTES),
-    options.params ?? DEFAULT_KDF,
-  );
+  const pass = effectivePassphrase(deviceHex, options.userPassphrase);
+  let sealed;
+  try {
+    sealed = seal(seed, pass, rng(SEAL_RANDOM_BYTES), options.params ?? DEFAULT_KDF);
+  } finally {
+    wipe(pass);
+  }
   if (!sealed.ok || !sealed.sealed) {
     return { ok: false, problem: sealed.problem ?? 'Sealing failed.' };
   }
@@ -166,7 +187,13 @@ export async function withUnsealedSeed<T>(
     return { ok: false, problem: 'No vault on this device.' };
   }
 
-  const opened = unseal(fromHex(blobHex), effectivePassphrase(deviceHex, userPassphrase));
+  const pass = effectivePassphrase(deviceHex, userPassphrase);
+  let opened;
+  try {
+    opened = unseal(fromHex(blobHex), pass);
+  } finally {
+    wipe(pass);
+  }
   if (!opened.ok || !opened.secret) {
     /* Wrong passphrase and corrupt blob are indistinguishable on purpose;
      * see seal.ts. Pass the reader's wording through untouched. */

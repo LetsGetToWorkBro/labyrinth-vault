@@ -27,7 +27,7 @@ import { sha256 } from './airgap/sha256';
 import { selfTest as bitcoinSelfTest } from './keys/bitcoin';
 import { allChecksPass, selfTest as moneroSelfTest, toHex, type Check } from './keys/monero';
 import { selfTest as moneroCryptoSelfTest } from './keys/monerocrypto';
-import { seal, unseal } from './keys/seal';
+import { passphraseToBytes, seal, unseal } from './keys/seal';
 import { wipe } from './keys/wipe';
 
 export type { Check };
@@ -86,10 +86,12 @@ export function selfTest(): Check[] {
       const secret = new Uint8Array(32).fill(7);
       const random = new Uint8Array(40);
       for (let i = 0; i < random.length; i++) random[i] = (i * 37 + 11) & 0xff;
-      const sealed = seal(secret, 'self test passphrase', random, { t: 1, m: 8192, p: 1 });
+      const pass = passphraseToBytes('self test passphrase');
+      const sealed = seal(secret, pass, random, { t: 1, m: 8192, p: 1 });
       if (!sealed.ok) return [false, sealed.problem ?? 'seal failed'];
-      const opened = unseal(sealed.sealed!, 'self test passphrase');
-      const wrong = unseal(sealed.sealed!, 'not that passphrase');
+      const opened = unseal(sealed.sealed!, pass);
+      const wrong = unseal(sealed.sealed!, passphraseToBytes('not that passphrase'));
+      wipe(pass);
       /* Compared as bytes. Hex-encoding them to compare would make two
        * unwipeable copies of a secret for no reason, and while this particular
        * one is a fixed test value, the habit is the thing being kept. */

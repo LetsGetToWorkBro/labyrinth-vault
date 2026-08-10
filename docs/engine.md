@@ -21,13 +21,30 @@ than any library we could add, and it is why this option exists at all.
 
 ```
 SwiftUI screens
-      │  strings only: hex in, JSON out
+      │  strings: hex in, JSON out — except the passphrase, which is bytes
 Engine.swift            ← a telephone, not a participant
+      │  verifies the bundle's SHA-256 before it evaluates a line of it
       │  JSContext.invokeMethod
 vault.bundle.js         ← built from src/bridge/host.ts
       │
 src/keys, src/airgap    ← the tested code
 ```
+
+Two of those lines are recent and are the reason to read this diagram again if
+you have read it before.
+
+**The passphrase is the one thing that does not cross as text.** A string
+cannot be overwritten in either heap, so the one secret a person types would
+otherwise sit unwipeable on both sides of the boundary for as long as two
+garbage collectors felt like keeping it. It becomes NFKD bytes at the keyboard
+and crosses as an array of byte values; `passphraseFromWire` in host.ts refuses
+a string rather than encoding one.
+
+**The bundle is measured before it is run.** It is a resource file this app
+evaluates as code, and code signing checks it at install and then never again.
+`scripts/build-bundle.mjs` writes its SHA-256 into a Swift constant, and
+Engine.swift compares before `evaluateScript`. The constant is in the signed
+text segment; the bundle is not.
 
 Four rules, each with a test:
 

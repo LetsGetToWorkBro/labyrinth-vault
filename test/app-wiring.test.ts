@@ -337,6 +337,68 @@ describe('the screen can name every refusal the reader makes', () => {
   });
 });
 
+describe('a passphrase is never a string on either side of the bridge', () => {
+  /* The rule and its enforcement, because this is a property that is true when
+   * written and quietly false after the first "just pass the text through"
+   * convenience. Three places have to hold it: the engine's Swift signatures,
+   * the call sites, and the bridge itself, which refuses a string rather than
+   * encoding one. */
+
+  const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+  const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+  const passphrase = readFileSync('ios/LabyrinthVault/Support/Passphrase.swift', 'utf8');
+  const host = readFileSync('src/bridge/host.ts', 'utf8');
+
+  it('takes bytes in every Swift signature that carries one', () => {
+    const signatures = [...engine.matchAll(/func \w+\([^)]*passphrase:\s*([^,)]+)/g)]
+      .map((m) => m[1]!.trim());
+    expect(signatures.length, 'Engine.swift has no passphrase parameters at all').toBeGreaterThan(1);
+    for (const type of signatures) expect(type, 'a passphrase crosses as text').toBe('[UInt8]');
+  });
+
+  it('wipes what it made, on every path', () => {
+    // withBytes, not bytes(from:), because withBytes is the one with the defer.
+    expect(vault).toMatch(/Passphrase\.withBytes\(of:/);
+    expect(passphrase).toMatch(/defer \{ Self\.wipe\(&bytes\) \}/);
+    expect(passphrase).toMatch(/memset_s/);
+  });
+
+  it('normalises the same way the engine does, and says NFKD not NFD', () => {
+    /* decomposedStringWithCanonicalMapping is NFD and is the easy thing to
+     * type. It would agree with the engine on almost every passphrase and
+     * disagree on ligatures, full-width characters and Roman numerals — a
+     * vault that opens on the device that made it and nowhere else. */
+    expect(passphrase).toMatch(/decomposedStringWithCompatibilityMapping/);
+    expect(passphrase, 'that is NFD, and the engine uses NFKD')
+      .not.toMatch(/decomposedStringWithCanonicalMapping/);
+    const seal = readFileSync('src/keys/seal.ts', 'utf8');
+    expect(seal).toMatch(/normalize\('NFKD'\)/);
+  });
+
+  it('refuses a string at the bridge rather than encoding one', () => {
+    const wire = /function passphraseFromWire[\s\S]*?\n\}/.exec(host)?.[0];
+    expect(wire, 'host.ts has no passphraseFromWire').toBeDefined();
+    expect(wire!, 'it must require an array, not merely prefer one')
+      .toMatch(/if \(!Array\.isArray\(value\)/);
+    expect(wire!).not.toMatch(/TextEncoder|typeof value === 'string'/);
+  });
+
+  it('has a Swift test for the half of the contract this suite cannot run', () => {
+    /* NFKD is implemented twice, in two runtimes, against two Unicode
+     * versions. TypeScript's half is checked in test/primitives.test.ts. The
+     * Swift half needs a Swift runner, which this environment does not have —
+     * so the test exists, unrun, rather than the check existing on one side
+     * only. */
+    const swiftTest = readFileSync(
+      'ios/LabyrinthVaultTests/PassphraseContractTests.swift', 'utf8',
+    );
+    expect(swiftTest).toMatch(/primitives/);
+    expect(swiftTest).toMatch(/passphraseNormalisation/);
+    expect(swiftTest, 'it should be honest that it has never been run')
+      .toMatch(/never been run|no Swift toolchain/i);
+  });
+});
+
 describe('the screen model matches the wire, field for field', () => {
   /* The seam that had already drifted once. `TxSummary` in Swift is a hand
    * written mirror of `WireSummary` in TypeScript, and nothing but this test

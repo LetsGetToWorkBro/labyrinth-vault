@@ -28,7 +28,7 @@ import { Scanner } from '../src/airgap/scanner';
 import { parseAccount } from '../src/keys/account';
 import { openFromMnemonic } from '../src/keys/bitcoin';
 import { describePsbt } from '../src/keys/psbt';
-import { unseal } from '../src/keys/seal';
+import { unseal, passphraseToBytes } from '../src/keys/seal';
 
 /** xorshift32: tiny, seedable, and the same sequence on every run. */
 function rng(seed: number) {
@@ -94,7 +94,7 @@ describe('text parsers survive anything a camera can see', () => {
       const junk = bytesFrom(random, Math.floor(random() * 200));
       cborDecode(junk);
       parseAccount(junk);
-      expect(unseal(junk, 'pass').ok).toBe(false);
+      expect(unseal(junk, passphraseToBytes('pass')).ok).toBe(false);
       const summary = describePsbt(junk, wallet, { scanDepth: 3 });
       if (!summary.ok) expect(summary.signable).toBe(false);
     }

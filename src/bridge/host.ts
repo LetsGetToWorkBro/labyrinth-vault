@@ -15,11 +15,17 @@
  *
  * ## The rules this boundary is built on
  *
- * **Strings across, always.** Every argument and every return value is a
- * string, usually JSON. `bigint` does not survive a bridge, `Uint8Array`
- * arrives as something unpredictable, and a boundary that silently coerces is
- * a boundary that will one day coerce an amount. Hex in, JSON out, nothing
- * clever.
+ * **Strings across, with one deliberate exception.** Every argument and every
+ * return value is a string, usually JSON. `bigint` does not survive a bridge,
+ * `Uint8Array` arrives as something unpredictable, and a boundary that
+ * silently coerces is a boundary that will one day coerce an amount. Hex in,
+ * JSON out, nothing clever.
+ *
+ * The exception is the passphrase, which crosses as an array of byte values,
+ * because a JavaScript string cannot be overwritten and the passphrase is the
+ * one secret a person types. See `passphraseFromWire` below for the whole
+ * argument. A string in that position is refused rather than encoded, so the
+ * exception cannot decay back into the rule.
  *
  * **Nothing throws.** A signing device that crashes when handed a bad frame is
  * a device somebody can deny service to with a sticker. Every entry point
@@ -78,6 +84,44 @@ function fromHex(hex: string): Uint8Array | null {
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return out;
 }
+
+/**
+ * A passphrase, arriving as bytes rather than as text.
+ *
+ * This is the one argument on this bridge that is deliberately not a string,
+ * and the exception is the point. Everything else here crosses as text because
+ * text is the only thing a JavaScriptCore boundary carries predictably — but a
+ * JavaScript string cannot be overwritten, so a passphrase that crossed as one
+ * would exist, unwipeable, in Swift's heap and JSC's heap at the same time,
+ * for as long as either collector felt like keeping it.
+ *
+ * So Swift sends an array of byte values. JSC turns that into an ordinary
+ * JavaScript array of numbers, this function copies it into a `Uint8Array`,
+ * and the caller wipes it. Nothing secret is ever a string on this side.
+ *
+ * A string is refused rather than accepted-and-encoded. Accepting one would
+ * make the unwipeable path the convenient path, which is how the rule would
+ * quietly stop being true.
+ *
+ * Returns null when the argument is not what the contract says, so the caller
+ * refuses rather than sealing under something unintended.
+ */
+function passphraseFromWire(value: unknown): Uint8Array | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out = new Uint8Array(value.length);
+  for (let i = 0; i < value.length; i++) {
+    const byte = value[i];
+    if (typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255) {
+      wipe(out);
+      return null;
+    }
+    out[i] = byte;
+  }
+  return out;
+}
+
+const PASSPHRASE_CONTRACT =
+  'The passphrase must be sent as bytes, not as text. See passphraseToBytes in src/keys/seal.ts.';
 
 interface Failure {
   ok: false;
@@ -229,8 +273,15 @@ function requireSession(): Session {
 // screen layer can do, so it is deliberately short, and
 // `test/app-wiring.test.ts` checks that Swift calls nothing that is not here.
 
-/** Which contract this bundle speaks, so a stale bundle is caught, not run. */
-export const HOST_VERSION = 1;
+/**
+ * Which contract this bundle speaks, so a stale bundle is caught, not run.
+ *
+ * 2: passphrases cross as bytes, not as text. An app built against 1 would
+ * send a string, this side would refuse it, and every unlock would fail with a
+ * message about the contract — which is the right failure, but the version
+ * check catches it at launch instead of at the worst moment.
+ */
+export const HOST_VERSION = 2;
 
 export const api = {
   version: guarded('version', () => done({ version: HOST_VERSION })),
@@ -253,24 +304,36 @@ export const api = {
    *
    * @param randomHex `SECRET_BYTES + SEAL_RANDOM_BYTES` from the platform CSPRNG.
    */
-  create: guarded('create', (randomHex: string, passphrase: string, extraHex: string) => {
+  create: guarded('create', (randomHex: string, passphrase: unknown, extraHex: string) => {
     const random = fromHex(randomHex);
     if (!random || random.length !== SECRET_BYTES + SEAL_RANDOM_BYTES) {
       return fail(`create needs ${SECRET_BYTES + SEAL_RANDOM_BYTES} bytes of randomness.`);
     }
+    const pass = passphraseFromWire(passphrase);
+    if (!pass) return fail(PASSPHRASE_CONTRACT);
     const extra = fromHex(extraHex ?? '') ?? new Uint8Array(0);
     const secret = deriveSecret(random.subarray(0, SECRET_BYTES), extra);
-    const sealed = seal(secret, passphrase, random.subarray(SECRET_BYTES));
-    wipe(secret);
-    if (!sealed.ok) return fail(sealed.problem ?? 'Could not seal the vault.');
-    return done({ sealed: toHex(sealed.sealed!) });
+    try {
+      const sealed = seal(secret, pass, random.subarray(SECRET_BYTES));
+      if (!sealed.ok) return fail(sealed.problem ?? 'Could not seal the vault.');
+      return done({ sealed: toHex(sealed.sealed!) });
+    } finally {
+      wipe(secret, pass);
+    }
   }),
 
   /** Open the vault. Everything afterwards depends on this having succeeded. */
-  unlock: guarded('unlock', (sealedHex: string, passphrase: string) => {
+  unlock: guarded('unlock', (sealedHex: string, passphrase: unknown) => {
     const blob = fromHex(sealedHex);
     if (!blob || !looksSealed(blob)) return fail('That is not a sealed vault.');
-    const opened = unseal(blob, passphrase);
+    const pass = passphraseFromWire(passphrase);
+    if (!pass) return fail(PASSPHRASE_CONTRACT);
+    let opened;
+    try {
+      opened = unseal(blob, pass);
+    } finally {
+      wipe(pass);
+    }
     if (!opened.ok || !opened.secret) return fail(opened.problem ?? 'The vault did not open.');
     if (opened.secret.length !== SECRET_BYTES) {
       wipe(opened.secret);

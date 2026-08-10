@@ -18,7 +18,15 @@
 import { describe, expect, it } from 'vitest';
 import { argon2id } from '@noble/hashes/argon2.js';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
-import { DEFAULT_KDF, KDF_LIMITS, calibrateKdf, looksSealed, seal, unseal } from '../src/keys/seal';
+import {
+  DEFAULT_KDF,
+  KDF_LIMITS,
+  calibrateKdf,
+  looksSealed,
+  passphraseToBytes,
+  seal,
+  unseal,
+} from '../src/keys/seal';
 
 const enc = (text: string) => new TextEncoder().encode(text);
 const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -33,6 +41,10 @@ function fakeRandom(seed = 1): Uint8Array {
   }
   return out;
 }
+
+/** Passphrases are bytes now. This is the one place a test turns text into
+ *  them, so a call site that still passes a string does not typecheck. */
+const pw = passphraseToBytes;
 
 const SECRET = enc('a thirty-two byte secret, roughly');
 const FAST = { t: 1, m: 8192, p: 1 }; // the smallest params this build accepts
@@ -62,11 +74,11 @@ describe('the primitives, against implementations that are not ours', () => {
 });
 
 describe('sealing and opening', () => {
-  const sealed = seal(SECRET, 'open sesame', fakeRandom(), FAST);
+  const sealed = seal(SECRET, pw('open sesame'), fakeRandom(), FAST);
 
   it('round-trips, and reports the parameters it was sealed under', () => {
     expect(sealed.ok).toBe(true);
-    const opened = unseal(sealed.sealed!, 'open sesame');
+    const opened = unseal(sealed.sealed!, pw('open sesame'));
     expect(opened.ok).toBe(true);
     expect(opened.secret).toEqual(SECRET);
     expect(opened.params).toEqual(FAST);
@@ -83,26 +95,26 @@ describe('sealing and opening', () => {
     // open the same vault, or a person is locked out by their font.
     const composed = 'café';       // é as one code point
     const decomposed = 'café';    // e + combining accent
-    const vault = seal(SECRET, composed, fakeRandom(2), FAST);
-    expect(unseal(vault.sealed!, decomposed).ok).toBe(true);
+    const vault = seal(SECRET, pw(composed), fakeRandom(2), FAST);
+    expect(unseal(vault.sealed!, pw(decomposed)).ok).toBe(true);
   });
 
   it('gives different bytes for the same secret sealed twice', () => {
     // Fresh salt and nonce per seal: two seals of the same secret share
     // nothing an observer can correlate.
-    const again = seal(SECRET, 'open sesame', fakeRandom(99), FAST);
+    const again = seal(SECRET, pw('open sesame'), fakeRandom(99), FAST);
     expect(hex(again.sealed!)).not.toBe(hex(sealed.sealed!));
   });
 });
 
 describe('refusing, which is most of what a vault does', () => {
-  const sealed = seal(SECRET, 'open sesame', fakeRandom(), FAST).sealed!;
+  const sealed = seal(SECRET, pw('open sesame'), fakeRandom(), FAST).sealed!;
 
   it('refuses the wrong passphrase, with the same words as a damaged file', () => {
-    const wrongPass = unseal(sealed, 'open sesame ');
+    const wrongPass = unseal(sealed, pw('open sesame '));
     const damaged = unseal(
       (() => { const copy = sealed.slice(); copy[copy.length - 1]! ^= 1; return copy; })(),
-      'open sesame',
+      pw('open sesame'),
     );
     expect(wrongPass.ok).toBe(false);
     expect(damaged.ok).toBe(false);
@@ -119,28 +131,28 @@ describe('refusing, which is most of what a vault does', () => {
     for (let i = 0; i < sealed.length; i++) {
       const copy = sealed.slice();
       copy[i]! ^= 0x01;
-      const result = unseal(copy, 'open sesame');
+      const result = unseal(copy, pw('open sesame'));
       expect(result.ok, `byte ${i} flipped and it still opened`).toBe(false);
     }
   });
 
   it('refuses truncation at every length', () => {
     for (let n = 0; n < sealed.length; n++) {
-      expect(unseal(sealed.subarray(0, n), 'open sesame').ok, `${n} bytes`).toBe(false);
+      expect(unseal(sealed.subarray(0, n), pw('open sesame')).ok, `${n} bytes`).toBe(false);
     }
   });
 
   it('refuses a version from the future', () => {
     const future = sealed.slice();
     future[3] = 2;
-    expect(unseal(future, 'open sesame').problem).toMatch(/newer version/i);
+    expect(unseal(future, pw('open sesame')).problem).toMatch(/newer version/i);
   });
 
   it('refuses to seal weakly or emptily', () => {
-    expect(seal(SECRET, 'pass', fakeRandom(), { t: 1, m: 64, p: 1 }).ok, 'trivial memory').toBe(false);
-    expect(seal(SECRET, '', fakeRandom(), FAST).problem, 'empty passphrase').toMatch(/passphrase/i);
-    expect(seal(new Uint8Array(0), 'pass', fakeRandom(), FAST).ok, 'empty secret').toBe(false);
-    expect(seal(SECRET, 'pass', fakeRandom().subarray(0, 39), FAST).ok, 'short randomness').toBe(false);
+    expect(seal(SECRET, pw('pass'), fakeRandom(), { t: 1, m: 64, p: 1 }).ok, 'trivial memory').toBe(false);
+    expect(seal(SECRET, pw(''), fakeRandom(), FAST).problem, 'empty passphrase').toMatch(/passphrase/i);
+    expect(seal(new Uint8Array(0), pw('pass'), fakeRandom(), FAST).ok, 'empty secret').toBe(false);
+    expect(seal(SECRET, pw('pass'), fakeRandom().subarray(0, 39), FAST).ok, 'short randomness').toBe(false);
   });
 
   it('refuses hostile KDF parameters before allocating for them', () => {
@@ -149,7 +161,7 @@ describe('refusing, which is most of what a vault does', () => {
      * The ceiling has to be enforced on the claim, not the result. */
     const hostile = sealed.slice();
     new DataView(hostile.buffer).setUint32(5, 0x40000000, false); // ~1 TiB in KiB
-    const result = unseal(hostile, 'open sesame');
+    const result = unseal(hostile, pw('open sesame'));
     expect(result.ok).toBe(false);
     expect(result.problem).toMatch(/will not run/i);
   });

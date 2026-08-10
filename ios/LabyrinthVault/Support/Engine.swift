@@ -18,6 +18,7 @@
 //  the context. That is a smaller surface than any library we could add, and it
 //  is the reason this design is available at all.
 
+import CryptoKit
 import Foundation
 import JavaScriptCore
 
@@ -32,6 +33,7 @@ private struct Envelope: Decodable {
 
 enum EngineError: LocalizedError {
     case bundleMissing
+    case bundleTampered(String)
     case bundleFailed(String)
     case versionMismatch(Int, Int)
     case refused(String)
@@ -43,6 +45,9 @@ enum EngineError: LocalizedError {
         switch self {
         case .bundleMissing:
             "The vault engine is missing from this build."
+        case .bundleTampered(let got):
+            "The vault engine is not the one this app was built with (\(got.prefix(16))…). "
+            + "Nothing was run. Reinstall from a source you trust."
         case .bundleFailed(let why):
             "The vault engine did not load: \(why)"
         case .versionMismatch(let got, let want):
@@ -66,7 +71,7 @@ enum EngineError: LocalizedError {
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 1
+    static let expectedVersion = 2
 
     private let context: JSContext
     private let api: JSValue
@@ -74,8 +79,33 @@ final class Engine {
 
     init(bundle: Bundle = .main) throws {
         guard let url = bundle.url(forResource: "vault.bundle", withExtension: "js"),
-              let source = try? String(contentsOf: url, encoding: .utf8)
+              let data = try? Data(contentsOf: url)
         else { throw EngineError.bundleMissing }
+
+        /* Measure before running, not after.
+         *
+         * The engine is a resource file that this app evaluates as code. Code
+         * signing covers it at install time and then nothing looks again, so
+         * the app looks: hash what was loaded, compare against the constant
+         * that scripts/build-bundle.mjs baked into the binary at build time,
+         * and refuse before `evaluateScript` if they differ.
+         *
+         * The asymmetry is the whole point. The digest lives in the signed
+         * text segment; the bundle does not. Anything that can rewrite the
+         * bundle cannot also rewrite what it is being compared against without
+         * breaking the signature that protects the executable itself.
+         *
+         * Not constant-time, deliberately: both sides of this comparison are
+         * public. There is no secret here to leak through timing, and writing
+         * it as though there were would suggest to a reader that there is. */
+        let measured = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard measured == BundleDigest.sha256 else {
+            throw EngineError.bundleTampered(measured)
+        }
+
+        guard let source = String(data: data, encoding: .utf8) else {
+            throw EngineError.bundleFailed("the engine is not text")
+        }
 
         guard let context = JSContext() else { throw EngineError.bundleFailed("no context") }
         self.context = context
@@ -193,11 +223,24 @@ final class Engine {
     func selfTest() throws -> SelfTestReply { try call("selfTest") }
     func calibrate(targetMs: Int) throws -> CalibrateReply { try call("calibrate", [targetMs]) }
 
-    func create(randomHex: String, passphrase: String, extraHex: String = "") throws -> CreateReply {
+    /// Make a vault.
+    ///
+    /// The passphrase arrives as bytes and leaves as bytes. It is never a
+    /// `String` on this side of the call and never a string on the other side
+    /// either: `passphraseFromWire` in host.ts refuses one. A Swift `String`
+    /// cannot be overwritten any more than a JavaScript one can, so the text
+    /// is turned into bytes at the keyboard — see `Passphrase` — and only the
+    /// bytes travel.
+    ///
+    /// The array is the caller's to zero. This method does not do it, because
+    /// `create` and `unlock` are often called with the same passphrase in
+    /// sequence and a method that quietly destroyed its argument would be a
+    /// trap rather than a courtesy.
+    func create(randomHex: String, passphrase: [UInt8], extraHex: String = "") throws -> CreateReply {
         try call("create", [randomHex, passphrase, extraHex])
     }
 
-    func unlock(sealedHex: String, passphrase: String) throws -> UnlockReply {
+    func unlock(sealedHex: String, passphrase: [UInt8]) throws -> UnlockReply {
         try call("unlock", [sealedHex, passphrase])
     }
 

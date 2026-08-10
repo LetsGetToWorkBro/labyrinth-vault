@@ -256,7 +256,13 @@ describe('our own frames, our own reader', () => {
 });
 
 describe('bounds on a single frame', () => {
-  it('refuses an oversized single-part body without doing the work first', () => {
+  /* Thirty seconds, not vitest's default five. The assertion here is
+   * relative and so is immune to a busy machine, but the *raw* leg of the
+   * comparison deliberately decodes forty megabytes of bytewords with no cap
+   * in front of it — that is the work being measured — and on a loaded runner
+   * it can take longer than the default allows. A timeout is not a signal
+   * about the property under test, so it should not be able to fail it. */
+  it('refuses an oversized single-part body without doing the work first', { timeout: 30_000 }, () => {
     /* The cap is a denial-of-service guard, not a correctness guard: an
      * oversized body decodes to null either way, because it fails its
      * checksum. The return value cannot tell you whether the cap is there —

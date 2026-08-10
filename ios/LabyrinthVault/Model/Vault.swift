@@ -460,10 +460,18 @@ final class Vault: ObservableObject {
 
     // MARK: - The session
 
+    /// Open the vault.
+    ///
+    /// The passphrase is turned into bytes and zeroed on the way out, on every
+    /// path including the throwing one — see Passphrase.swift for why a
+    /// `String` is not good enough here. What the text field itself is holding
+    /// is the caller's problem and should be cleared as soon as this returns.
     func unlock(passphrase: String, sealedHex: String) -> String? {
         guard let engine else { return "The vault engine is not loaded." }
         do {
-            let opened = try engine.unlock(sealedHex: sealedHex, passphrase: passphrase)
+            let opened = try Passphrase.withBytes(of: passphrase) { bytes in
+                try engine.unlock(sealedHex: sealedHex, passphrase: bytes)
+            }
             // Identity from the account key, so it means something.
             let tail = String(opened.btcAccount.zpub.suffix(12)).uppercased()
             vaultID = stride(from: 0, to: tail.count, by: 4)

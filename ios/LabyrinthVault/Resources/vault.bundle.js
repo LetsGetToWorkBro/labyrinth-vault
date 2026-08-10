@@ -15790,16 +15790,11 @@ zoo`.split("\n"));
   function paramsAcceptable(params) {
     return Number.isInteger(params.t) && Number.isInteger(params.m) && Number.isInteger(params.p) && params.t >= KDF_LIMITS.minT && params.t <= KDF_LIMITS.maxT && params.m >= KDF_LIMITS.minM && params.m <= KDF_LIMITS.maxM && params.p >= KDF_LIMITS.minP && params.p <= KDF_LIMITS.maxP;
   }
-  function passphraseBytes(passphrase) {
-    return new TextEncoder().encode(passphrase.normalize("NFKD"));
+  function passphraseToBytes(passphrase) {
+    return new TextEncoder().encode(String(passphrase ?? "").normalize("NFKD"));
   }
   function deriveKey(passphrase, salt, params) {
-    const pass = passphraseBytes(passphrase);
-    try {
-      return argon2id(pass, salt, { t: params.t, m: params.m, p: params.p, dkLen: KEY_BYTES });
-    } finally {
-      wipe(pass);
-    }
+    return argon2id(passphrase, salt, { t: params.t, m: params.m, p: params.p, dkLen: KEY_BYTES });
   }
   function seal(secret, passphrase, random, params = DEFAULT_KDF) {
     if (secret.length === 0) return { ok: false, problem: "There is nothing to seal." };
@@ -15869,7 +15864,7 @@ zoo`.split("\n"));
     }
   }
   function calibrateKdf(targetMs, timer, runner = (params) => {
-    deriveKey("calibration passphrase", new Uint8Array(SALT_BYTES), params);
+    wipe(deriveKey(passphraseToBytes("calibration passphrase"), new Uint8Array(SALT_BYTES), params));
   }) {
     let m = DEFAULT_KDF.m;
     for (; ; ) {
@@ -16138,10 +16133,12 @@ zoo`.split("\n"));
         const secret = new Uint8Array(32).fill(7);
         const random = new Uint8Array(40);
         for (let i = 0; i < random.length; i++) random[i] = i * 37 + 11 & 255;
-        const sealed = seal(secret, "self test passphrase", random, { t: 1, m: 8192, p: 1 });
+        const pass = passphraseToBytes("self test passphrase");
+        const sealed = seal(secret, pass, random, { t: 1, m: 8192, p: 1 });
         if (!sealed.ok) return [false, sealed.problem ?? "seal failed"];
-        const opened = unseal(sealed.sealed, "self test passphrase");
-        const wrong = unseal(sealed.sealed, "not that passphrase");
+        const opened = unseal(sealed.sealed, pass);
+        const wrong = unseal(sealed.sealed, passphraseToBytes("not that passphrase"));
+        wipe(pass);
         const ok = opened.ok && !!opened.secret && sameBytes(opened.secret, secret) && !wrong.ok;
         if (opened.secret) wipe(opened.secret);
         return [ok, ok ? "round-trips, refuses the wrong passphrase" : "failed"];
@@ -16210,6 +16207,20 @@ zoo`.split("\n"));
     for (let i = 0; i < out.length; i++) out[i] = parseInt(clean3.slice(i * 2, i * 2 + 2), 16);
     return out;
   }
+  function passphraseFromWire(value) {
+    if (!Array.isArray(value) || value.length === 0) return null;
+    const out = new Uint8Array(value.length);
+    for (let i = 0; i < value.length; i++) {
+      const byte = value[i];
+      if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) {
+        wipe(out);
+        return null;
+      }
+      out[i] = byte;
+    }
+    return out;
+  }
+  var PASSPHRASE_CONTRACT = "The passphrase must be sent as bytes, not as text. See passphraseToBytes in src/keys/seal.ts.";
   function fail(problem) {
     return JSON.stringify({ ok: false, problem });
   }
@@ -16266,7 +16277,7 @@ zoo`.split("\n"));
     if (!session) throw new Error("The vault is locked.");
     return session;
   }
-  var HOST_VERSION = 1;
+  var HOST_VERSION = 2;
   var api = {
     version: guarded("version", () => done({ version: HOST_VERSION })),
     /** The launch gate. Nothing else should be called until this passes. */
@@ -16290,18 +16301,30 @@ zoo`.split("\n"));
       if (!random || random.length !== SECRET_BYTES + SEAL_RANDOM_BYTES) {
         return fail(`create needs ${SECRET_BYTES + SEAL_RANDOM_BYTES} bytes of randomness.`);
       }
+      const pass = passphraseFromWire(passphrase);
+      if (!pass) return fail(PASSPHRASE_CONTRACT);
       const extra = fromHex2(extraHex ?? "") ?? new Uint8Array(0);
       const secret = deriveSecret(random.subarray(0, SECRET_BYTES), extra);
-      const sealed = seal(secret, passphrase, random.subarray(SECRET_BYTES));
-      wipe(secret);
-      if (!sealed.ok) return fail(sealed.problem ?? "Could not seal the vault.");
-      return done({ sealed: toHex2(sealed.sealed) });
+      try {
+        const sealed = seal(secret, pass, random.subarray(SECRET_BYTES));
+        if (!sealed.ok) return fail(sealed.problem ?? "Could not seal the vault.");
+        return done({ sealed: toHex2(sealed.sealed) });
+      } finally {
+        wipe(secret, pass);
+      }
     }),
     /** Open the vault. Everything afterwards depends on this having succeeded. */
     unlock: guarded("unlock", (sealedHex, passphrase) => {
       const blob = fromHex2(sealedHex);
       if (!blob || !looksSealed(blob)) return fail("That is not a sealed vault.");
-      const opened = unseal(blob, passphrase);
+      const pass = passphraseFromWire(passphrase);
+      if (!pass) return fail(PASSPHRASE_CONTRACT);
+      let opened;
+      try {
+        opened = unseal(blob, pass);
+      } finally {
+        wipe(pass);
+      }
       if (!opened.ok || !opened.secret) return fail(opened.problem ?? "The vault did not open.");
       if (opened.secret.length !== SECRET_BYTES) {
         wipe(opened.secret);
