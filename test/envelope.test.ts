@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   Collector,
   DEFAULT_PART_BYTES,
+  MAX_PARTS,
   base32Decode,
   base32Encode,
   digestOf,
@@ -200,5 +201,15 @@ describe('the kinds of thing that cross the gap', () => {
   it('will not encode a kind it does not know', () => {
     // @ts-expect-error deliberately outside the type, which a JS caller can do
     expect(() => encodeParts('WHATEVER', bytes(10))).toThrow(/unknown payload kind/);
+  });
+});
+
+describe('a frame cannot demand the impossible', () => {
+  it('refuses a total past the cap, and will not encode one either', () => {
+    // A hostile sticker claiming four billion parts would otherwise park the
+    // scanner at "1 of 4000000000" forever, holding memory the whole time.
+    expect(parsePart('LV1:PSBT:1:999999999:00000000:AA')).toBeNull();
+    expect(parsePart(`LV1:PSBT:1:${MAX_PARTS}:00000000:AA`)).not.toBeNull();
+    expect(() => encodeParts('PSBT', new Uint8Array((MAX_PARTS + 1) * 400))).toThrow(/allows/);
   });
 });

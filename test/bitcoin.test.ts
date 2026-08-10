@@ -19,6 +19,7 @@ import {
   checkMnemonic,
   formatBtc,
   isBtcAddress,
+  closeWallet,
   mnemonicFromEntropy,
   openFromMnemonic,
   openWatch,
@@ -213,5 +214,27 @@ describe('a seed folds in whatever the person supplied', () => {
 describe('the self-check', () => {
   it('reproduces the test vector published in BIP84', () => {
     expect(selfTest()).toEqual({ ok: true });
+  });
+});
+
+describe('closing a wallet', () => {
+  it('wipes the private keys and leaves the watching half', () => {
+    const wallet = openFromMnemonic(VECTOR_WORDS);
+    expect(privateKeyAt(wallet, 0, 0)).toBeInstanceOf(Uint8Array);
+    const firstAddress = addressAt(wallet, 0, 0).address;
+
+    closeWallet(wallet);
+
+    expect(wallet.kind).toBe('watch');
+    expect(privateKeyAt(wallet, 0, 0), 'no key survives closing').toBeNull();
+    // Watching still works: addresses derive from the public half.
+    expect(addressAt(wallet, 0, 0).address).toBe(firstAddress);
+  });
+
+  it('is idempotent and harmless on a watch-only wallet', () => {
+    const watch = openWatch(VECTOR.zpub).wallet!;
+    closeWallet(watch);
+    closeWallet(watch);
+    expect(addressAt(watch, 0, 0).address).toBe(VECTOR.receive0);
   });
 });

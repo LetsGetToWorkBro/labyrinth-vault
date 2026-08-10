@@ -319,3 +319,69 @@ describe('input that is not a transaction at all', () => {
     expect(signPsbt(junk, wallet, describePsbt(junk, wallet)).ok).toBe(false);
   });
 });
+
+describe('the sighash-flags attack', () => {
+  /* SIGHASH_NONE commits to the inputs and not the outputs. The screen shows
+   * a payment to one address, the person approves, and the signature is
+   * equally valid on a transaction paying anywhere else. The screen was
+   * honest and so was the signature, about two different transactions. */
+
+  function withSighash(flag: number): Uint8Array {
+    const tx = new btc.Transaction({ allowUnknownOutputs: true });
+    const { script } = addressAt(wallet, 0, 0);
+    tx.addInput({
+      txid: txidFor(1),
+      index: 0,
+      witnessUtxo: { script, amount: 100_000n },
+      sighashType: flag,
+    });
+    tx.addOutput({ script: addressAt(stranger, 0, 0).script, amount: 90_000n });
+    return tx.toPSBT();
+  }
+
+  it('refuses SIGHASH_NONE as fatal, in words that say why', () => {
+    const summary = describePsbt(withSighash(btc.SigHash.NONE), wallet);
+    const caught = summary.warnings.find((w) => w.code === 'unusual-sighash');
+    expect(caught?.fatal).toBe(true);
+    expect(caught?.message).toMatch(/redirect|does not commit/i);
+    expect(summary.signable).toBe(false);
+    expect(signPsbt(withSighash(btc.SigHash.NONE), wallet, summary).ok).toBe(false);
+  });
+
+  it('refuses SIGHASH_SINGLE and the ANYONECANPAY variants too', () => {
+    for (const flag of [btc.SigHash.SINGLE, btc.SigHash.ALL_ANYONECANPAY, btc.SigHash.NONE_ANYONECANPAY]) {
+      const summary = describePsbt(withSighash(flag), wallet);
+      expect(summary.signable, `flag ${flag}`).toBe(false);
+    }
+  });
+
+  it('treats an explicit SIGHASH_ALL as exactly as ordinary as an absent one', () => {
+    const summary = describePsbt(withSighash(btc.SigHash.ALL), wallet);
+    expect(summary.warnings.find((w) => w.code === 'unusual-sighash')).toBeUndefined();
+    expect(summary.signable).toBe(true);
+  });
+
+  it('is refused by the signing layer independently of the description', () => {
+    /* Defence in depth: even a summary doctored to look clean cannot make the
+     * signing call accept a non-ALL flag, because the signing call pins its
+     * own allowlist. The two nets fail separately. */
+    const psbt = withSighash(btc.SigHash.NONE);
+    const doctored = { ...describePsbt(psbt, wallet), warnings: [], signable: true };
+    const result = signPsbt(psbt, wallet, doctored);
+    expect(result.ok).toBe(false);
+    expect(result.signed).toBe(0);
+  });
+});
+
+describe('the same coin spent twice', () => {
+  it('is fatal, because the totals on the screen would be fiction', () => {
+    const tx = new btc.Transaction({ allowUnknownOutputs: true });
+    const { script } = addressAt(wallet, 0, 0);
+    tx.addInput({ txid: txidFor(1), index: 0, witnessUtxo: { script, amount: 100_000n } });
+    tx.addInput({ txid: txidFor(1), index: 0, witnessUtxo: { script, amount: 100_000n } });
+    tx.addOutput({ script: addressAt(stranger, 0, 0).script, amount: 150_000n });
+    const summary = describePsbt(tx.toPSBT(), wallet);
+    expect(summary.warnings.find((w) => w.code === 'duplicate-input')?.fatal).toBe(true);
+    expect(summary.signable).toBe(false);
+  });
+});
