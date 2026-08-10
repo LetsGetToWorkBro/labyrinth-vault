@@ -283,10 +283,30 @@ describe('the screen can name every refusal the reader makes', () => {
   // `unreadable` is raised through failed(), which does not match the pattern.
   fatalCodes.add('unreadable');
 
+  /* Codes raised by the bridge rather than by the reader. They are exported
+   * as constants and read from the constant here rather than retyped, so a
+   * rename cannot be made to pass by renaming the copy in this file. */
+  for (const module of ['src/keys/monerotx.ts']) {
+    const text = readFileSync(module, 'utf8');
+    for (const match of text.matchAll(/^export const [A-Z_]+ = '([a-z-]+)';/gm)) {
+      fatalCodes.add(match[1]!);
+    }
+  }
+
   it('found the fatal codes, so a pass means something', () => {
     expect(fatalCodes.size).toBeGreaterThanOrEqual(6);
     expect(fatalCodes.has('opaque-output')).toBe(true);
     expect(fatalCodes.has('unusual-sighash')).toBe(true);
+    expect(fatalCodes.has('monero-file-unsupported')).toBe(true);
+  });
+
+  it('names its bridge refusals with constants, not with literals', () => {
+    /* A literal in host.ts is a code the loop above cannot see, which means a
+     * code the Swift side was never checked against. */
+    const host = readFileSync('src/bridge/host.ts', 'utf8');
+    expect(host).toMatch(/failCoded\(MONERO_UNSUPPORTED,/);
+    const literals = [...host.matchAll(/failCoded\('([a-z-]+)'/g)].map((m) => m[1]!);
+    expect(literals, 'these refusal codes should come from a constant').toEqual([]);
   });
 
   it('has a Swift case for every one of them', () => {

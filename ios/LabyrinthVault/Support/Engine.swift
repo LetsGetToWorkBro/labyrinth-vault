@@ -25,6 +25,9 @@ import JavaScriptCore
 private struct Envelope: Decodable {
     let ok: Bool
     let problem: String?
+    /// Set when the refusal is one the screen has a case for. See
+    /// `failCoded` in src/bridge/host.ts.
+    let code: String?
 }
 
 enum EngineError: LocalizedError {
@@ -32,6 +35,8 @@ enum EngineError: LocalizedError {
     case bundleFailed(String)
     case versionMismatch(Int, Int)
     case refused(String)
+    /// A refusal the engine named. The words may change; the code is the contract.
+    case refusedAs(code: String, why: String)
     case undecodable(String)
 
     var errorDescription: String? {
@@ -43,6 +48,8 @@ enum EngineError: LocalizedError {
         case .versionMismatch(let got, let want):
             "This app expects engine \(want) and the bundle is \(got). Reinstall rather than guess."
         case .refused(let why):
+            why
+        case .refusedAs(_, let why):
             why
         case .undecodable(let what):
             "The engine answered with something this app could not read (\(what))."
@@ -111,7 +118,9 @@ final class Engine {
         guard let data = json.data(using: .utf8) else { throw EngineError.undecodable("not text") }
         // The refusal shape first: a failure carries no payload to decode.
         if let envelope = try? decoder.decode(Envelope.self, from: data), !envelope.ok {
-            throw EngineError.refused(envelope.problem ?? "The vault refused.")
+            let why = envelope.problem ?? "The vault refused."
+            if let code = envelope.code { throw EngineError.refusedAs(code: code, why: why) }
+            throw EngineError.refused(why)
         }
         do {
             return try decoder.decode(T.self, from: data)

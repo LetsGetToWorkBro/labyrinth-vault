@@ -57,6 +57,7 @@ import {
   wipeWallet,
   type Wallet as MoneroWallet,
 } from '../keys/monero';
+import { MONERO_UNSUPPORTED, readContainer, readContainerText } from '../keys/monerotx';
 import { describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
 import { calibrateKdf, looksSealed, seal, unseal, type KdfParams } from '../keys/seal';
 import { wipe } from '../keys/wipe';
@@ -81,10 +82,41 @@ function fromHex(hex: string): Uint8Array | null {
 interface Failure {
   ok: false;
   problem: string;
+  /** A machine-readable name for the refusal, when there is one. */
+  code?: string;
 }
 
 function fail(problem: string): string {
   return JSON.stringify({ ok: false, problem } satisfies Failure);
+}
+
+/**
+ * A refusal the screen can recognise rather than only print.
+ *
+ * Most failures here are one-off sentences and stay that way. A few name a
+ * condition the app has a dedicated screen for, and those carry a code, in the
+ * same spirit as the fatal warning codes in psbt.ts: the words can be
+ * rewritten, the code is the contract.
+ */
+function failCoded(code: string, problem: string): string {
+  return JSON.stringify({ ok: false, code, problem } satisfies Failure);
+}
+
+/**
+ * Is this one of Monero's own wallet files?
+ *
+ * Asked of the text and of the bytes it decodes to, because either could be
+ * how it arrived. Returns the refusal to send back, or null when it is not a
+ * Monero file and the caller should carry on.
+ *
+ * The vault refuses these, and the point of recognising them is that the
+ * refusal is true: "this is a Monero unsigned transaction set and this build
+ * cannot open it" sends somebody to the right place, and "that is not a
+ * transaction" sends them to re-export a file that was never wrong.
+ */
+function moneroFileRefusal(text: string, bytes: Uint8Array | null): string | null {
+  const found = readContainerText(text) ?? (bytes ? readContainer(bytes) : null);
+  return found ? failCoded(MONERO_UNSUPPORTED, found.refusal) : null;
 }
 
 function done(payload: Record<string, unknown>): string {
@@ -285,7 +317,13 @@ export const api = {
 
   /** Offer a scanned QR frame. Returns progress, or the payload when complete. */
   scan: guarded('scan', (text: string) => {
-    const progress = scanner.offer(String(text ?? ''));
+    const value = String(text ?? '');
+    /* Before the scanner, because it would answer "not a frame this device
+     * recognises" and that is the unhelpful half-truth this check exists to
+     * replace. */
+    const monero = moneroFileRefusal(value, null);
+    if (monero) return monero;
+    const progress = scanner.offer(value);
     return done({
       format: progress.format,
       have: progress.have,
@@ -305,6 +343,8 @@ export const api = {
   describe: guarded('describe', (psbtHex: string) => {
     const open = requireSession();
     const psbt = fromHex(psbtHex);
+    const monero = moneroFileRefusal(String(psbtHex ?? ''), psbt);
+    if (monero) return monero;
     if (!psbt) return fail('That is not a transaction.');
     lastDescribed = describePsbt(psbt, open.btc);
     return done({ summary: toWire(lastDescribed) });

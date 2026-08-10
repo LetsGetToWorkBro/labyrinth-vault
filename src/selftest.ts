@@ -26,6 +26,7 @@ import { bytewordsEncode } from './airgap/bytewords';
 import { sha256 } from './airgap/sha256';
 import { selfTest as bitcoinSelfTest } from './keys/bitcoin';
 import { allChecksPass, selfTest as moneroSelfTest, toHex, type Check } from './keys/monero';
+import { selfTest as moneroCryptoSelfTest } from './keys/monerocrypto';
 import { seal, unseal } from './keys/seal';
 import { wipe } from './keys/wipe';
 
@@ -100,6 +101,13 @@ export function selfTest(): Check[] {
 
   // The Monero checks carry their own names and reasons; they join as-is.
   checks.push(...moneroSelfTest());
+
+  /* The spending primitives, against the Monero project's own vectors. They
+   * are not on any path that signs today — nothing here signs a Monero
+   * transaction — but they are the floor that one will stand on, and a
+   * primitive that starts failing should be caught at the launch that breaks
+   * it rather than at the commit that finally depends on it. */
+  checks.push(...moneroCryptoSelfTest());
 
   return checks;
 }

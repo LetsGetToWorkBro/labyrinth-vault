@@ -103,9 +103,11 @@ enum Asset: String {
     var name: String { self == .btc ? "BITCOIN" : "MONERO" }
 }
 
-/// Every condition the reader refuses over, one case per fatal warning code in
-/// src/keys/psbt.ts. Each is fatal: there is deliberately no associated
-/// "override" payload, and no case carries a way to continue.
+/// Every condition the reader refuses over: one case per fatal warning code in
+/// src/keys/psbt.ts, plus the named refusals the bridge raises directly, such
+/// as a Monero wallet file this build cannot open. Each is fatal: there is
+/// deliberately no associated "override" payload, and no case carries a way to
+/// continue.
 ///
 /// The mapping is not decorative. When the bridge hands this layer a fatal
 /// warning it does not recognise, the honest outcome is a refusal it cannot
@@ -127,6 +129,8 @@ enum Refusal: Equatable {
     case noKeys
     /// `unreadable`
     case unreadable
+    /// `monero-file-unsupported`
+    case moneroFile
     /// The approval digest or wallet check in `signPsbt`.
     case digestMismatch
     /// A fatal code this build does not have a case for. Refuses anyway.
@@ -146,6 +150,7 @@ enum Refusal: Equatable {
         case "opaque-output": self = .opaqueOutput
         case "watch-only": self = .noKeys
         case "unreadable": self = .unreadable
+        case "monero-file-unsupported": self = .moneroFile
         default: self = .unrecognised(code)
         }
     }
@@ -159,6 +164,7 @@ enum Refusal: Equatable {
         case .opaqueOutput: ["CANNOT", "READ", "DESTINATION"]
         case .noKeys: ["NO", "SIGNING", "KEY"]
         case .unreadable: ["CANNOT", "READ", "TRANSACTION"]
+        case .moneroFile: ["MONERO", "NOT YET"]
         case .digestMismatch: ["CANNOT", "SIGN"]
         case .unrecognised: ["CANNOT", "SIGN"]
         }
@@ -172,6 +178,7 @@ enum Refusal: Equatable {
         case .opaqueOutput: ["AN OUTPUT PAYS", "A SCRIPT WITH NO", "READABLE ADDRESS."]
         case .noKeys: ["THIS WALLET IS", "WATCH-ONLY. IT HAS", "NO PRIVATE KEY."]
         case .unreadable: ["THESE BYTES ARE NOT", "A TRANSACTION THIS", "DEVICE CAN READ."]
+        case .moneroFile: ["THIS IS A MONERO", "WALLET FILE. THE", "VAULT CANNOT OPEN IT."]
         case .digestMismatch: ["TRANSACTION DIGEST", "DOES NOT MATCH", "APPROVED SUMMARY."]
         case .unrecognised: ["THE READER REFUSED", "FOR A REASON THIS", "SCREEN CANNOT NAME."]
         }
@@ -187,6 +194,32 @@ enum Refusal: Equatable {
             "that knows what every input was worth. This transaction did not supply one of them. " +
             "The alternative to refusing is printing a number the vault has not verified, which " +
             "is worse than printing nothing."
+        case .sighashFlags:
+            "This transaction asks to be signed in a way that does not commit to where the money " +
+            "goes. A signature like that can be lifted out and reused around outputs nobody " +
+            "showed you, so the only safe reading of the request is that it is not the request " +
+            "it appears to be."
+        case .duplicateInput:
+            "The same coin appears as an input twice. It can only be spent once, so every total " +
+            "computed from this transaction — what leaves, what returns, what the fee is — is a " +
+            "number describing something that cannot happen."
+        case .opaqueOutput:
+            "One output pays a script that does not decode to any address this device can show " +
+            "you. There is no honest way to put it on the confirmation screen, and signing a " +
+            "destination nobody could read is the thing this screen exists to prevent."
+        case .noKeys:
+            "This vault is holding a watch-only key. It can tell you what a transaction does and " +
+            "it has nothing to sign it with. That is not a fault; it is what watch-only means."
+        case .unreadable:
+            "These bytes did not parse as a transaction. Most often that is a misread camera " +
+            "frame, and scanning again fixes it. The vault will not guess at a partial parse."
+        case .moneroFile:
+            "This is one of Monero's own wallet files, and it is a perfectly good one — the " +
+            "vault recognises the header. What it cannot do is open it: everything past the " +
+            "header is encrypted with a key derived by CryptoNight, which this build does not " +
+            "implement, and signing a Monero transaction needs CLSAG ring signatures on top of " +
+            "that. Bitcoin signing works today. Monero here is keys, addresses and recovery " +
+            "phrases only. Nothing was signed and nothing was changed."
         case .digestMismatch:
             "The bytes in front of the signer are not the bytes that were reviewed on the " +
             "previous screen. Whatever happened between the two steps, a signature over " +
@@ -226,6 +259,10 @@ enum Refusal: Equatable {
         case .unreadable: [
             ("BYTES DID NOT PARSE", false),
             ("NOTHING TO DESCRIBE", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .moneroFile: [
+            ("MONERO WALLET FILE RECOGNISED", true),
+            ("CONTENTS ENCRYPTED · CANNOT OPEN", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .digestMismatch: [
             ("APPROVED SUMMARY DIGEST 9F2A1C04", false),
@@ -469,7 +506,23 @@ final class Vault: ObservableObject {
     /// reach review at all, which is the property the routes exist to encode.
     func offer(frame text: String) {
         guard let engine else { return }
-        guard let reply = try? engine.scan(text) else { return }
+
+        let reply: Engine.ScanReply
+        do {
+            reply = try engine.scan(text)
+        } catch EngineError.refusedAs(let code, _) {
+            /* The scanner named what it was looking at. A frame it simply does
+             * not recognise is not an error and lands in the `catch` below,
+             * where staying silent is right: the camera is still running and
+             * the next frame may be the one. A *named* refusal is different —
+             * the engine knows exactly what this is — so it gets a screen. */
+            Haptic.refuse()
+            go(.refused(Refusal(code: code)))
+            return
+        } catch {
+            return
+        }
+
         scanProgress = (reply.have, reply.total)
         guard let payload = reply.payload else { return }
 
@@ -483,6 +536,9 @@ final class Vault: ObservableObject {
                 Haptic.tick()
                 go(.review(summary))
             }
+        } catch EngineError.refusedAs(let code, _) {
+            Haptic.refuse()
+            go(.refused(Refusal(code: code)))
         } catch {
             Haptic.refuse()
             go(.refused(.unreadable))

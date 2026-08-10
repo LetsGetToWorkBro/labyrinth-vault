@@ -117,6 +117,25 @@ Early. What exists and is tested:
   through `revealMnemonic`, `revealSecretHex` and `revealWallet`. A test fails
   if that list grows.
 
+- **Monero's spending primitives** (`src/keys/monerocrypto.ts`) — the six
+  operations every Monero transaction rests on: the Diffie-Hellman step that
+  finds your own outputs, the one-time key it derives, and the key image that
+  stops a double spend. Checked against 720 vectors taken verbatim from the
+  Monero project's own `tests/crypto/tests.txt`.
+
+  Five of the six are compositions of audited primitives. The sixth,
+  `ge_fromfe_frombytes_vartime`, has no audited implementation anywhere — it is
+  an Elligator-style map that exists only in Monero's `crypto-ops.c` — so it is
+  transcribed by hand here, and that is exactly why its 120 vectors are tested
+  in isolation, with no hashing before and no cofactor multiplication after.
+
+  This is not Monero signing, and `src/keys/monerotx.ts` says so out loud:
+  it recognises all six of wallet2's file formats and refuses them by name,
+  because telling somebody their perfectly good `unsigned_monero_tx` "is not a
+  transaction" sends them off to debug a file that was never wrong. See
+  [docs/monero-signing.md](docs/monero-signing.md) for the four layers that are
+  still missing and why none of them is being guessed at.
+
 - **The confirmation screen's contents** (`src/keys/psbt.ts`) — the part that
   is actually the security. It reads an unsigned transaction and says what it
   does, then signs it or refuses.
@@ -173,8 +192,12 @@ Next, in order:
 1. Build the iOS target in Xcode. The Swift sources have never been compiled —
    there is no Swift toolchain where this was written — so that is the first
    real check on them.
-2. Monero transaction signing, which needs wallet2's unsigned-set format rather
-   than only the transport that carries it.
+2. Monero transaction signing. The primitives are built and pinned to Monero's
+   own vectors; what is left is CryptoNight, a Boost portable-binary-archive
+   reader, wallet2's `unsigned_tx_set` structure and CLSAG with Bulletproofs+.
+   Each is named, in order, in [docs/monero-signing.md](docs/monero-signing.md),
+   along with the reason none of it ships until it can be tested against a real
+   Monero wallet rather than against itself.
 
 ## Running the tests
 

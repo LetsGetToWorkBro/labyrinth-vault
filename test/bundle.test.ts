@@ -181,6 +181,28 @@ describe('the whole flow, through the bundle', () => {
     expect(wrong.problem).toMatch(/does not match|nothing was signed/i);
   });
 
+  it('names a Monero wallet file instead of calling it junk', () => {
+    /* The whole point of recognising these: somebody holding a perfectly good
+     * unsigned_monero_tx should be told what the vault cannot do with it, not
+     * told their file is not a transaction. Driven through the bundle because
+     * the refusal has to survive the bridge with its code attached, which is
+     * what the Swift side switches on. */
+    const file = 'Monero unsigned tx set' + 'encrypted bytes would follow';
+    const asHex = hex(Uint8Array.from(file, (c) => c.charCodeAt(0) & 0xff));
+
+    for (const answer of [call(api, 'describe', asHex), call(api, 'scan', file)]) {
+      expect(answer.ok).toBe(false);
+      expect(answer.code).toBe('monero-file-unsupported');
+      expect(answer.problem).toContain('Monero unsigned transaction set');
+      expect(answer.problem).toMatch(/CryptoNight/);
+    }
+
+    // And the Bitcoin path is not affected by any of it.
+    const bitcoin = call(api, 'describe', '70736274ff');
+    expect(bitcoin.ok, bitcoin.problem).toBe(true);
+    expect(bitcoin.code).toBeUndefined();
+  });
+
   it('assembles a scanned animation frame by frame', () => {
     call(api, 'scanReset');
     const wallet = openWatch(zpub).wallet!;
