@@ -238,21 +238,50 @@
 
   /* --- boot ---------------------------------------------------------------- */
 
+  /* Launch is a power-on self-test, not a splash. The shipped app calls
+     selfTest() from src/selftest.ts here — real hashes against published
+     vectors, a seal round trip — and mounts nothing unless every check
+     passes. The names below are the real checks' names. */
   S.splash = {
-    group: 'Boot', name: 'Splash',
+    group: 'Boot', name: 'Power-on self-test',
     render: function () {
-      return '<div class="screen" style="justify-content:center;align-items:center;position:relative">' +
-        '<div style="position:absolute;inset:0;display:grid;place-items:center;opacity:.10">' +
+      return '<div class="screen" style="position:relative">' +
+        '<div style="position:absolute;inset:0;display:grid;place-items:center;opacity:.08">' +
           '<div style="width:150%">' + glyph(300, 9, 13, 1) + '</div>' +
         '</div>' +
-        '<div class="enter" style="position:relative;text-align:center">' +
-          '<div style="font-size:26px;font-weight:600;letter-spacing:.36em;margin-left:.36em">LABYRINTH</div>' +
-          '<div class="label" style="margin-top:14px">VAULT&nbsp; ·&nbsp; OFFLINE SIGNER</div>' +
+        '<div class="pad" style="position:relative;flex:1;padding-top:64px">' +
+          '<div class="enter">' +
+            '<div style="font-size:24px;font-weight:600;letter-spacing:.36em">LABYRINTH</div>' +
+            '<div class="label" style="margin-top:12px">VAULT&nbsp; ·&nbsp; OFFLINE SIGNER</div>' +
+          '</div>' +
+          '<div class="label" style="margin:38px 0 6px;color:var(--paper)">POWER-ON SELF-TEST</div>' +
+          '<div class="stack" data-post style="min-height:260px"></div>' +
+          '<div class="label" style="margin-top:20px" data-verdict>PROVING THE MACHINE</div>' +
         '</div>' +
-        '<div class="label" style="position:absolute;bottom:46px">NO NETWORK INTERFACE PRESENT</div>' +
       '</div>';
     },
-    mount: function () { after(function () { go('declaration'); }, 2100); }
+    mount: function (root) {
+      var checks = [
+        'SHA-256 · NIST VECTOR', 'BYTEWORDS · REFERENCE OUTPUT',
+        'BIP84 · SPECIFICATION VECTOR', 'SEALED VAULT · ROUND TRIP',
+        'MONERO SEED · PUBLISHED ADDRESS', 'ARGON2ID · REFERENCE DIGEST',
+        'AEAD · LIBSODIUM AGREEMENT'
+      ];
+      var host = $('[data-post]', root), i = 0;
+      var tick = every(function () {
+        if (i >= checks.length) {
+          clearInterval(tick);
+          $('[data-verdict]', root).textContent = 'ALL CHECKS PASSED';
+          $('[data-verdict]', root).style.color = 'var(--signal)';
+          after(function () { go('declaration'); }, 700);
+          return;
+        }
+        var row = document.createElement('div');
+        row.className = 'check is-on enter';
+        row.innerHTML = '<span class="check__mark">✓</span>' + checks[i++];
+        host.appendChild(row);
+      }, 240);
+    }
   };
 
   /* --- onboarding ---------------------------------------------------------- */
@@ -1117,10 +1146,12 @@
      Each has exactly one control. There is deliberately no route onward: an
      "advanced" escape hatch here would delete the security of the product. */
 
-  function refusal(headline, why, detail, checks) {
+  function refusal(headline, why, detail, checks, opts) {
+    opts = opts || {};
     return '<div class="screen refusal">' +
       '<div class="refusal__bar"></div>' +
-      '<header class="statusbar"><div class="label" style="color:var(--paper)">SIGNING REFUSED</div>' +
+      '<header class="statusbar"><div class="label" style="color:var(--paper)">' +
+        (opts.title || 'SIGNING REFUSED') + '</div>' +
         '<div class="label">VAULT · FAIL CLOSED</div></header>' +
       '<div class="body pad" style="display:flex;flex-direction:column;justify-content:center">' +
         '<h1 class="statement statement--mega" style="margin-bottom:26px">' + headline + '</h1>' +
@@ -1129,9 +1160,28 @@
         '<p class="prose">' + detail + '</p>' +
         (checks ? '<div class="checks" style="margin-top:26px">' + checks + '</div>' : '') +
       '</div>' +
-      '<div class="foot">' + primary('SCAN AGAIN', '', 'scanner') + '</div>' +
+      '<div class="foot">' + primary(opts.label || 'SCAN AGAIN', '', opts.act || 'scanner') + '</div>' +
     '</div>';
   }
+
+  /* The self-test failing is the one refusal that precedes everything else:
+     a machine that cannot prove its own hash does not get to show a home
+     screen. One action, and it is not "continue". */
+  S.selftestfail = {
+    group: 'Refusal', name: 'Self-test failed',
+    render: function () {
+      return refusal('CANNOT<br>START',
+        'THIS BUILD FAILED<br>ITS OWN<br>SELF-TEST.',
+        'One of the launch checks against published vectors did not return the answer it ' +
+        'has returned on every honest run. A signing device whose hash is wrong has exactly ' +
+        'one honest behaviour, which is to say so and stop. Nothing has been damaged, and ' +
+        'nothing will run.',
+        '<div class="check is-on"><span class="check__mark">✓</span>SHA-256 · NIST VECTOR</div>' +
+        '<div class="check is-bad"><span class="check__mark">×</span>BIP84 · SPECIFICATION VECTOR</div>' +
+        '<div class="check is-on"><span class="check__mark">✓</span>NO KEY DERIVED · NO SCREEN SHOWN</div>',
+        { title: 'START REFUSED', label: 'RUN CHECKS AGAIN', act: 'splash' });
+    }
+  };
 
   S.refusechange = {
     group: 'Refusal', name: 'Change does not match',
@@ -1311,7 +1361,7 @@
     'home', 'btcsetup', 'xmrsetup',
     'export', 'scanner', 'receiving', 'received',
     'confirm', 'destination', 'attest', 'signed', 'signedqr',
-    'refusechange', 'refusefee', 'refuseframes',
+    'refusechange', 'refusefee', 'refuseframes', 'selftestfail',
     'security', 'settings', 'keys'
   ];
 

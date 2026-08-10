@@ -1,0 +1,13 @@
+{
+  "name": "labyrinth-vault-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The React Native shell. The vault libraries in ../src run unmodified in Hermes; this package adds only the runtime floor and the platform bridge.",
+  "main": "index.js",
+  "dependencies": {
+    "fast-text-encoding": "1.0.6",
+    "react": "18.3.1",
+    "react-native": "0.76.5",
+    "react-native-get-random-values": "1.11.0"
+  }
+}
