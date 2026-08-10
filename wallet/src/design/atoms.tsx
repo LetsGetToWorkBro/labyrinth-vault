@@ -13,7 +13,7 @@
  * which are tinted because the tint is the meaning.
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -21,7 +21,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withSpring, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { color, motion, radius, space } from './tokens';
 import { Body, Label, Small, Strong } from './text';
@@ -216,12 +216,19 @@ export function Dot({
     size?: number | undefined;
     tone?: string | undefined;
 }) {
-  const pulse = useSharedValue(0);
+  const pulse = useSharedValue(1);
   const animated = useAnimatedStyle(() => ({ opacity: 0.35 + pulse.value * 0.65 }));
 
-  if (state === 'working' && pulse.value === 0) {
-    pulse.value = withTiming(1, { duration: 900 });
-  }
+  /* In an effect, and repeating. Reading a shared value during render is both
+   * a Reanimated warning and, here, a bug that only shows up in the state that
+   * matters: a one-shot fade leaves the dot lit while a handoff is in progress,
+   * which is exactly when it is meant to be saying "something is happening". */
+  useEffect(() => {
+    pulse.value =
+      state === 'working'
+        ? withRepeat(withTiming(0.15, { duration: 850 }), -1, true)
+        : withTiming(1, { duration: 200 });
+  }, [state, pulse]);
 
   const paint = tone ?? (state === 'ready' ? color.good : state === 'alarm' ? color.alarm : color.slate);
   const hollow = state === 'offline';

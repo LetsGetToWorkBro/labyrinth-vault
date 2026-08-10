@@ -28,7 +28,7 @@
  * Not a donut. A donut of two values is an ornament with a legend.
  */
 
-import { ScrollView, View } from 'react-native';
+import { Dimensions, ScrollView, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Action, ActionRow, Cell, Chip, Gap, Press, Rule, Screen } from '../design/atoms';
 import { Body, Display, Label, Small } from '../design/text';
@@ -41,6 +41,11 @@ import { assetColor, color, space } from '../design/tokens';
 import { fiatCents, formatFiat } from '../core/units';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
+
+/* The gutter is 24 either side, so the readout column is whatever is left.
+ * Measuring it here rather than writing 342 keeps the allocation rule the
+ * width of the thing above it on a mini, a Pro and a Max alike. */
+const COLUMN = Dimensions.get('window').width - space.gutter * 2;
 
 export function HomeScreen({ navigation }: Nav<'Home'>) {
   const { snapshot, vault, now, setAsset } = useStore();
@@ -80,7 +85,7 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
           <Display>{formatFiat(total)}</Display>
           <Gap size={space.gap} />
           <Allocation
-            width={342}
+            width={COLUMN}
             parts={[
               { weight: btcValue, tone: assetColor('BTC') },
               { weight: xmrValue, tone: assetColor('XMR') },
