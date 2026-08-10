@@ -155,3 +155,23 @@ describe('the watch-only export', () => {
     expect(parseAccount(future)).toBeNull();
   });
 });
+
+describe('account payloads, held to their own version and key format', () => {
+  const enc = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+  const REAL_ZPUB =
+    'zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs';
+
+  it('refuses a version below the first one that ever existed', () => {
+    for (const v of [0, -1, -99]) {
+      expect(parseAccount(enc({ v, chain: 'btc', zpub: REAL_ZPUB, first: 'bc1q' })), `v=${v}`).toBeNull();
+    }
+    expect(parseAccount(enc({ v: 1, chain: 'btc', zpub: REAL_ZPUB, first: 'bc1q' }))).not.toBeNull();
+  });
+
+  it('refuses a key that only looks like a zpub', () => {
+    /* Prefix-checking passes a string that is not a key, and the failure then
+     * surfaces on the companion, far from the thing that was wrong. */
+    expect(parseAccount(enc({ v: 1, chain: 'btc', zpub: 'zpubNOTAKEY', first: 'x' }))).toBeNull();
+    expect(parseAccount(enc({ v: 1, chain: 'btc', zpub: REAL_ZPUB.slice(0, 60), first: 'x' }))).toBeNull();
+  });
+});

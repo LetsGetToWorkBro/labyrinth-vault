@@ -253,3 +253,26 @@ describe('our own frames, our own reader', () => {
     expect(collector.status().type).toBe('crypto-account');
   });
 });
+
+describe('bounds on a single frame', () => {
+  it('refuses an oversized single-part body without doing the work first', () => {
+    /* Timed, and the reason is worth writing down: the cap is a
+     * denial-of-service guard, not a correctness guard. An oversized body
+     * decodes to null either way, because it fails its checksum, so the return
+     * value cannot tell you whether the cap is there at all. The first version
+     * of this test asserted only the null and passed with the cap deleted,
+     * which is a test proving nothing.
+     *
+     * The observable difference is the work avoided: measured at ~4000ms
+     * uncapped against sub-millisecond capped. The bound below sits an order of
+     * magnitude clear of both, so it fails loudly if the cap goes and does not
+     * flake on a slow machine.
+     *
+     * 'aa' rather than random letters because it is a real minimal pair, so
+     * nothing short-circuits early on an unknown word. */
+    const huge = 'aa'.repeat(20_000_000);
+    const before = Date.now();
+    expect(parseUr(`ur:bytes/${huge}`)).toBeNull();
+    expect(Date.now() - before, 'the cap must reject before decoding').toBeLessThan(400);
+  });
+});

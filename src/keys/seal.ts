@@ -260,6 +260,15 @@ export function unseal(blob: Uint8Array, passphrase: string): UnsealResult {
  * laptop is either weak on the laptop or unusable on the phone. Walks memory
  * upward at t=3 until the target is met or the ceiling is hit. The timer is
  * an argument so tests can supply a fake one instead of waiting.
+ *
+ * **Calibration can only ever strengthen.** The walk starts at the default
+ * rather than at the floor, so a device too slow to reach the target still
+ * gets the default parameters and simply takes longer to unlock. Starting at
+ * the floor would have meant that on a slow phone — exactly the phone this
+ * app is for — calling the tuning function produced a *weaker* vault than not
+ * calling it, which is the wrong way round for a function whose whole purpose
+ * is to make the vault harder to open. Comfort is not worth eight times less
+ * memory in front of an attacker who has the file.
  */
 export function calibrateKdf(
   targetMs: number,
@@ -268,7 +277,7 @@ export function calibrateKdf(
     deriveKey('calibration passphrase', new Uint8Array(SALT_BYTES), params);
   },
 ): KdfParams {
-  let m = KDF_LIMITS.minM;
+  let m = DEFAULT_KDF.m;
   for (;;) {
     const params: KdfParams = { t: DEFAULT_KDF.t, m, p: 1 };
     const before = timer();

@@ -28,7 +28,7 @@
  * the checksum, so this layer only has to be legible.
  */
 
-import { addressAt, type BtcWallet } from './bitcoin';
+import { addressAt, openWatch, type BtcWallet } from './bitcoin';
 import { restoreHeight, type Wallet as MoneroWallet, type Network } from './monero';
 
 /** Bumped only if the shape changes in a way an old reader would misread. */
@@ -112,13 +112,20 @@ export function parseAccount(bytes: Uint8Array): Account | null {
   }
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
-  if (typeof raw['v'] !== 'number' || raw['v'] > ACCOUNT_VERSION) return null;
+  /* Both ends of the range. A version above ours we cannot read; a version of
+   * zero or below is not a version this format ever had, so it is a malformed
+   * or hand-edited payload rather than an old one. */
+  if (typeof raw['v'] !== 'number' || !Number.isInteger(raw['v'])) return null;
+  if (raw['v'] < 1 || raw['v'] > ACCOUNT_VERSION) return null;
 
   if (raw['chain'] === 'btc') {
     const zpub = raw['zpub'];
     const first = raw['first'];
     if (typeof zpub !== 'string' || typeof first !== 'string') return null;
-    if (!zpub.startsWith('zpub') && !zpub.startsWith('xpub')) return null;
+    /* Decode it rather than eyeball the prefix. A string starting "zpub" that
+     * is not a key would sail through a prefix check and fail much later, on
+     * the companion, a long way from the thing that was actually wrong. */
+    if (!openWatch(zpub).ok) return null;
     return { v: raw['v'], chain: 'btc', zpub, first };
   }
 
