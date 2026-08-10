@@ -81,7 +81,7 @@ npm start            # then press i, or scan the code with Expo Go
 ```
 
 ```sh
-npm test             # 70 tests
+npm test             # 84 tests
 npm run typecheck    # strict, exactOptionalPropertyTypes, noUncheckedIndexedAccess
 ```
 

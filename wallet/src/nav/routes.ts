@@ -24,7 +24,20 @@ export type Routes = {
   Asset: { asset: Asset };
   Receive: { asset?: Asset } | undefined;
   Send: undefined;
-  Scan: undefined;
+  /**
+   * One camera screen, two jobs, named rather than inferred.
+   *
+   * `wire` is the airgap: frames from a vault, assembled by the vault's own
+   * collector, refused unless the whole payload matches its digest.
+   * `address` is the ordinary case — somebody's payment code on a screen or a
+   * printout, which is a single QR carrying text and nothing to assemble.
+   *
+   * They are one screen because they are one camera and one set of framing
+   * marks, and they are one *parameter* because the reader must never guess:
+   * treating a stray QR as a transaction frame, or a transaction frame as a
+   * destination, are both ways to end up paying the wrong thing.
+   */
+  Scan: { purpose: 'wire' | 'address' } | undefined;
   Vault: undefined;
   Pair: undefined;
   Security: undefined;

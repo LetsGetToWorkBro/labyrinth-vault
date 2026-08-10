@@ -31,13 +31,15 @@ import { Body, Label, LabelWide, Small } from '../design/text';
 import { Header } from '../components/chrome';
 import { Link } from '../labyrinth/glyphs';
 import { color, radius, space } from '../design/tokens';
-import { Scanner } from '@vault/airgap/scanner';
-import { confirmed } from '../design/haptics';
+import { formatOf, Scanner } from '@vault/airgap/scanner';
+import { checkAddress, readPaymentUri } from '../core/addresses';
+import { confirmed, refused } from '../design/haptics';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
-export function ScanScreen({ navigation }: Nav<'Scan'>) {
+export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
   const store = useStore();
+  const purpose = route.params?.purpose ?? 'wire';
   const [permission, requestPermission] = useCameraPermissions();
   const scanner = useRef(new Scanner());
   const [progress, setProgress] = useState<{ have: number; total: number; kind: string | null }>({
@@ -51,6 +53,27 @@ export function ScanScreen({ navigation }: Nav<'Scan'>) {
   const onFrame = useCallback(
     ({ data }: { data: string }) => {
       if (done) return;
+
+      /* A destination is a single code carrying text, so it is finished the
+       * moment it is read. It is checked here rather than accepted here: a
+       * camera pointed at a room sees wifi codes and cereal boxes, and the
+       * one thing that must not happen is a string that is not an address
+       * landing in the recipient field looking like one. */
+      if (purpose === 'address' && formatOf(data) === null) {
+        const read = readPaymentUri(data);
+        const verdict = checkAddress(read.address, store.asset);
+        if (!verdict.ok) {
+          refused();
+          setProblem(verdict.problem);
+          return;
+        }
+        confirmed();
+        store.send({ type: 'recipient', value: verdict.address, source: 'scanned' });
+        if (read.amount) store.send({ type: 'amount', value: read.amount });
+        navigation.goBack();
+        return;
+      }
+
       const status = scanner.current.offer(data);
       setProgress({ have: status.have, total: status.total, kind: typeof status.kind === 'string' ? status.kind : null });
       if (status.problem && status.have === 0) setProblem(status.problem);
@@ -61,7 +84,7 @@ export function ScanScreen({ navigation }: Nav<'Scan'>) {
         setDone(String(status.kind ?? 'payload'));
       }
     },
-    [done],
+    [done, purpose, store, navigation],
   );
 
   if (!permission) return <Screen />;
@@ -87,7 +110,11 @@ export function ScanScreen({ navigation }: Nav<'Scan'>) {
   return (
     <Screen>
       <StatusBar style="light" />
-      <Header onBack={() => navigation.goBack()} overline="SCAN" title={done ? 'Received' : 'Point at the vault'} />
+      <Header
+        onBack={() => navigation.goBack()}
+        overline="SCAN"
+        title={done ? 'Received' : purpose === 'address' ? 'Point at a payment code' : 'Point at the vault'}
+      />
 
       <Gap size={space.gap} />
       <View style={{ paddingHorizontal: space.gutter }}>
@@ -120,15 +147,23 @@ export function ScanScreen({ navigation }: Nav<'Scan'>) {
           <>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.gap }}>
               <Label tone={color.bone}>
-                {progress.total > 0 ? `FRAMES ${progress.have} / ${progress.total}` : 'WAITING FOR FRAMES'}
+                {purpose === 'address'
+                  ? 'ONE CODE, ANY PAYMENT APP'
+                  : progress.total > 0
+                    ? `FRAMES ${progress.have} / ${progress.total}`
+                    : 'WAITING FOR FRAMES'}
               </Label>
               <View style={{ flex: 1 }} />
               {progress.kind ? <Label tone={color.slate}>{progress.kind.toUpperCase()}</Label> : null}
             </View>
-            <Gap size={space.step} />
-            <Bar have={progress.have} total={progress.total} />
+            {purpose === 'address' ? null : (
+              <>
+                <Gap size={space.step} />
+                <Bar have={progress.have} total={progress.total} />
+              </>
+            )}
             <Gap size={space.gap} />
-            <Link direction="in" active width={280} />
+            <Link direction="in" active width={280} labels={purpose !== 'address'} />
             {problem ? (
               <>
                 <Gap size={space.gap} />
@@ -136,15 +171,23 @@ export function ScanScreen({ navigation }: Nav<'Scan'>) {
               </>
             ) : null}
             <Gap size={space.section} />
-            <Notice title="A SCAN EITHER FINISHES OR IT DOES NOT">
-              Frames can arrive out of order and repeat; that is normal and the reader expects it. What
-              cannot happen is a half-assembled payload being accepted — if the digest disagrees, the whole
-              scan is thrown away and started again.
-            </Notice>
+            {purpose === 'address' ? (
+              <Notice title="A VALID ADDRESS IS NOT A CORRECT ADDRESS">
+                The checksum only proves this code was not corrupted on its way to the camera. Software that
+                swaps a destination swaps in one that checksums perfectly, which is why your vault will show
+                you where this payment is going before it signs anything.
+              </Notice>
+            ) : (
+              <Notice title="A SCAN EITHER FINISHES OR IT DOES NOT">
+                Frames can arrive out of order and repeat; that is normal and the reader expects it. What
+                cannot happen is a half-assembled payload being accepted — if the digest disagrees, the whole
+                scan is thrown away and started again.
+              </Notice>
+            )}
           </>
         )}
         <Gap size={space.gap} />
-        {store.snapshot.demo && !done ? (
+        {store.snapshot.demo && !done && purpose !== 'address' ? (
           <Small tone={color.dim}>
             There is no vault in this build to point this at. The reader is real; there is simply nothing
             drawing frames on the other side.

@@ -77,7 +77,7 @@ export function SendScreen({ navigation }: Nav<'Send'>) {
   return (
     <Screen>
       <StatusBar style="light" />
-      {session.step === 'compose' ? <Compose onBack={back} /> : null}
+      {session.step === 'compose' ? <Compose onBack={back} navigation={navigation} /> : null}
       {session.step === 'review' ? <Review onBack={back} /> : null}
       {session.step === 'transmit' ? <Transmit onBack={back} /> : null}
       {session.step === 'awaiting' ? <Awaiting onBack={back} /> : null}
@@ -103,9 +103,9 @@ export function SendScreen({ navigation }: Nav<'Send'>) {
 
 // ---------------------------------------------------------------- 1. compose
 
-function Compose({ onBack }: { onBack: () => void }) {
+function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'Send'>['navigation'] }) {
   const store = useStore();
-  const { session, asset, snapshot } = store;
+  const { session, asset, snapshot, vault } = store;
   const view = snapshot.assets[asset];
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -154,8 +154,12 @@ function Compose({ onBack }: { onBack: () => void }) {
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Label>RECIPIENT</Label>
             <View style={{ flex: 1 }} />
-            <Press onPress={paste}>
+            <Press onPress={() => void paste()}>
               <Label tone={color.ash}>PASTE</Label>
+            </Press>
+            <View style={{ width: space.gap }} />
+            <Press onPress={() => navigation.navigate('Scan', { purpose: 'address' })}>
+              <Label tone={color.ash}>SCAN</Label>
             </Press>
             <View style={{ width: space.gap }} />
             <Press onPress={() => store.send({ type: 'recipient', value: '', source: null })}>
@@ -168,6 +172,7 @@ function Compose({ onBack }: { onBack: () => void }) {
           ) : (
             <Body tone={color.slate}>Paste an address, or scan one with the camera.</Body>
           )}
+          {session.compose.source === 'scanned' ? <Small tone={color.slate}>Scanned. Check it anyway.</Small> : null}
 
           {verdict?.problem ? <Small tone={color.alarm}>{verdict.problem}</Small> : null}
           {verdict?.ok ? (
@@ -255,15 +260,37 @@ function Compose({ onBack }: { onBack: () => void }) {
             <Gap size={space.step} />
           </>
         ) : null}
-        <Action
-          label="REVIEW TRANSACTION"
-          disabled={!ready}
-          onPress={() => setProblem(store.prepareDraft())}
-        />
-        <Gap size={space.step} />
-        <Body tone={color.slate} style={{ textAlign: 'center' }}>
-          Nothing is signed here. This device builds the transaction; your vault approves it.
-        </Body>
+        {vault.state === 'unpaired' ? (
+          <>
+            {/* Not an error, and not a dead end either. Three quarters of this
+                application works with no vault anywhere near it, and saying so
+                plainly is the difference between a limitation and a fault. */}
+            <Notice title="SIGNING NEEDS YOUR VAULT">
+              This wallet can watch your balances, show your history and receive funds without it. It cannot
+              sign, and it was built not to be able to.
+            </Notice>
+            <Gap size={space.step} />
+            <Action label="CONNECT YOUR VAULT" onPress={() => navigation.navigate('Pair')} />
+            <Gap size={space.step} />
+            <Action label="BUILD IT ANYWAY" quiet disabled={!ready} onPress={() => setProblem(store.prepareDraft())} />
+            <Gap size={space.step} />
+            <Body tone={color.slate} style={{ textAlign: 'center' }}>
+              A transaction can be prepared now and shown to a vault later. Nothing about it is secret.
+            </Body>
+          </>
+        ) : (
+          <>
+            <Action
+              label="REVIEW TRANSACTION"
+              disabled={!ready}
+              onPress={() => setProblem(store.prepareDraft())}
+            />
+            <Gap size={space.step} />
+            <Body tone={color.slate} style={{ textAlign: 'center' }}>
+              Nothing is signed here. This device builds the transaction; your vault approves it.
+            </Body>
+          </>
+        )}
       </View>
       <Gap size={space.chapter} />
     </ScrollView>
