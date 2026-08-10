@@ -33,7 +33,6 @@ import { Action, Chip, Dot, FactRow, Gap, Notice, Panel, Rule, Screen } from '..
 import { Body, Label, LabelWide, Mono, Small, Title } from '../design/text';
 import { Header, SectionHead } from '../components/chrome';
 import { Link, Mark } from '../labyrinth/glyphs';
-import { QrCanvas } from '../qr/QrCanvas';
 import { color, space } from '../design/tokens';
 import { elide, sessionTime } from '../core/units';
 import { DEMO_ZPUB } from '../core/demo';
@@ -41,7 +40,8 @@ import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
 export function VaultScreen({ navigation }: Nav<'Vault'>) {
-  const { vault, now, snapshot } = useStore();
+  const store = useStore();
+  const { vault, now, snapshot } = store;
   const paired = vault.state !== 'unpaired';
 
   return (
@@ -97,6 +97,12 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
               <Action label="START A SESSION" onPress={() => navigation.navigate('Pair')} />
               <Gap size={space.snug} />
               <Action label="SECURITY" quiet onPress={() => navigation.navigate('Security')} />
+              <Gap size={space.snug} />
+              {/* Forgetting costs nothing and can be undone by scanning the
+                  vault again, because what is being forgotten is a public key.
+                  A wallet that will not let go of one is keeping it for its own
+                  convenience. */}
+              <Action label="FORGET THIS VAULT" quiet onPress={store.unpairVault} />
             </>
           ) : (
             <>
@@ -188,11 +194,18 @@ export function PairScreen({ navigation }: Nav<'Pair'>) {
           />
 
           <Gap size={space.gap} />
-          <View style={{ alignItems: 'center' }}>
-            <QrCanvas value="LV1:ACCOUNT:1:1:00000000:REQUEST" size={200} level="Q" />
-            <Gap size={space.step} />
-            <Label tone={color.slate}>SHOW THIS TO THE VAULT TO IDENTIFY THIS WALLET</Label>
-          </View>
+          {/* There was a QR code here that said "show this to the vault to
+              identify this wallet". It was not a code any vault would accept:
+              the digest was zeroes, and `ACCOUNT` is a payload the vault sends
+              *to* a wallet, not one it reads. Nothing in the protocol needs
+              this wallet to identify itself, because the vault does not choose
+              who it exports to. A picture that only looks like a step is worse
+              than no picture. */}
+          <Notice title="THIS WALLET SENDS NOTHING FIRST">
+            There is no handshake to start. The vault decides what to export and shows it; this phone
+            reads it. Nothing about this device needs to reach the vault for that to work, which is why
+            there is no code on this screen to show it.
+          </Notice>
 
           <Gap size={space.section} />
           <Action label="OPEN CAMERA" onPress={() => navigation.navigate('Scan')} />
@@ -264,11 +277,11 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
 
           <Statement
             label="LAST VERIFIED SESSION"
-            value={vault.state === 'unpaired' ? 'NONE' : vault.lastSession ? sessionTime(vault.lastSession, now) : 'NONE'}
+            value={vault.state === 'unpaired' ? 'NONE' : vault.lastVerified ? sessionTime(vault.lastVerified, now) : 'NONE'}
             tone={color.slate}
           >
             The last time a signature came back from the vault and matched the transaction this device had
-            prepared.
+            prepared. A handoff that ended in a mismatch is not one of these, and does not move this line.
           </Statement>
 
           <Gap size={space.gap} />

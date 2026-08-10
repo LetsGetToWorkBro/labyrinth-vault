@@ -103,11 +103,6 @@ export function formatAmount(atoms: Atoms, asset: Asset): string {
   return fraction === '' ? whole : `${whole}.${fraction}`;
 }
 
-/** With the ticker, for prose and rows. */
-export function formatWithTicker(atoms: Atoms, asset: Asset): string {
-  return `${formatAmount(atoms, asset)} ${asset}`;
-}
-
 /**
  * U+2009, a thin space, and it is deliberate.
  *

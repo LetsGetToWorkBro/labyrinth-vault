@@ -54,13 +54,8 @@ export interface Store {
 
   pairVault(label: string): void;
   unpairVault(): void;
-
-  /** Fresh receiving address for the asset, advancing the gap. */
-  freshAddress(asset: Asset): { address: string; path: string | null };
-
-  /** Transient confirmation, shown once and forgotten. */
-  flash: string | null;
-  say(message: string): void;
+  /** Stop claiming a handoff is in progress. See `endSession`. */
+  endSession(): void;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -79,10 +74,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state: 'ready',
     pairedAt: Date.now() - 1000 * 60 * 60 * 26,
     lastSession: Date.now() - 1000 * 60 * 74,
+    lastVerified: Date.now() - 1000 * 60 * 74,
     label: 'VAULT · iPhone 11',
   });
-  const [flash, setFlash] = useState<string | null>(null);
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const changeIndex = useRef(24);
 
   /* Twenty seconds is slow enough to cost nothing and fast enough that "Just
@@ -93,12 +87,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const snapshot = useMemo(() => watcher.snapshot(now), [now]);
-
-  const say = useCallback((message: string) => {
-    setFlash(message);
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(null), 1800);
-  }, []);
 
   const feeOption = useCallback(
     (key: string): FeeOption => {
@@ -119,12 +107,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       amount: parsed.atoms,
       rate: feeOption(session.compose.feeKey).rate,
       utxos: view.utxos,
+      balance: view.spendable,
       zpub: DEMO_ZPUB,
-      change: { address: '', index: changeIndex.current },
+      change: { index: changeIndex.current },
       now: Date.now(),
     });
 
     if (!result.ok) return result.problem;
+    /* A new change address for the next payment. Reusing one is not a bug that
+     * shows up on any screen, which is exactly why it has to be handled here:
+     * every payment landing change on the same address publishes the link
+     * between them to anybody reading the chain. */
+    changeIndex.current += 1;
     dispatch({ type: 'prepared', draft: result.draft, at: Date.now() });
     return null;
   }, [session.compose, asset, snapshot, feeOption]);
@@ -141,6 +135,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const handOver = useCallback(() => dispatch({ type: 'handed-over', at: Date.now() }), []);
   const readBack = useCallback(() => dispatch({ type: 'read-back', at: Date.now() }), []);
 
+  /**
+   * Leaving a handoff without finishing it.
+   *
+   * `in-session` means codes are on a screen right now. Somebody who backs out
+   * of the transmit screen, or discards the payment, is no longer in one, and
+   * a wallet that goes on claiming a session is in progress until the next
+   * signature arrives is telling the home screen a small lie for an
+   * indefinite period.
+   */
+  const endSession = useCallback(() => {
+    setVault((current) => (current.state === 'in-session' ? { ...current, state: 'ready' } : current));
+  }, []);
+
   const offerSignature = useCallback(
     (raw: Uint8Array | null) => {
       const draft = session.draft;
@@ -152,14 +159,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           problem: 'The vault did not return a signature. Nothing was broadcast.',
           at: Date.now(),
         });
+        /* A handoff that produced nothing is still a handoff that has ended.
+         * Leaving the link in `in-session` here was the same bug as leaving it
+         * there on a back button, one branch further down. */
+        setVault((current) =>
+          current.state === 'in-session' ? { ...current, state: 'ready', lastSession: Date.now() } : current,
+        );
         return;
       }
       const verdict = verifySigned(draft, raw);
       if (verdict.ok) arrived();
       else refused();
       dispatch({ type: 'returned', verified: verdict, at: Date.now() });
+      /* A session happened either way. It was only *verified* if what came
+       * back was what went out, and the security screen shows those as two
+       * different lines because they are two different facts. */
       setVault((current) =>
-        current.state === 'unpaired' ? current : { ...current, state: 'ready', lastSession: Date.now() },
+        current.state === 'unpaired'
+          ? current
+          : {
+              ...current,
+              state: 'ready',
+              lastSession: Date.now(),
+              lastVerified: verdict.ok ? Date.now() : current.lastVerified,
+            },
       );
     },
     [session.draft],
@@ -199,11 +222,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     offerSignature,
     broadcast,
     pairVault: (label: string) =>
-      setVault({ state: 'ready', pairedAt: Date.now(), lastSession: Date.now(), label }),
+      setVault({
+        state: 'ready',
+        pairedAt: Date.now(),
+        lastSession: Date.now(),
+        lastVerified: null,
+        label,
+      }),
     unpairVault: () => setVault({ state: 'unpaired' }),
-    freshAddress: (which: Asset) => watcher.nextAddress(which),
-    flash,
-    say,
+    endSession,
   };
 
   return <StoreContext.Provider value={store}>{children}</StoreContext.Provider>;

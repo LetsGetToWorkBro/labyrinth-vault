@@ -188,6 +188,12 @@ export interface SignedReturn {
 /**
  * The state of the link to the vault, which is not a connection.
  *
+ * `lastSession` and `lastVerified` are deliberately two fields. A session is
+ * any handoff that happened; a verified session is one where what came back
+ * matched what was sent. Collapsing them means a signature that did *not*
+ * match gets recorded on the security screen as the last time this device
+ * verified something, which is the opposite of what happened.
+ *
  * There is no socket, no pairing radio and no session key. "Connected" here
  * means this wallet holds a watch-only account the vault exported, and knows
  * how to render frames the vault can read. The vault does not know this device
@@ -201,9 +207,9 @@ export type VaultLink =
   /** Never paired. The wallet has no account key and can do nothing. */
   | { state: 'unpaired' }
   /** Paired, and the vault is presumed to be in a drawer, which is correct. */
-  | { state: 'ready'; pairedAt: number; lastSession: number | null; label: string }
+  | { state: 'ready'; pairedAt: number; lastSession: number | null; lastVerified: number | null; label: string }
   /** Mid-handoff: frames on screen, or camera open, right now. */
-  | { state: 'in-session'; pairedAt: number; lastSession: number | null; label: string };
+  | { state: 'in-session'; pairedAt: number; lastSession: number | null; lastVerified: number | null; label: string };
 
 export interface Prices {
   /** Whole cents per whole unit, so BTC at $118,000 is 11_800_000. */

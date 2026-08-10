@@ -57,7 +57,7 @@ import { maxSendable } from '../core/build';
 import { checkAddress, readPaymentUri } from '../core/addresses';
 import { frameEstimate, FRAME_MS } from '../core/wire';
 import { standInVault, PUBLISHED_TEST_WORDS } from '../demo/standin';
-import { confirmed, tap } from '../design/haptics';
+import { tap } from '../design/haptics';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
@@ -68,9 +68,13 @@ export function SendScreen({ navigation }: Nav<'Send'>) {
   const back = () => {
     if (session.step === 'compose') {
       store.send({ type: 'reset' });
+      store.endSession();
       navigation.goBack();
       return;
     }
+    /* Stepping back off the transmit screen means the codes are no longer on
+     * the glass, so the wallet stops saying a session is in progress. */
+    if (session.step === 'transmit' || session.step === 'awaiting') store.endSession();
     store.send({ type: 'back' });
   };
 
@@ -83,9 +87,23 @@ export function SendScreen({ navigation }: Nav<'Send'>) {
       {session.step === 'awaiting' ? <Awaiting onBack={back} /> : null}
       {session.step === 'receive' ? <Receiving onBack={back} /> : null}
       {session.step === 'ready' || session.step === 'broadcasting' ? <Ready /> : null}
-      {session.step === 'done' ? <Done onClose={() => { store.send({ type: 'reset' }); navigation.popToTop(); }} /> : null}
+      {session.step === 'done' ? (
+        <Done
+          onClose={() => {
+            store.send({ type: 'reset' });
+            store.endSession();
+            navigation.popToTop();
+          }}
+        />
+      ) : null}
       {session.step === 'mismatch' ? (
-        <Mismatch onDiscard={() => { store.send({ type: 'reset' }); navigation.popToTop(); }} />
+        <Mismatch
+          onDiscard={() => {
+            store.send({ type: 'reset' });
+            store.endSession();
+            navigation.popToTop();
+          }}
+        />
       ) : null}
       {session.step === 'failed' ? <Failed onBack={back} /> : null}
 
@@ -199,10 +217,15 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
           tone={parsed.ok ? color.bone : color.dim}
         />
         <Gap size={space.snug} />
-        <Small tone={color.slate}>
+        <Small tone={parsed.ok || !session.compose.amountText ? color.slate : color.warn}>
           {parsed.ok
             ? formatFiat(fiatCents(parsed.atoms!, asset, snapshot.centsPerUnit[asset]))
-            : `Available ${view.spendable === view.balance ? '' : 'to spend '}${formatAvailable(view.spendable, asset)}`}
+            : session.compose.amountText
+              ? /* Typing nine decimal places into a chain that has eight is not
+                 * an error worth a red field, but silence leaves somebody
+                 * pressing a key that does nothing. */
+                parsed.problem
+              : `Available ${view.spendable === view.balance ? '' : 'to spend '}${formatAvailable(view.spendable, asset)}`}
         </Small>
       </View>
 
@@ -704,10 +727,9 @@ function Done({ onClose }: { onClose: () => void }) {
   const { session } = store;
   const draft = session.draft;
 
-  useEffect(() => {
-    confirmed();
-  }, []);
-
+  /* No haptic here. `broadcast()` already fired one when the node accepted it,
+   * and a second identical buzz as this screen mounts reads as a stutter
+   * rather than as a second event. */
   if (!draft || !session.txid) return null;
 
   return (
@@ -740,8 +762,8 @@ function Done({ onClose }: { onClose: () => void }) {
 
         <Gap size={space.section} />
         <Notice title="BROADCAST BY THIS DEVICE">
-          Your vault signed it and never touched a network. This wallet published it. Confirmations will
-          appear in the activity list as blocks arrive.
+          Your vault signed it and never touched a network. This wallet published it. In a build with a
+          node behind it, confirmations would start arriving here within the hour.
         </Notice>
 
         <Gap size={space.section} />

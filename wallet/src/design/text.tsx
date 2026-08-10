@@ -49,7 +49,6 @@ function make(role: keyof typeof type, defaultTone: string, defaultFigures = fal
 }
 
 export const Display = make('display', color.bone, true);
-export const Readout = make('readout', color.bone, true);
 export const Title = make('title', color.bone);
 export const Strong = make('strong', color.bone);
 export const Body = make('body', color.ash);

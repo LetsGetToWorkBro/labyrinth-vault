@@ -40,9 +40,11 @@ export function ReceiveScreen({ navigation, route }: Nav<'Receive'>) {
   const [copied, setCopied] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
-  /* One address per visit, not one per render: a screen that re-derives on
-   * every state change hands out a different address every time somebody taps
-   * a chip, and the gap limit is a real thing on the other side. */
+  /* The first address the chain has not seen a payment to. Derived from the
+   * snapshot rather than handed out by a counter, so it is the same address
+   * every time this screen opens until somebody actually pays it. Rotating on
+   * view would burn through the gap limit for people who like looking at their
+   * own QR code. */
   const address = useMemo(() => store.snapshot.assets[asset].addresses.find((entry) => !entry.used)
     ?? store.snapshot.assets[asset].addresses[0]!, [store.snapshot, asset]);
 

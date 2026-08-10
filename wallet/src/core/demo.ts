@@ -128,7 +128,7 @@ const DAY = 24 * HOUR;
  * transaction from 2024 sitting above "3m ago" — a fixture that ages badly
  * makes every screenshot after the first month look broken.
  */
-export function demoTransactions(now: number): Transaction[] {
+function demoTransactions(now: number): Transaction[] {
   const journeyFor = (at: number): { stage: Stage; at: number }[] => [
     { stage: 'prepared', at: at - 6 * MINUTE },
     { stage: 'sent-to-vault', at: at - 5 * MINUTE },
@@ -248,8 +248,6 @@ export function demoTransactions(now: number): Transaction[] {
  * that a demo has not quietly grown into the architecture.
  */
 export class DemoWatcher implements Watcher {
-  private nextIndex = 4;
-
   snapshot(now: number): ChainSnapshot {
     const btcBalance = btcUtxos.reduce((sum, utxo) => sum + utxo.value, 0n);
     const spendable = btcUtxos
@@ -290,12 +288,6 @@ export class DemoWatcher implements Watcher {
       stale: true,
       demo: true,
     };
-  }
-
-  nextAddress(asset: Asset): { address: string; path: string | null } {
-    if (asset === 'XMR') return { address: DEMO_XMR_ADDRESS, path: null };
-    const index = this.nextIndex++;
-    return { address: receiveAddress(index).address, path: `0/${index}` };
   }
 
   /**

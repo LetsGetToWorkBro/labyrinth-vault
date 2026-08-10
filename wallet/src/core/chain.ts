@@ -109,6 +109,11 @@ export interface BroadcastResult {
 export interface Watcher {
   snapshot(now: number): ChainSnapshot;
   broadcast(asset: Asset, raw: Uint8Array): Promise<BroadcastResult>;
-  /** Next unused receiving address. Advancing the gap is the caller's job. */
-  nextAddress(asset: Asset): { address: string; path: string | null };
 }
+
+/* There is no `nextAddress` here on purpose. Handing out a fresh address means
+ * remembering which ones were handed out, or the gap limit stops meaning
+ * anything, and this build has nowhere to remember it. The receive screen
+ * shows the first address the chain has not seen a payment to, which is
+ * derivable from the snapshot and needs no memory. When there is storage, this
+ * is where rotation goes. */

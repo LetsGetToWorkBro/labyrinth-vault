@@ -187,11 +187,20 @@ export interface PrepareParams {
   recipient: string;
   amount: Atoms;
   rate: number;
+  /** Bitcoin's coins. Empty for Monero, which does not show its outputs to a
+   *  view key the way Bitcoin shows them to an extended public key. */
   utxos: readonly Utxo[];
+  /** What the wallet holds, which for Monero is the only number there is.
+   *  Reading it off `utxos` instead was a bug that made every Monero payment
+   *  impossible: the list is empty, so the balance was zero, so everything was
+   *  "more than this wallet holds". */
+  balance: Atoms;
   /** Watch-only account key. There is no other kind here. */
   zpub: string;
-  /** Where change goes: a fresh address on our own change chain. */
-  change: { address: string; index: number };
+  /** Where change goes: an index on our own change chain, which the address
+   *  is derived from here rather than passed in. A caller that could hand in
+   *  an address could hand in somebody else's. */
+  change: { index: number };
   now: number;
 }
 
@@ -213,10 +222,12 @@ export function digestOf(bytes: Uint8Array): string {
  * them produces a transaction its own signer will refuse, which is the correct
  * outcome and an embarrassing one, so they go in here.
  *
- * Change is marked with its derivation path so the vault can *re-derive* it
- * and check the script matches. It will not take our word for which output is
- * change — see the change-swap defense in `src/keys/psbt.ts` — and the path is
- * what lets it do the check rather than what convinces it.
+ * Nothing marks the change output as change, and that is not an omission. The
+ * vault re-derives ownership from its own key and compares scripts; it will
+ * not take a PSBT's word for which output is change, because a PSBT that can
+ * claim an output is yours is a PSBT that can point that claim at somebody
+ * else's script. See the change-swap defense in `src/keys/psbt.ts`. Sending a
+ * derivation path would be sending a claim the vault is right to ignore.
  */
 export function prepare(params: PrepareParams): Prepared {
   const { asset, recipient, amount, rate, utxos, now } = params;
@@ -293,8 +304,7 @@ export function prepare(params: PrepareParams): Prepared {
  * device.
  */
 function prepareMonero(params: PrepareParams): Prepared {
-  const { recipient, amount, rate, utxos, now } = params;
-  const balance = utxos.reduce((sum, utxo) => sum + utxo.value, 0n);
+  const { recipient, amount, rate, balance, now } = params;
   /* Monero's fee is not a function of a vbyte count we can see from here; the
    * daemon quotes a base rate and the ring size does the rest. The fixture
    * quotes it, and this scales it by the priority multiplier, which is what
@@ -434,16 +444,39 @@ export function verifySigned(draft: Draft, raw: Uint8Array): Verified {
     );
   }
 
+  /* The fee, and the reason it is computed from the draft rather than from
+   * what came back.
+   *
+   * A fee is not written in a transaction. It is inputs minus outputs, and a
+   * *finished* transaction does not carry its inputs' values: they live in the
+   * PSBT, and the PSBT is gone by the time this runs. So a signed transaction
+   * cannot state its own fee, and asking it to produces null.
+   *
+   * This was a real hole for one commit. The fee was read out of the returned
+   * transaction, came back null every time, and the comparison was skipped
+   * along with it. A vault could shave the change output and hand the
+   * difference to a miner: same recipient, same amount, same coins, no
+   * stranger in the outputs, silently accepted. The test that was supposed to
+   * catch it asserted `verdict.fee === draft.fee` against a value that fell
+   * back to `draft.fee`, so it passed on a check that never ran.
+   *
+   * `draft.inputTotal` is what those coins were worth when this device picked
+   * them, recorded before the vault saw anything. The inputs have already been
+   * checked to be that exact set, so the arithmetic holds: anything the
+   * outputs do not account for is the fee, whoever set it. */
   const outputTotal = outputs.reduce((sum, output) => sum + output.value, 0n);
-  const inputTotal = knownInputTotal(tx);
-  const fee = inputTotal === null ? null : inputTotal - outputTotal;
-  if (fee !== null && fee !== draft.fee) {
-    reasons.push(`The fee is ${fee} where ${draft.fee} was approved.`);
+  const fee = draft.inputTotal - outputTotal;
+  if (unapproved.length === 0 && missing.length === 0 && fee !== draft.fee) {
+    reasons.push(
+      fee > draft.fee
+        ? `This pays ${fee} in fees where ${draft.fee} was approved. The difference goes to a miner.`
+        : `This pays ${fee} in fees where ${draft.fee} was approved.`,
+    );
   }
 
   if (reasons.length > 0) return { ok: false, reasons, outputs };
 
-  return { ok: true, txid: tx.id, raw, outputs, fee: fee ?? draft.fee };
+  return { ok: true, txid: tx.id, raw, outputs, fee };
 }
 
 /** Change addresses are recorded on the draft when it is built. Anything not
@@ -461,14 +494,4 @@ function safeAddress(tx: btc.Transaction, index: number): string | null {
   }
 }
 
-function knownInputTotal(tx: btc.Transaction): Atoms | null {
-  let total = 0n;
-  for (let i = 0; i < tx.inputsLength; i++) {
-    const input = tx.getInput(i) as { witnessUtxo?: { amount: bigint }; nonWitnessUtxo?: { outputs: { amount: bigint }[] }; index?: number };
-    const value =
-      input.witnessUtxo?.amount ?? input.nonWitnessUtxo?.outputs[input.index ?? 0]?.amount ?? null;
-    if (value === null) return null;
-    total += value;
-  }
-  return total;
-}
+

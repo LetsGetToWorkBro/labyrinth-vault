@@ -30,7 +30,7 @@
 
 import { Dimensions, ScrollView, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Action, ActionRow, Cell, Chip, Gap, Press, Rule, Screen } from '../design/atoms';
+import { ActionRow, Cell, Chip, Gap, Press, Rule, Screen } from '../design/atoms';
 import { Body, Display, Label, Small } from '../design/text';
 import { SectionHead, VaultStatus, Wordmark } from '../components/chrome';
 import { AssetLine } from '../components/money';
@@ -206,20 +206,5 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
         </View>
       </ScrollView>
     </Screen>
-  );
-}
-
-/** Kept out of the component so the screen file has one export that is a
- *  screen. Used by the empty-wallet state below. */
-export function NothingYet({ onConnect }: { onConnect: () => void }) {
-  return (
-    <View style={{ padding: space.gutter, gap: space.gap }}>
-      <Label>NO VAULT</Label>
-      <Body>
-        This wallet has no account key yet. A vault exports one as a QR code, and until it does there is
-        nothing here to watch.
-      </Body>
-      <Action label="CONNECT VAULT" onPress={onConnect} />
-    </View>
   );
 }

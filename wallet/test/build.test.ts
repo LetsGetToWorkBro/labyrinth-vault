@@ -41,8 +41,9 @@ function prepared(amount: bigint, rate = 11) {
     amount,
     rate,
     utxos,
+    balance: utxos.reduce((sum, utxo) => sum + utxo.value, 0n),
     zpub: DEMO_ZPUB,
-    change: { address: '', index: 12 },
+    change: { index: 12 },
     now: NOW,
   });
   if (!result.ok) throw new Error(result.problem);
@@ -64,10 +65,22 @@ function signLikeTheVault(psbt: Uint8Array, mutate?: (tx: btc.Transaction) => vo
   mutate?.(tx);
   const root = HDKey.fromMasterSeed(mnemonicToSeedSync(WORDS));
   for (let i = 0; i < tx.inputsLength; i++) {
-    for (let index = 0; index < 8; index++) {
+    let signed = false;
+    for (let index = 0; index < 8 && !signed; index++) {
       const key = root.derive(`m/84'/0'/0'/0/${index}`).privateKey;
-      if (key && tx.signIdx(key, i, [btc.SigHash.ALL])) break;
+      if (!key) continue;
+      /* `signIdx` throws rather than returning false when the key does not
+       * match the input's script, so trying keys in turn means catching. This
+       * helper looked correct for as long as every test happened to spend the
+       * coin at index 0, which is a good argument for tests that spend a
+       * different one. */
+      try {
+        signed = tx.signIdx(key, i, [btc.SigHash.ALL]);
+      } catch {
+        signed = false;
+      }
     }
+    if (!signed) throw new Error(`no key in the first eight signs input ${i}`);
   }
   tx.finalize();
   return tx.extract();
@@ -163,8 +176,9 @@ describe('the unsigned transaction the vault will be shown', () => {
       amount: 1_000_000n,
       rate: 11,
       utxos,
+      balance: utxos.reduce((sum: bigint, utxo: Utxo) => sum + utxo.value, 0n),
       zpub: DEMO_ZPUB,
-      change: { address: '', index: 12 },
+      change: { index: 12 },
       now: NOW,
     });
     expect(result.ok).toBe(false);
@@ -233,18 +247,140 @@ describe('checking what the vault hands back', () => {
     if (!verdict.ok) expect(verdict.reasons[0]).toMatch(/not a finished transaction/);
   });
 
-  it('will not pass a Monero payment, because Monero signing is not finished', () => {
-    const result = prepare({
-      asset: 'XMR',
-      recipient: '4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRj5UzqtReoS44qo9mtmXCqY45DJ852K5Jv2684Rge',
-      amount: 1_000_000_000_000n,
-      rate: 2.4,
-      utxos: [],
-      zpub: DEMO_ZPUB,
-      change: { address: '', index: 0 },
-      now: NOW,
+  /**
+   * Monero, and a test that used to assert a bug.
+   *
+   * The old version of this test said a Monero payment could not be prepared,
+   * and it passed. It passed because `prepareMonero` was reading the balance
+   * off the unspent-output list, which is empty for Monero: a view key does
+   * not enumerate outputs the way an extended public key enumerates addresses.
+   * So every Monero payment, of any size, was "more than this wallet holds",
+   * and a test written from the observed behavior locked that in.
+   *
+   * What should be true is below. A Monero draft builds, because composing a
+   * payment is this device's job and it can do it. It is tagged `provisional`,
+   * because the payload it produces is not `wallet2`'s format yet. And the
+   * refusal happens at `verifySigned`, which is where an unfinished format
+   * should stop being waved through, rather than at a balance check that was
+   * wrong for an unrelated reason.
+   */
+  describe('Monero, which is composable and not yet signable', () => {
+    const MONERO = '4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRj5UzqtReoS44qo9mtmXCqY45DJ852K5Jv2684Rge';
+    const monero = (amount: bigint) =>
+      prepare({
+        asset: 'XMR',
+        recipient: MONERO,
+        amount,
+        rate: 2.4,
+        utxos: [],
+        balance: 14_381_000_000_000n,
+        zpub: DEMO_ZPUB,
+        change: { index: 0 },
+        now: NOW,
+      });
+
+    it('prepares a payment the wallet can afford', () => {
+      const result = monero(1_000_000_000_000n);
+      expect(result.ok, result.ok ? '' : result.problem).toBe(true);
+      if (result.ok) {
+        expect(result.draft.provisional).toBe(true);
+        expect(result.draft.amount).toBe(1_000_000_000_000n);
+        expect(result.draft.fee).toBeGreaterThan(0n);
+      }
     });
-    expect(result.ok).toBe(false);
+
+    it('refuses one it cannot', () => {
+      expect(monero(20_000_000_000_000n).ok).toBe(false);
+    });
+
+    it('will not verify a signature for it, because there is nothing to verify yet', () => {
+      const result = monero(1_000_000_000_000n);
+      if (!result.ok) throw new Error(result.problem);
+      const verdict = verifySigned(result.draft, new Uint8Array([1, 2, 3]));
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) expect(verdict.reasons[0]).toMatch(/not finished/);
+    });
+  });
+});
+
+/**
+ * The fee, which for one commit was not checked at all.
+ *
+ * A finished transaction does not carry what its inputs were worth, so it
+ * cannot state its own fee. The check was reading the fee out of the returned
+ * transaction, getting null every time, and skipping the comparison. The test
+ * that was meant to cover it asserted `verdict.fee === draft.fee` against a
+ * value that fell back to `draft.fee` when it was null, so it passed without
+ * ever exercising anything.
+ *
+ * These tests are written so that cannot happen again: they assert on a
+ * transaction that was really signed with a really different fee, and on the
+ * arithmetic being done from the draft.
+ */
+describe('the fee, checked against what was approved', () => {
+  it('states the true fee on a transaction that matches', () => {
+    const { draft, selection } = prepared(5_000_000n);
+    const verdict = verifySigned(draft, signLikeTheVault(draft.unsigned));
+    expect(verdict.ok).toBe(true);
+    if (verdict.ok) {
+      expect(verdict.fee).toBe(selection.fee);
+      /* Not merely equal to the draft's copy of it: recomputed from the coins
+       * and the outputs, and equal to what coin selection charged. */
+      expect(verdict.fee).toBe(draft.inputTotal - 5_000_000n - selection.change);
+    }
+  });
+
+  it('refuses a transaction that shaves the change and gives it to a miner', () => {
+    /* The attack this hole allowed: same recipient, same amount, same coins,
+     * no stranger anywhere in the outputs. Only the change comes back smaller,
+     * and the difference is the fee, which nobody approved. */
+    const { draft } = prepared(5_000_000n);
+    const original = btc.Transaction.fromPSBT(draft.unsigned);
+    const greedy = new btc.Transaction();
+    for (let i = 0; i < original.inputsLength; i++) greedy.addInput(original.getInput(i));
+    greedy.addOutputAddress(RECIPIENT, draft.amount);
+    const change = original.getOutput(1) as { script: Uint8Array; amount: bigint };
+    greedy.addOutput({ script: change.script, amount: change.amount - 100_000n });
+
+    const verdict = verifySigned(draft, signLikeTheVault(greedy.toPSBT(0)));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.reasons.join(' ')).toMatch(/in fees where/);
+      expect(verdict.reasons.join(' ')).toMatch(/goes to a miner/);
+    }
+  });
+
+  /**
+   * The check has to be silent when nothing is wrong.
+   *
+   * A false refusal is not a safe failure here: it sends somebody back to a
+   * vault to re-approve a payment that was already correct, and it teaches
+   * them that the warning screen means nothing. The awkward case is the
+   * transaction with no change output at all, where the fee is whatever was
+   * left over, so it is exercised end to end rather than assumed.
+   */
+  it('accepts a payment with no change, where the fee is the remainder', () => {
+    const single = utxos.find((utxo) => utxo.value === 15_000_000n)!;
+    const { draft, selection } = prepared(single.value - feeFor(1, 1, 11));
+    expect(selection.change).toBe(0n);
+    expect(draft.changeAddresses).toHaveLength(0);
+
+    const verdict = verifySigned(draft, signLikeTheVault(draft.unsigned));
+    expect(verdict.ok, verdict.ok ? '' : verdict.reasons.join(' / ')).toBe(true);
+    if (verdict.ok) expect(verdict.fee).toBe(draft.fee);
+  });
+
+  it('refuses a transaction that quietly pays a smaller fee than approved', () => {
+    const { draft } = prepared(5_000_000n);
+    const original = btc.Transaction.fromPSBT(draft.unsigned);
+    const generous = new btc.Transaction();
+    for (let i = 0; i < original.inputsLength; i++) generous.addInput(original.getInput(i));
+    generous.addOutputAddress(RECIPIENT, draft.amount);
+    const change = original.getOutput(1) as { script: Uint8Array; amount: bigint };
+    generous.addOutput({ script: change.script, amount: change.amount + 500n });
+
+    const verdict = verifySigned(draft, signLikeTheVault(generous.toPSBT(0)));
+    expect(verdict.ok).toBe(false);
   });
 });
 

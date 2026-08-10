@@ -28,7 +28,7 @@
  */
 
 import { View } from 'react-native';
-import { Body, Label, Mono, Small, Strong } from '../design/text';
+import { Body, Label, Small, Strong } from '../design/text';
 import { Press, Rule } from '../design/atoms';
 import { Amount } from './money';
 import { assetColor, color, space } from '../design/tokens';
@@ -172,20 +172,6 @@ export function Timeline({
           </View>
         );
       })}
-    </View>
-  );
-}
-
-/** A transaction id, set to be checked and long enough to be worth eliding. */
-export function TxId({ txid }: { txid: string }) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Mono size={13} tone={color.ash}>
-        {txid.slice(0, 32)}
-      </Mono>
-      <Mono size={13} tone={color.ash}>
-        {txid.slice(32)}
-      </Mono>
     </View>
   );
 }

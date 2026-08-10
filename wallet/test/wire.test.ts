@@ -60,6 +60,27 @@ describe('a draft on the glass', () => {
     expect(transmission.status().laps).toBe(1);
   });
 
+  /**
+   * Asking twice must give the same answer.
+   *
+   * BC-UR's encoder only knows how to produce the *next* frame: every call
+   * mixes a new fountain frame out of a fresh random draw. `current()` used to
+   * call it directly, which meant a re-render between two ticks silently
+   * skipped a frame and the counter under the code was counting something
+   * different from what was on the glass. Labyrinth frames never had the
+   * problem, which is exactly why it survived: the wire the app actually uses
+   * looked fine.
+   */
+  it('answers the same thing until it is told to move on, on both wires', () => {
+    for (const format of ['labyrinth', 'ur'] as const) {
+      const transmission = new Transmission(draftOf(1200).unsigned, 'PSBT', format, 'x');
+      const first = transmission.current();
+      expect(transmission.current(), format).toBe(first);
+      expect(transmission.current(), format).toBe(first);
+      expect(transmission.advance(), format).not.toBe(first);
+    }
+  });
+
   it('counts frames from one, the way the person watching does', () => {
     const transmission = transmit(draftOf(FRAME_BYTES * 2));
     expect(transmission.status().frame).toBe(1);

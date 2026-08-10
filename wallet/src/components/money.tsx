@@ -123,12 +123,10 @@ export function AssetLine({
   asset,
   balance,
   centsPerUnit,
-  onPress: _onPress,
 }: {
   asset: Asset;
   balance: Atoms;
   centsPerUnit: number;
-    onPress?: (() => void) | undefined;
 }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: space.gap, gap: space.gap }}>

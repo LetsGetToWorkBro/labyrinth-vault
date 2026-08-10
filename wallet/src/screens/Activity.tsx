@@ -1,10 +1,11 @@
 /**
  * History, and one detail screen that explains the architecture.
  *
- * The list groups by day rather than paginating, because a wallet's history is
- * read as "what happened lately" and not as a ledger. Pending transactions sit
- * at the top under their own heading and stay there — a payment waiting for
- * confirmations is the only thing on this screen anybody is anxious about.
+ * The list splits in two rather than paginating: what is still confirming, and
+ * what has settled. Pending transactions sit at the top under their own
+ * heading and stay there, because a payment waiting for confirmations is the
+ * only thing on this screen anybody is anxious about, and it should never be
+ * something you scroll to find.
  *
  * The detail screen's job is different: it is where somebody goes weeks later
  * to answer "how did this happen". So it leads with the state, gives every

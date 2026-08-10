@@ -95,10 +95,6 @@ export function assetColor(asset: 'BTC' | 'XMR'): string {
   return asset === 'BTC' ? color.btc : color.xmr;
 }
 
-export function assetTint(asset: 'BTC' | 'XMR'): string {
-  return asset === 'BTC' ? color.btcDim : color.xmrDim;
-}
-
 // ------------------------------------------------------------------- letters
 
 /**
@@ -219,6 +215,3 @@ export const motion = {
   sweep: 900,
   fade: 180,
 } as const;
-
-/** How long a piece of feedback stays before it fades on its own. */
-export const dwell = { toast: 1800, copied: 1400 } as const;

@@ -55,7 +55,7 @@ export const FRAME_MS = 220;
  *  estimate this file makes for the UI cannot drift away from the encoder. */
 export const FRAME_BYTES = 400;
 
-export function kindFor(draft: Draft): PayloadKind {
+function kindFor(draft: Draft): PayloadKind {
   return draft.asset === 'BTC' ? 'PSBT' : 'XMRUNSIGNED';
 }
 
@@ -75,6 +75,12 @@ export class Transmission {
   private readonly ur: UrEncoder | null;
   private cursor = 0;
   private laps = 0;
+  /* The frame on the glass right now. Held, because for BC-UR "the next
+   * frame" and "the current frame" are different questions and the encoder
+   * only answers the first: every call to `nextPart()` mixes a new fountain
+   * frame. Asking it twice in one tick, which a re-render does, would skip
+   * one. So the answer is computed once per advance and remembered. */
+  private frame: string;
 
   constructor(payload: Uint8Array, kind: PayloadKind, format: WireFormat, digest: string) {
     this.format = format;
@@ -94,19 +100,21 @@ export class Transmission {
       this.ur = encodeUr(UR_PSBT, payload, 200);
       this.total = this.ur.seqLength;
     }
+    this.frame = this.ur ? this.ur.nextPart() : (this.frames[0] ?? '');
   }
 
-  /** What should be on the glass right now. */
+  /** What is on the glass right now. Idempotent: ask as often as a render
+   *  needs to, and the answer does not change until `advance`. */
   current(): string {
-    if (this.ur) return this.ur.nextPart();
-    return this.frames[this.cursor % this.frames.length] ?? '';
+    return this.frame;
   }
 
   /** Move on. Returns the frame that is now current. */
   advance(): string {
     this.cursor += 1;
     if (this.frames.length > 0 && this.cursor % this.frames.length === 0) this.laps += 1;
-    return this.current();
+    this.frame = this.ur ? this.ur.nextPart() : (this.frames[this.cursor % this.frames.length] ?? '');
+    return this.frame;
   }
 
   /** For the counter under the code. One-based, because it is read by people. */
