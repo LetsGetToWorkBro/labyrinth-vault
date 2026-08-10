@@ -259,3 +259,60 @@ describe('guards over the app source itself', () => {
     expect(guilty, 'network code appears in these files').toEqual([]);
   });
 });
+
+describe('the screen can name every refusal the reader makes', () => {
+  /* A cross-language contract, and the reason it needs a guard: the refusals
+   * live in TypeScript and the screen that shows them lives in Swift, so
+   * nothing but this test connects the two. It had already drifted once — the
+   * Swift enum said "the three conditions the reader refuses over" while
+   * psbt.ts had grown to six — and a fatal condition the screen cannot name is
+   * a fatal condition somebody has to guess at, or worse, one that arrives as
+   * a default case that carries on.
+   *
+   * The mapping is by comment marker (`/// code-name`) rather than by parsing
+   * Swift properly: crude, but it fails loudly when it goes stale, which is
+   * the entire job. */
+
+  const psbt = readFileSync('src/keys/psbt.ts', 'utf8');
+  const swift = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+
+  /** Codes that psbt.ts can raise with fatal: true. */
+  const fatalCodes = new Set(
+    [...psbt.matchAll(/code:\s*'([a-z-]+)',\s*\n\s*fatal:\s*true/g)].map((m) => m[1]!),
+  );
+  // `unreadable` is raised through failed(), which does not match the pattern.
+  fatalCodes.add('unreadable');
+
+  it('found the fatal codes, so a pass means something', () => {
+    expect(fatalCodes.size).toBeGreaterThanOrEqual(6);
+    expect(fatalCodes.has('opaque-output')).toBe(true);
+    expect(fatalCodes.has('unusual-sighash')).toBe(true);
+  });
+
+  it('has a Swift case for every one of them', () => {
+    const named = new Set(
+      [...swift.matchAll(/\/\/\/\s*`([a-z-]+)`/g)].map((m) => m[1]!),
+    );
+    const missing = [...fatalCodes].filter((code) => !named.has(code)).sort();
+    expect(missing, 'fatal codes with no case in Refusal').toEqual([]);
+  });
+
+  it('refuses rather than continues when it does not recognise a code', () => {
+    // The catch-all exists and is a refusal, not a fallthrough.
+    expect(swift).toMatch(/case unrecognised\(String\)/);
+    expect(swift).toMatch(/NO SIGNATURE PRODUCED/);
+  });
+
+  it('offers no way forward from a refusal', () => {
+    /* A refusal screen with a "continue" is not a refusal screen. Comments are
+     * stripped first: the previous version of this test matched the word
+     * "override" inside the doc comment that promises there isn't one, which
+     * is a guard failing on the prose that describes it. */
+    const code = swift
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+    expect(code).not.toMatch(/\b(continueAnyway|signRegardless|forceSign|ignoreWarnings)\b/i);
+    expect(code).not.toMatch(/case\s+override\b/i);
+  });
+});

@@ -41,25 +41,59 @@ enum Asset: String {
     var name: String { self == .btc ? "BITCOIN" : "MONERO" }
 }
 
-/// The three conditions the reader refuses over. Matching src/keys/psbt.ts,
-/// each is fatal: there is deliberately no associated "override" payload.
+/// Every condition the reader refuses over, one case per fatal warning code in
+/// src/keys/psbt.ts. Each is fatal: there is deliberately no associated
+/// "override" payload, and no case carries a way to continue.
+///
+/// The mapping is not decorative. When the bridge hands this layer a fatal
+/// warning it does not recognise, the honest outcome is a refusal it cannot
+/// describe well — never a screen that quietly proceeds — so `unrecognised`
+/// exists as the catch-all and `test/app-wiring.test.ts` fails if psbt.ts
+/// grows a fatal code with no case here.
 enum Refusal: Equatable {
+    /// `output-path-mismatch`
     case changeMismatch
+    /// `unknown-input-value`
     case unknowableFee
+    /// `unusual-sighash`
+    case sighashFlags
+    /// `duplicate-input`
+    case duplicateInput
+    /// `opaque-output`
+    case opaqueOutput
+    /// `watch-only`
+    case noKeys
+    /// `unreadable`
+    case unreadable
+    /// The approval digest or wallet check in `signPsbt`.
     case digestMismatch
+    /// A fatal code this build does not have a case for. Refuses anyway.
+    case unrecognised(String)
 
     var headline: [String] {
         switch self {
         case .changeMismatch: ["CANNOT", "SIGN"]
         case .unknowableFee: ["CANNOT", "DETERMINE", "FEE"]
+        case .sighashFlags: ["CANNOT", "SIGN"]
+        case .duplicateInput: ["CANNOT", "SIGN"]
+        case .opaqueOutput: ["CANNOT", "READ", "DESTINATION"]
+        case .noKeys: ["NO", "SIGNING", "KEY"]
+        case .unreadable: ["CANNOT", "READ", "TRANSACTION"]
         case .digestMismatch: ["CANNOT", "SIGN"]
+        case .unrecognised: ["CANNOT", "SIGN"]
         }
     }
     var why: [String] {
         switch self {
         case .changeMismatch: ["CHANGE OUTPUT", "DOES NOT MATCH", "VAULT DERIVATION."]
         case .unknowableFee: ["THE VAULT CANNOT", "HONESTLY TELL YOU", "WHAT THIS COSTS."]
+        case .sighashFlags: ["SIGNATURE WOULD NOT", "COMMIT TO WHERE", "THE MONEY GOES."]
+        case .duplicateInput: ["THE SAME COIN", "IS SPENT TWICE.", "TOTALS ARE FICTION."]
+        case .opaqueOutput: ["AN OUTPUT PAYS", "A SCRIPT WITH NO", "READABLE ADDRESS."]
+        case .noKeys: ["THIS WALLET IS", "WATCH-ONLY. IT HAS", "NO PRIVATE KEY."]
+        case .unreadable: ["THESE BYTES ARE NOT", "A TRANSACTION THIS", "DEVICE CAN READ."]
         case .digestMismatch: ["TRANSACTION DIGEST", "DOES NOT MATCH", "APPROVED SUMMARY."]
+        case .unrecognised: ["THE READER REFUSED", "FOR A REASON THIS", "SCREEN CANNOT NAME."]
         }
     }
     var detail: String {
@@ -77,6 +111,10 @@ enum Refusal: Equatable {
             "The bytes in front of the signer are not the bytes that were reviewed on the " +
             "previous screen. Whatever happened between the two steps, a signature over " +
             "something nobody read is not going to be produced."
+        case .unrecognised(let code):
+            "The transaction reader refused this with a condition (\(code)) that this version of " +
+            "the screen has no words for. It is still a refusal: an unrecognised reason to stop is " +
+            "a reason to stop. Update the app."
         }
     }
     var findings: [(String, Bool)] {
@@ -89,9 +127,33 @@ enum Refusal: Equatable {
             ("INPUT 2 · PREVIOUS OUTPUT MISSING", false),
             ("FEE NOT COMPUTABLE", false),
             ("NO SIGNATURE PRODUCED", true)]
+        case .sighashFlags: [
+            ("INPUT 1 · SIGHASH NOT ALL", false),
+            ("SIGNATURE WOULD NOT BIND OUTPUTS", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .duplicateInput: [
+            ("INPUT 2 REPEATS INPUT 1", false),
+            ("STATED TOTALS EXCEED REALITY", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .opaqueOutput: [
+            ("OUTPUT 1 · SCRIPT DECODES TO NO ADDRESS", false),
+            ("DESTINATION NOT REVIEWABLE", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .noKeys: [
+            ("WALLET IS WATCH-ONLY", false),
+            ("NO PRIVATE KEY PRESENT", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .unreadable: [
+            ("BYTES DID NOT PARSE", false),
+            ("NOTHING TO DESCRIBE", false),
+            ("NO SIGNATURE PRODUCED", true)]
         case .digestMismatch: [
             ("APPROVED SUMMARY DIGEST 9F2A1C04", false),
             ("PRESENTED BYTES DIGEST 71D3E80B", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .unrecognised(let code): [
+            ("READER REFUSED: \(code.uppercased())", false),
+            ("NO CASE IN THIS BUILD", false),
             ("NO SIGNATURE PRODUCED", true)]
         }
     }
