@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Labyrinth Wallet",
+    "slug": "labyrinth-wallet",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "labyrinth",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#050506",
+    "newArchEnabled": true,
+    "platforms": ["ios"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "vision.labyrinth.wallet",
+      "requireFullScreen": true,
+      "infoPlist": {
+        "UIViewControllerBasedStatusBarAppearance": true,
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "The camera is how this wallet reads a signature back from your vault. It is the only channel between the two halves, and nothing is ever sent anywhere else."
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "The camera is how this wallet reads a signature back from your vault. It is the only channel between the two halves, and nothing is ever sent anywhere else."
+        }
+      ],
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
