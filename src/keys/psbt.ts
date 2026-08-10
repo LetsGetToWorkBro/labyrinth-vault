@@ -16,7 +16,7 @@
  * bytes arrive intact" but "what do these bytes actually do", and the answer
  * has to be legible to a tired person holding a phone.
  *
- * ## Three attacks it is specifically built to stop
+ * ## The attacks it is specifically built to stop
  *
  * **Lying about the change address.** A PSBT can mark an output as change,
  * with a derivation path, and a wallet that believes it shows "0.4 BTC back to
@@ -47,6 +47,15 @@
  * checks that summary's digest against the bytes in front of it. A UI that
  * re-fetches, re-parses or re-orders between the two steps fails closed rather
  * than signing something nobody read.
+ *
+ * **Sighash games.** A PSBT can request a signature under SIGHASH_NONE, which
+ * commits to the inputs and not the outputs: the screen shows a payment to
+ * Dave, the person approves, and the resulting signature is equally valid on
+ * a transaction paying anybody. The screen was honest and so was the
+ * signature, about two different transactions. This wallet needs SIGHASH_ALL
+ * and nothing else, so any other flag is fatal at describe time, and the
+ * signing call pins ALL again underneath in case the description step is ever
+ * bypassed.
  *
  * ## What it does not do
  *
@@ -105,6 +114,8 @@ export type WarningCode =
   | 'foreign-input'
   | 'output-path-mismatch'
   | 'unusual-path'
+  | 'unusual-sighash'
+  | 'duplicate-input'
   | 'high-fee'
   | 'nothing-leaves'
   | 'watch-only'
@@ -317,10 +328,12 @@ export function describePsbt(
   let valuesKnown = true;
   let foreignInputs = 0;
 
+  const seenCoins = new Set<string>();
   for (let i = 0; i < tx.inputsLength; i++) {
     const input = tx.getInput(i) as {
       txid?: Uint8Array;
       index?: number;
+      sighashType?: number;
       witnessUtxo?: { script: Uint8Array; amount: bigint };
       nonWitnessUtxo?: { outputs: { script: Uint8Array; amount: bigint }[] };
       bip32Derivation?: unknown;
@@ -331,6 +344,37 @@ export function describePsbt(
     const value = previous ? previous.amount : null;
     const script = previous?.script;
     const spot = script ? own.find(script, depth) : null;
+
+    /* The sighash-flags attack. A PSBT can ask for the signature to be made
+     * with SIGHASH_NONE or SIGHASH_SINGLE, and a signature made with
+     * SIGHASH_NONE does not commit to the outputs at all: whoever holds it can
+     * rewrite where the money goes, after the person approved a screen that
+     * showed somewhere else. The screen and the signature would both be
+     * honest, about two different transactions. Nothing this wallet does needs
+     * any flag but ALL, so anything else is fatal, not exotic. */
+    if (input.sighashType !== undefined && input.sighashType !== 0x01) {
+      warnings.push({
+        code: 'unusual-sighash',
+        fatal: true,
+        message:
+          `Input ${i + 1} asks to be signed with sighash flag 0x${input.sighashType.toString(16)}, ` +
+          `not SIGHASH_ALL. A signature like that does not commit to where the money goes, ` +
+          `so whoever holds it could redirect the payment after you approved it. Do not sign it.`,
+      });
+    }
+
+    /* The same coin listed twice. Real wallets never build this, and it makes
+     * the arithmetic on the screen a lie: the total in counts the coin twice,
+     * while the chain would only spend it once. */
+    const coin = `${input.txid ? hex(input.txid) : ''}:${vout}`;
+    if (seenCoins.has(coin)) {
+      warnings.push({
+        code: 'duplicate-input',
+        fatal: true,
+        message: `Input ${i + 1} spends the same coin as an earlier input. The totals on this screen would be wrong. Do not sign it.`,
+      });
+    }
+    seenCoins.add(coin);
 
     if (value === null) valuesKnown = false;
     if (spot) spending += value ?? 0n;
@@ -531,7 +575,13 @@ export function signPsbt(psbt: Uint8Array, wallet: BtcWallet, approval: PsbtSumm
     const key = privateKeyAt(wallet, change, index);
     if (!key) continue;
     try {
-      if (tx.signIdx(key, i)) signed++;
+      /* ALL, pinned explicitly rather than inherited as the library default.
+       * The describe step already made any other flag fatal; this is the
+       * second net, for the refactor that one day calls sign without
+       * describe. Deterministic nonces (RFC 6979) underneath mean a broken
+       * random generator at signing time cannot leak the key through a
+       * repeated nonce, which has emptied real wallets. */
+      if (tx.signIdx(key, i, [btc.SigHash.ALL])) signed++;
     } catch (err) {
       return { ok: false, signed, problem: `Input ${i + 1} could not be signed: ${String((err as Error)?.message ?? err)}` };
     }

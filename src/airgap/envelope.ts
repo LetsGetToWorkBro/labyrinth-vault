@@ -75,6 +75,18 @@ const KINDS: PayloadKind[] = ['ACCOUNT', 'PSBT', 'XMRUNSIGNED', 'XMRSIGNED', 'TX
  */
 export const DEFAULT_PART_BYTES = 400;
 
+/**
+ * The most parts one payload may claim.
+ *
+ * At 400 bytes a part this is ~800 KB, twenty times a large Monero
+ * transaction set. The cap is not about honest payloads: a scanned frame
+ * states its total before proving anything, and a reader that believed
+ * `total: 4000000000` would sit forever at "1 of 4000000000" collecting
+ * frames into memory. The BC-UR side (ur.ts) has the same cap for the same
+ * reason.
+ */
+export const MAX_PARTS = 2048;
+
 export interface Part {
   version: number;
   kind: PayloadKind;
@@ -188,6 +200,9 @@ export function encodeParts(
   const size = Math.max(1, Math.floor(partBytes));
   const digest = digestOf(payload);
   const total = Math.max(1, Math.ceil(payload.length / size));
+  if (total > MAX_PARTS) {
+    throw new Error(`that payload needs ${total} parts and the wire allows ${MAX_PARTS}`);
+  }
   const frames: string[] = [];
   for (let i = 0; i < total; i++) {
     const slice = payload.subarray(i * size, (i + 1) * size);
@@ -218,6 +233,8 @@ export function parsePart(text: string): Part | null {
   if (!KINDS.includes(kind)) return null;
   // A part numbered zero, or numbered past the end, is not a part of this.
   if (!(index >= 1 && total >= 1 && index <= total)) return null;
+  // A total past the cap is hostile or garbled; either way, not a part.
+  if (total > MAX_PARTS) return null;
   return { version, kind, index, total, digest: match[5]!, body: match[6]! };
 }
 

@@ -179,7 +179,29 @@ export function addressAt(wallet: BtcWallet, change: 0 | 1, index: number): { ad
 /** The private key at a BIP84 chain/index, for signing. Null on a watch-only wallet. */
 export function privateKeyAt(wallet: BtcWallet, change: number, index: number): Uint8Array | null {
   if (wallet.kind !== 'full') return null;
-  return wallet.account.deriveChild(change).deriveChild(index).privateKey ?? null;
+  try {
+    return wallet.account.deriveChild(change).deriveChild(index).privateKey ?? null;
+  } catch {
+    // A closed wallet's account key has been wiped; deriving from it throws.
+    return null;
+  }
+}
+
+/**
+ * Zero the wallet's private key material in place.
+ *
+ * For the app's lock screen and background transitions: a vault that has been
+ * put down should not keep a spendable key warm in memory. The wallet remains
+ * usable for watching (public keys survive), and signing again means opening
+ * from the seed phrase or the sealed vault again, which is the point.
+ *
+ * Subject to the honest limits in wipe.ts: this narrows the window, it cannot
+ * un-copy what the garbage collector already moved.
+ */
+export function closeWallet(wallet: BtcWallet): void {
+  if (wallet.kind !== 'full') return;
+  wallet.account.wipePrivateData();
+  wallet.kind = 'watch';
 }
 
 /** A mainnet address of any standard type, or not. */

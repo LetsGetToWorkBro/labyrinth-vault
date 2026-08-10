@@ -128,6 +128,31 @@ Early. What exists and is tested:
   top of this README is checked against the actual source on every run rather
   than trusted to stay true.
 
+- **The sealed vault** (`src/keys/seal.ts`) — what the seed looks like at
+  rest: Argon2id (memory-hard, calibrated on the device itself) into
+  XChaCha20-Poly1305, with the KDF parameters authenticated alongside the
+  ciphertext so a file cannot be talked into weakening itself. Both primitives
+  are pinned in the tests to implementations that share no code with ours:
+  the Argon2 reference implementation and libsodium. The format is specified
+  in [docs/storage-format.md](docs/storage-format.md).
+
+- **A fuzzer** (`test/fuzz.test.ts`) that feeds every parser mangled frames,
+  mixed payloads and raw noise, asserting two properties: nothing ever
+  throws, and anything that assembles is byte-identical to something that was
+  really encoded. It found a genuine subtlety of BC-UR's frame syntax on its
+  first run, which is documented where it was found.
+
+- **A supply chain that is part of the test suite**
+  (`test/supply-chain.test.ts`). Every dependency exact-pinned, every package
+  integrity-hashed, and the whole transitive closure walked and required to
+  stay inside the audited noble/scure family. An upgrade is a visible diff,
+  never a side effect.
+
+- **One launch gate** (`src/selftest.ts`) — every module that can lose money
+  proves itself against outside vectors on the device, at every launch, and
+  the rule is that nothing runs if anything fails. See
+  [SECURITY.md](SECURITY.md) for the threat model in one table.
+
 Next, in order:
 
 1. The iOS shell, and the confirmation screen itself. The data behind it exists
