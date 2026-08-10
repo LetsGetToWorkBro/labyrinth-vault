@@ -10,7 +10,7 @@ import { cborEncode } from '../src/airgap/cbor';
 import { Scanner, formatOf } from '../src/airgap/scanner';
 import { bitcoinAccount, encodeAccount, moneroAccount, parseAccount } from '../src/keys/account';
 import { openFromMnemonic } from '../src/keys/bitcoin';
-import { walletFromSeed } from '../src/keys/monero';
+import { revealMnemonic, revealSecretHex, walletFromSeed } from '../src/keys/monero';
 
 function bytes(n: number, seed = 1): Uint8Array {
   const out = new Uint8Array(n);
@@ -124,9 +124,9 @@ describe('the watch-only export', () => {
   it('carries a Monero view key and not the spend key', () => {
     const account = moneroAccount(xmr, 'mainnet', Date.UTC(2024, 0, 1));
     const wire = JSON.stringify(account);
-    expect(account.view).toBe(xmr.viewSecret);
-    expect(wire).not.toContain(xmr.spendSecret);
-    expect(wire).not.toContain(xmr.mnemonic[0]!);
+    expect(account.view).toBe(revealSecretHex(xmr.viewSecret));
+    expect(wire).not.toContain(revealSecretHex(xmr.spendSecret));
+    expect(wire).not.toContain(revealMnemonic(xmr)[0]!);
     expect(account.height).toBeGreaterThan(3_000_000);
   });
 

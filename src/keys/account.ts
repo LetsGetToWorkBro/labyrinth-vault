@@ -29,7 +29,7 @@
  */
 
 import { addressAt, openWatch, type BtcWallet } from './bitcoin';
-import { restoreHeight, type Wallet as MoneroWallet, type Network } from './monero';
+import { restoreHeight, revealSecretHex, type Wallet as MoneroWallet, type Network } from './monero';
 
 /** Bumped only if the shape changes in a way an old reader would misread. */
 export const ACCOUNT_VERSION = 1;
@@ -85,7 +85,10 @@ export function moneroAccount(
     chain: 'xmr',
     network,
     address: wallet.address,
-    view: wallet.viewSecret,
+    /* A deliberate reveal: the view key is the one secret this payload exists
+     * to hand over, and it has to be text to cross the wire. Named so the
+     * conversion is visible rather than incidental. */
+    view: revealSecretHex(wallet.viewSecret),
     height: restoreHeight(when),
   };
 }

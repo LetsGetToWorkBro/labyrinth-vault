@@ -104,10 +104,18 @@ Early. What exists and is tested:
   different wallet mid-scan is not a restart.
 
 - **The keys** (`src/keys/`) — Monero seed phrases, addresses and view keys;
-  Bitcoin BIP84 derivation, addresses and watch-only export. Ported from the
-  sibling project with their tests, and deliberately not rewritten: the
-  derivation there has been checked against the official wallets, and tidying
-  it here would throw that away.
+  Bitcoin BIP84 derivation, addresses and watch-only export. The derivations
+  are ported unchanged from the sibling project, with their tests: they have
+  been checked against the official wallets, and tidying working money code is
+  how you get a well-formed address nobody holds the key for.
+
+  What did change is where secrets live. Anything secret is a `Uint8Array`,
+  because a JavaScript string cannot be overwritten — every copy the engine
+  made survives until the collector moves it, and `wipe()` has nothing to write
+  over. Turning a secret into text is unavoidable sometimes (a phrase has to be
+  readable to be written down) but it is a one-way door, so it happens only
+  through `revealMnemonic`, `revealSecretHex` and `revealWallet`. A test fails
+  if that list grows.
 
 - **The confirmation screen's contents** (`src/keys/psbt.ts`) — the part that
   is actually the security. It reads an unsigned transaction and says what it

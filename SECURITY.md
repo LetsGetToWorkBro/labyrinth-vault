@@ -29,6 +29,7 @@ hold funds you would miss with anything built on it.
 | Hostile QR claims absurd sizes (memory DoS) | Caps on part counts and message sizes, on both wires; KDF ceilings checked before allocating | `envelope.ts`, `ur.ts`, `seal.ts` |
 | Output paying a script with no readable address | Fatal when it carries money; the destination is what a person is meant to read, and there is none | `describePsbt` |
 | Approval computed against a different keyring | Summary carries a `walletId`; `signPsbt` refuses a mismatch | `signPsbt` |
+| Secrets left unwipeable in memory | Everything secret is a `Uint8Array`; strings are immutable and cannot be zeroed, so becoming text is an explicit `reveal*` call, and a test enforces it | `src/keys/monero.ts`, `test/no-network.test.ts` |
 | Seed at rest | Argon2id + XChaCha20-Poly1305, parameters authenticated with the ciphertext | `src/keys/seal.ts` |
 | Tuning weakening the vault | Calibration walks up from the default and can only strengthen | `calibrateKdf` |
 | Dependency compromise via version ranges | Every version exact-pinned; the transitive closure is walked by a test and must stay inside the audited family | `test/supply-chain.test.ts` |
@@ -45,14 +46,20 @@ hold funds you would miss with anything built on it.
 - **Memory forensics against a live process.** Secrets are wiped after use
   (`src/keys/wipe.ts`), and that file says plainly why JavaScript cannot make
   wiping a guarantee. Treat it as narrowing a window, not closing one.
-- **Secrets that have been strings.** `walletFromSeed` returns the Monero spend
-  and view keys, and the seed phrase, as strings. Strings are immutable in
-  JavaScript, so those copies cannot be wiped and live until the collector
-  takes them. `keysFromSeed` returns the same material as `Uint8Array` and is
-  the wipeable path; the string-returning API is for display and should be
-  treated as leaving residue. Noted rather than fixed because the fix is an API
-  break, and hiding it behind a claim in `wipe.ts` would be worse than saying
-  it here.
+- **Secrets that a person has to read.** A recovery phrase must become text to
+  be written down, and a view key must become text to cross the wire. Those
+  strings are immutable and therefore permanent for the life of the process.
+  The design does not pretend otherwise; it narrows the surface to three
+  functions with `reveal` in their names (`revealMnemonic`, `revealSecretHex`,
+  `revealWallet`), so "where does a secret become permanent?" has a short,
+  greppable answer, and a test fails if that list grows. Everything else —
+  every wallet object, every seal, every signature — stays in wipeable bytes.
+- **Wiping of internal scratch buffers.** Intermediates are zeroed
+  (`mnemonicFromEntropy`, `openFromMnemonic`, `deriveKey`), but a local buffer
+  that nothing else can reach has no observable behaviour, so unlike every
+  other claim on this page it cannot be mutation-tested. Removing those calls
+  breaks no test. It is kept by review, and it is listed here rather than
+  counted among the things the suite proves.
 - **Timing side channels on the vault.** The primitives are constant-time
   (noble); our encoding layers are not, and operate on data an attacker who
   could measure them would already have. An adversary positioned to time this
@@ -64,7 +71,7 @@ hold funds you would miss with anything built on it.
 git clone https://github.com/LetsGetToWorkBro/labyrinth-vault
 cd labyrinth-vault
 npm ci        # installs exactly the lockfile, integrity-checked
-npm test      # 257 tests, including the cross-implementation vectors
+npm test      # 264 tests, including the cross-implementation vectors
 npm run typecheck
 ```
 

@@ -11,10 +11,14 @@
  *
  *   - A garbage collector may have already copied the buffer during a
  *     compaction, and the copy is not ours to zero.
- *   - Strings are immutable. A secret that has ever been a string (a seed
- *     phrase on screen, a hex key) cannot be wiped, which is why the APIs
- *     here deal in bytes and why the sealed storage in seal.ts takes and
- *     returns Uint8Array.
+ *   - Strings are immutable. A secret that has ever been a string cannot be
+ *     wiped at all. This is why every API here deals in bytes: `Wallet` holds
+ *     its keys as `Uint8Array`, `seal`/`unseal` take and return buffers, and
+ *     the only way to turn a secret into text is a function with "reveal" in
+ *     its name, so the moment a secret becomes permanent is visible in the
+ *     diff rather than a default nobody chose. Some reveals are unavoidable —
+ *     a recovery phrase has to be readable to be written down — and those are
+ *     a short, greppable list instead of a property of every wallet object.
  *   - Crossing a React Native bridge serialises and copies.
  *
  * So the real protections remain the outer ones: the device is offline, the

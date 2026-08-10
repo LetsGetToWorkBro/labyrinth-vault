@@ -76,3 +76,35 @@ describe('the vault has no network code in it', () => {
     }
   });
 });
+
+describe('secrets never become strings by default', () => {
+  /* The rule this codebase now holds to: anything secret is a Uint8Array, so
+   * it can be zeroed; turning one into text happens only through a function
+   * whose name says so. Enforced here rather than remembered, because the
+   * failure mode is silent — a `toHex(secret)` slipped into a return value
+   * reads as helpful and quietly makes the secret permanent. */
+
+  const files = sources();
+
+  it('converts secrets to text only through the named reveals', () => {
+    const allowed = /^src\/keys\/(monero|account)\.ts$/;
+    const offenders: string[] = [];
+    for (const file of files) {
+      if (allowed.test(file.path)) continue;
+      // toHex() applied to something that reads like key material.
+      if (/toHex\s*\(\s*\w*(?:[sS]ecret|[sS]eed|[pP]rivate|[kK]ey)\w*\s*\)/.test(file.text)) {
+        offenders.push(file.path);
+      }
+    }
+    expect(offenders, 'these hex-encode a secret outside the reveal functions').toEqual([]);
+  });
+
+  it('keeps the list of reveal functions short and greppable', () => {
+    const monero = files.find((file) => file.path === 'src/keys/monero.ts');
+    expect(monero).toBeDefined();
+    const reveals = [...monero!.text.matchAll(/^export function (reveal\w+)/gm)].map((m) => m[1]);
+    // If this grows, the surface where secrets become permanent has grown too,
+    // and that should be a decision somebody made rather than a drift.
+    expect(reveals.sort()).toEqual(['revealMnemonic', 'revealSecretHex', 'revealWallet']);
+  });
+});
