@@ -33,7 +33,7 @@ import { Transaction as BtcTransaction } from '@scure/btc-signer';
 import { addressAt, openWatch, type BtcWallet } from '@vault/keys/bitcoin';
 import { walletFromSeed } from '@vault/keys/monero';
 import type { AssetView, BroadcastResult, ChainSnapshot, FeeOption, Utxo, Watcher } from './chain';
-import type { Asset, Transaction } from './model';
+import type { Asset, Stage, Transaction } from './model';
 
 /** BIP84's own test vector. Published, empty, and self-tested against. */
 export const DEMO_ZPUB =
@@ -129,7 +129,7 @@ const DAY = 24 * HOUR;
  * makes every screenshot after the first month look broken.
  */
 export function demoTransactions(now: number): Transaction[] {
-  const journeyFor = (at: number): { stage: Transaction['stage']; at: number }[] => [
+  const journeyFor = (at: number): { stage: Stage; at: number }[] => [
     { stage: 'prepared', at: at - 6 * MINUTE },
     { stage: 'sent-to-vault', at: at - 5 * MINUTE },
     { stage: 'awaiting-signature', at: at - 4 * MINUTE },
@@ -152,7 +152,11 @@ export function demoTransactions(now: number): Transaction[] {
       blockHeight: 874_902,
       at: now - 11 * MINUTE,
       fiatCents: 2_522_632,
-      journey: [...journeyFor(now - 11 * MINUTE), { stage: 'confirmed', at: now - 4 * MINUTE }].slice(0, 5),
+      /* Five stages, not six: this one is broadcast and waiting for blocks, so
+       * `confirmed` has not happened and the timeline should not pretend it
+       * has. The stage a transaction is *in* is the one the glyph is drawing
+       * towards, never one it has reached. */
+      journey: journeyFor(now - 11 * MINUTE),
     },
     {
       id: 'tx-received-xmr',

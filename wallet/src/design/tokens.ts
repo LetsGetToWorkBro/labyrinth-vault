@@ -137,7 +137,7 @@ export const type = {
   /** The balance. One per screen, at most. */
   display: { fontSize: 64, lineHeight: 66, letterSpacing: -2.4, fontWeight: '200' as const },
   /** A large amount inside a flow. */
-  readout: { fontSize: 44, lineHeight: 48, letterSpacing: -1.6, fontWeight: '250' as const },
+  readout: { fontSize: 44, lineHeight: 48, letterSpacing: -1.6, fontWeight: '300' as const },
   /** Screen titles. */
   title: { fontSize: 27, lineHeight: 32, letterSpacing: -0.6, fontWeight: '500' as const },
   /** Row headlines, amounts in lists. */

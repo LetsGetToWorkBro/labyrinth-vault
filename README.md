@@ -5,9 +5,13 @@ your drawer.**
 
 > ### Do not put money on this yet
 >
-> There is no app. This repository is the libraries underneath one: the QR
-> wire, the key derivation, and the transaction reader. They are tested, and
-> that is not the same as being safe to hold your savings.
+> The vault is still libraries rather than an app: the QR wire, the key
+> derivation, and the transaction reader. They are tested, and that is not the
+> same as being safe to hold your savings.
+>
+> The online half now has a frontend (`wallet/`), and it is a frontend — there
+> is no node client behind it, so every number it displays comes from a fixture
+> that it labels as one on screen.
 >
 > Nothing here has been independently audited, and the confirmation screen that
 > the whole design rests on has not been built. Read it, break it, tell us what
@@ -32,7 +36,7 @@ signs what you approve. It asks for no network permission, which means the
 absence is something you can verify in Settings rather than something we
 assert in a README.
 
-**The companion** (your everyday phone, or a desktop wallet like Sparrow)
+**The wallet** (`wallet/` in this repository, or a desktop wallet like Sparrow)
 watches the chain with a watch-only key, builds unsigned transactions, and
 broadcasts the signed ones. It cannot spend anything: it has never seen a
 private key.
@@ -40,8 +44,8 @@ private key.
 They talk in one direction at a time, by showing each other QR codes.
 
 ```
-   vault (offline)                        companion (online)
-   ───────────────                        ──────────────────
+   vault (offline)                        wallet (online)
+   ───────────────                        ───────────────
    make keys
    show watch-only key   ──── QR ───▶     watch the chain
                                           build a payment
@@ -153,11 +157,27 @@ Early. What exists and is tested:
   the rule is that nothing runs if anything fails. See
   [SECURITY.md](SECURITY.md) for the threat model in one table.
 
+- **The online half** (`wallet/`) — Labyrinth Wallet, the everyday app that
+  watches the chain, builds the payments, shows them to the vault as QR frames
+  and broadcasts what comes back. A native iOS application, and the whole
+  interface exists: the send flow end to end, the vault screen, the security
+  centre, and the state that matters most, which is a returned transaction that
+  does not match the one that was approved.
+
+  It imports the wire and the address rules from `src/` rather than copying
+  them, so both halves speak one format by construction. It has its own
+  package, because it depends on React Native and the vault's dependency list is
+  a test. There is no node client behind it yet, and it says so on screen.
+  See [wallet/README.md](wallet/README.md).
+
 Next, in order:
 
-1. The iOS shell, and the confirmation screen itself. The data behind it exists
-   and is tested; what does not exist is the screen.
-2. Monero transaction signing, which needs wallet2's unsigned-set format rather
+1. The vault's own iOS shell, and the confirmation screen itself. The data
+   behind it exists and is tested; what does not exist is the screen.
+2. A real watcher behind the wallet: Electrum servers for Bitcoin, a daemon for
+   Monero. The interface it plugs into is written and the fixture behind it is
+   labelled as one.
+3. Monero transaction signing, which needs wallet2's unsigned-set format rather
    than only the transport that carries it.
 
 ## Running the tests

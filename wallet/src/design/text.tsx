@@ -22,12 +22,12 @@ import { color, face, tabular, type } from './tokens';
 
 interface Props {
   children: ReactNode;
-  style?: StyleProp<TextStyle>;
+    style?: StyleProp<TextStyle> | undefined;
   /** Override the default colour for this role. */
-  tone?: string;
-  numberOfLines?: number;
+    tone?: string | undefined;
+    numberOfLines?: number | undefined;
   /** Turn on tabular figures. Default true for the big readouts. */
-  figures?: boolean;
+    figures?: boolean | undefined;
 }
 
 function make(role: keyof typeof type, defaultTone: string, defaultFigures = false) {
