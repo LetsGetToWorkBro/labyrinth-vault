@@ -29,7 +29,7 @@ struct SignedView: View {
                         .padding(.top, 2)
 
                     Hairline(weight: 2, color: Ink.ruleHeavy).padding(.top, 28)
-                    FieldRow(label: "SIGNATURES", value: "\(tx.inputs) OF \(tx.inputs)")
+                    FieldRow(label: "SIGNATURES", value: "\(tx.inputs.filter(\.mine).count) OF \(tx.inputs.count)")
                     FieldRow(label: "SIGHASH", value: "ALL")
                     FieldRow(label: "TXID", value: String(Fixtures.txid.prefix(16)) + "…")
                     FieldRow(label: "SENT ANYWHERE", value: "NO", tone: .verified)

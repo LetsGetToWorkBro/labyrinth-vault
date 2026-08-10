@@ -316,3 +316,124 @@ describe('the screen can name every refusal the reader makes', () => {
     expect(code).not.toMatch(/case\s+override\b/i);
   });
 });
+
+describe('the screen model matches the wire, field for field', () => {
+  /* The seam that had already drifted once. `TxSummary` in Swift is a hand
+   * written mirror of `WireSummary` in TypeScript, and nothing but this test
+   * connects them. The first version was missing `yourNet`, had no case for an
+   * output with no address, and — worst — modelled a single `destination`,
+   * so a transaction paying two people would have shown one of them.
+   *
+   * Parsing Swift with regexes is crude. It is also the only thing standing
+   * between the two halves, and it fails loudly, which is the requirement. */
+
+  const wire = readFileSync('src/bridge/summary.ts', 'utf8');
+  const swift = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+
+  /**
+   * TypeScript types, translated into the Swift they must be written as.
+   *
+   * Names alone are not enough, and finding that out was the point of trying
+   * to break this test: changing `address: String?` to `address: String` in
+   * the Swift model broke nothing, because a name-only comparison cannot see
+   * optionality. An output whose address is not optional is an output whose
+   * unreadable case has quietly stopped existing.
+   */
+  const TYPES: Record<string, string> = {
+    string: 'String',
+    'string | null': 'String?',
+    number: 'Int',
+    boolean: 'Bool',
+    'WireInput[]': '[TxInput]',
+    'WireOutput[]': '[TxOutput]',
+    'WireWarning[]': '[TxWarning]',
+  };
+
+  /** `name: SwiftType` for every field of a TypeScript interface. */
+  function tsFields(name: string): string[] {
+    const start = wire.indexOf(`export interface ${name} {`);
+    expect(start, `${name} not found in the bridge`).toBeGreaterThan(-1);
+    const body = wire.slice(start, wire.indexOf('\n}', start));
+    return [...body.matchAll(/^\s{2}(\w+)([?]?):\s*([^;]+);/gm)]
+      .map((m) => {
+        const [, field, optional, type] = m;
+        const swiftType = TYPES[type!.trim()];
+        expect(swiftType, `no Swift equivalent recorded for "${type!.trim()}" on ${name}.${field}`)
+          .toBeDefined();
+        // An optional TS field and a nullable one both land as Swift optional.
+        const finalType = optional === '?' && !swiftType!.endsWith('?') ? `${swiftType}?` : swiftType!;
+        return `${field}: ${finalType}`;
+      })
+      .sort();
+  }
+
+  /** `name: Type` for every stored property of a Swift struct. */
+  function swiftFields(name: string): string[] {
+    const start = swift.indexOf(`struct ${name}:`);
+    expect(start, `${name} not found in the Swift model`).toBeGreaterThan(-1);
+    const body = swift.slice(start, swift.indexOf('\n}', start));
+    return [...body.matchAll(/^\s{4}let (\w+):\s*(\S+)$/gm)]
+      .map((m) => `${m[1]}: ${m[2]}`)
+      .sort();
+  }
+
+  const pairs: [string, string][] = [
+    ['WireSummary', 'TxSummary'],
+    ['WireOutput', 'TxOutput'],
+    ['WireInput', 'TxInput'],
+    ['WireWarning', 'TxWarning'],
+  ];
+
+  it('found both sides, so a pass means something', () => {
+    for (const [ts, sw] of pairs) {
+      expect(tsFields(ts).length, ts).toBeGreaterThan(2);
+      expect(swiftFields(sw).length, sw).toBeGreaterThan(2);
+    }
+  });
+
+  for (const [ts, sw] of pairs) {
+    it(`${sw} has exactly the fields and types of ${ts}`, () => {
+      expect(swiftFields(sw), `${sw} drifted from ${ts}`).toEqual(tsFields(ts));
+    });
+  }
+
+  it('models outputs as a list, not as one destination', () => {
+    // The specific regression. A single destination cannot represent a
+    // transaction that pays two people, and the screen would show one.
+    expect(swift).toMatch(/let outputs:\s*\[TxOutput\]/);
+    expect(swift).toMatch(/let inputs:\s*\[TxInput\]/);
+    expect(swift).not.toMatch(/let destination:\s*String/);
+  });
+
+  it('makes an unreadable address representable on the output itself', () => {
+    /* Scoped to TxOutput rather than grepping the file: TxInput also has an
+     * optional address, so a whole-file match passed even with TxOutput's
+     * made non-optional. */
+    expect(swiftFields('TxOutput')).toContain('address: String?');
+  });
+
+  it('does no money arithmetic of its own, anywhere in the app tree', () => {
+    /* Every amount arrives formatted by `formatBtc`, which has tests. A second
+     * implementation of what a satoshi is worth is how two screens come to
+     * disagree about a number, and the screen that is wrong is the one a
+     * person read before approving. */
+    const tree = readdirSync('ios/LabyrinthVault', { withFileTypes: true });
+    const swiftFiles: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith('.swift')) swiftFiles.push(path);
+      }
+    };
+    expect(tree.length).toBeGreaterThan(0);
+    walk('ios/LabyrinthVault');
+    expect(swiftFiles.length).toBeGreaterThan(5);
+
+    for (const path of swiftFiles) {
+      const text = readFileSync(path, 'utf8');
+      expect(text, `${path} converts satoshis`).not.toMatch(/100_?000_?000|1e8/);
+      expect(text, `${path} formats a number itself`).not.toMatch(/NumberFormatter|Decimal\(/);
+    }
+  });
+});

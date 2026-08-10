@@ -13,25 +13,87 @@ import Combine
 // These mirror the summary that src/keys/psbt.ts produces when it reads a
 // PSBT. The view layer never re-derives or re-orders anything from them.
 
-struct TxSummary: Equatable {
-    let sendAmount: String        // "0.482731"
-    let asset: Asset
-    let destination: String
-    let destinationType: String   // "P2WPKH · NOT YOURS"
-    let fee: String
-    let feeShare: String          // "0.03%"
-    let feeRate: String           // "68 SAT/VB"
-    let vsize: String
-    let change: String
-    let changeAddress: String
-    let changePath: String        // "m/84'/0'/0'/1/17"
-    let inputs: Int
-    let outputs: Int
-    let totalIn: String
-    let rbf: Bool
-    /// Digest of this summary. Carried from review to approval to signing so
-    /// that describing one transaction and signing another fails closed.
+/// One output being paid. Mirrors `WireOutput` in src/bridge/summary.ts.
+struct TxOutput: Equatable, Decodable {
+    let position: Int
+    /// Nil when the script decodes to no address. The screen must say so
+    /// rather than draw a blank where a destination goes; the reader has
+    /// already made it fatal when it carries money.
+    let address: String?
+    let scriptHex: String
+    /// Formatted upstream. Nothing here divides by a hundred million.
+    let amount: String
+    let mine: Bool
+    let path: String?
+}
+
+/// One previous output being spent. Mirrors `WireInput`.
+struct TxInput: Equatable, Decodable {
+    let position: Int
+    let txid: String
+    let vout: Int
+    /// Nil when the PSBT did not say what it was worth, which is fatal.
+    let amount: String?
+    let address: String?
+    let mine: Bool
+    let path: String?
+}
+
+struct TxWarning: Equatable, Decodable {
+    let code: String
+    let fatal: Bool
+    let message: String
+}
+
+/// What the confirmation screen is allowed to know.
+///
+/// Field for field, this is `WireSummary` in src/bridge/summary.ts, and
+/// `test/app-wiring.test.ts` fails if the two drift apart. Every amount
+/// arrives already formatted, because a second implementation of what a
+/// satoshi is worth is how two screens come to disagree about a number.
+///
+/// It carries *every* output, not one destination. The version before this
+/// had a single `destination`, which meant a transaction paying two people
+/// would have shown one of them, and money would have left to an address
+/// nobody approving it ever saw.
+struct TxSummary: Equatable, Decodable {
+    let ok: Bool
+    let problem: String?
+    /// Digest of the described bytes. Carried from review to approval to
+    /// signing so that describing one transaction and signing another fails.
     let digest: String
+    /// Which keyring it was described against.
+    let walletId: String
+    let inputs: [TxInput]
+    let outputs: [TxOutput]
+    let spending: String
+    let leaving: String
+    let returning: String
+    /// The number to put next to the word "paying". Not `leaving`.
+    let yourNet: String
+    let fee: String?
+    let feeRate: String?
+    /// "~208 vB". An estimate, worded as one upstream.
+    let vsize: String
+    /// "0.03%". Nil when nothing is being paid, so there is no share to take.
+    let feeShare: String?
+    let warnings: [TxWarning]
+    let signable: Bool
+    /// The first fatal warning's code, if any.
+    let refusal: String?
+
+    // MARK: Derived, and derived means arranged — never recomputed.
+
+    /// The outputs that are not yours: what this transaction actually pays.
+    var payees: [TxOutput] { outputs.filter { !$0.mine } }
+    /// The outputs coming back to you.
+    var change: [TxOutput] { outputs.filter { $0.mine } }
+    /// True when there is more than one payee, which the screen must list
+    /// rather than summarise.
+    var paysSeveral: Bool { payees.count > 1 }
+    /// True when any output has no address a person could read.
+    var hasUnreadableOutput: Bool { outputs.contains { $0.address == nil } }
+    var asset: Asset { .btc }
 }
 
 enum Asset: String {
@@ -166,23 +228,78 @@ enum Refusal: Equatable {
 // not add up teaches the wrong reflexes.
 
 enum Fixtures {
+    /// A single-payee transaction, the ordinary case.
     static let tx = TxSummary(
-        sendAmount: "0.482731",
-        asset: .btc,
-        destination: "bc1q7k9x2t4vlqz8m3n0d5r6sgu9hj2wf4paeyc3lz",
-        destinationType: "P2WPKH · NOT YOURS",
+        ok: true,
+        problem: nil,
+        digest: "9F2A1C04E7B83D56",
+        walletId: "7f21a9c40b3e5d81",
+        inputs: [
+            TxInput(position: 1, txid: "c1d0a4f7e2b95836aa41c07d9e3f5b28c1d0a4f7e2b95836aa41c07d9e3f5b28",
+                    vout: 0, amount: "0.400000", address: "bc1q3f8w2n5k7v0zqxr4mtd9jl6cshy8pae2guv1k0",
+                    mine: true, path: "m/84'/0'/0'/0/4"),
+            TxInput(position: 2, txid: "9b7e3d21c5a04f68d2e91b7c3a5f80d49b7e3d21c5a04f68d2e91b7c3a5f80d4",
+                    vout: 1, amount: "0.250764", address: "bc1qz0m5r8t2xkw4hvn7dq3js6el9cyu1pafg2b4x7",
+                    mine: true, path: "m/84'/0'/0'/0/9"),
+            TxInput(position: 3, txid: "44a1f6b8e07c2d35910bf4a6c8d2e7539b0c4a1f6b8e07c2d35910bf4a6c8d2e",
+                    vout: 0, amount: "0.150000", address: "bc1qw6s2j9k4v7n0dtxr3mhq8lz5cfa1pue3gyb0d2",
+                    mine: true, path: "m/84'/0'/0'/0/12"),
+        ],
+        outputs: [
+            TxOutput(position: 1, address: "bc1q7k9x2t4vlqz8m3n0d5r6sgu9hj2wf4paeyc3lz",
+                     scriptHex: "0014f58a6b2c9d0e4713a85f2c6b90d4e7318a52c0fb",
+                     amount: "0.482731", mine: false, path: nil),
+            TxOutput(position: 2, address: "bc1q9m4v0xr2ekstd7q5c3jag8huw6zfn2ypl4v0d3",
+                     scriptHex: "00142ec7b90a5f13d846c02b7e59a1d38f640c9a7b25",
+                     amount: "0.317891", mine: true, path: "m/84'/0'/0'/1/17"),
+        ],
+        spending: "0.800764",
+        leaving: "0.482731",
+        returning: "0.317891",
+        yourNet: "0.482873",
         fee: "0.000142",
+        feeRate: "68 sat/vB",
+        vsize: "~208 vB",
         feeShare: "0.03%",
-        feeRate: "68 SAT/VB",
-        vsize: "208 VB",
-        change: "0.317891",
-        changeAddress: "bc1q9m4v0xr2ekstd7q5c3jag8huw6zfn2ypl4v0d3",
-        changePath: "m/84'/0'/0'/1/17",
-        inputs: 3,
-        outputs: 2,
-        totalIn: "0.800764",
-        rbf: true,
-        digest: "9F2A1C04E7B83D56"
+        warnings: [],
+        signable: true,
+        refusal: nil
+    )
+
+    /// Two payees. Staged deliberately: the model this replaced could not
+    /// represent it, so the screen would have shown one of the two.
+    static let txMultiPayee = TxSummary(
+        ok: true,
+        problem: nil,
+        digest: "3D71B0C82E9F4A65",
+        walletId: "7f21a9c40b3e5d81",
+        inputs: [
+            TxInput(position: 1, txid: "c1d0a4f7e2b95836aa41c07d9e3f5b28c1d0a4f7e2b95836aa41c07d9e3f5b28",
+                    vout: 0, amount: "1.000000", address: "bc1q3f8w2n5k7v0zqxr4mtd9jl6cshy8pae2guv1k0",
+                    mine: true, path: "m/84'/0'/0'/0/4"),
+        ],
+        outputs: [
+            TxOutput(position: 1, address: "bc1q7k9x2t4vlqz8m3n0d5r6sgu9hj2wf4paeyc3lz",
+                     scriptHex: "0014f58a6b2c9d0e4713a85f2c6b90d4e7318a52c0fb",
+                     amount: "0.300000", mine: false, path: nil),
+            TxOutput(position: 2, address: "bc1qr2v8m0kt5x7cwe4nj9dqh3zs6la1pfug0yb2d5",
+                     scriptHex: "001485c3f0a72b9e461d0af35c28d61b93e7420cf58a",
+                     amount: "0.450000", mine: false, path: nil),
+            TxOutput(position: 3, address: "bc1q9m4v0xr2ekstd7q5c3jag8huw6zfn2ypl4v0d3",
+                     scriptHex: "00142ec7b90a5f13d846c02b7e59a1d38f640c9a7b25",
+                     amount: "0.249800", mine: true, path: "m/84'/0'/0'/1/18"),
+        ],
+        spending: "1.000000",
+        leaving: "0.750000",
+        returning: "0.249800",
+        yourNet: "0.750200",
+        fee: "0.000200",
+        feeRate: "71 sat/vB",
+        vsize: "~141 vB",
+        feeShare: "0.03%",
+        warnings: [],
+        signable: true,
+        refusal: nil
     )
 
     static let vaultID = "•••• •••• 7F21"
@@ -207,7 +324,9 @@ enum Route: Equatable {
     /// Review holds the summary; approve additionally holds the digest the
     /// person scrolled past. The compiler enforces the order.
     case review(TxSummary)
-    case destination(TxSummary)
+    /// Inspecting one specific output, not "the" destination: a
+    /// transaction can pay several, and each is checked on its own.
+    case destination(TxSummary, TxOutput)
     case approve(TxSummary, reviewedDigest: String)
     case signed(TxSummary)
     case signedQR(TxSummary)

@@ -29,6 +29,8 @@ hold funds you would miss with anything built on it.
 | Hostile QR claims absurd sizes (memory DoS) | Caps on part counts and message sizes, on both wires; KDF ceilings checked before allocating | `envelope.ts`, `ur.ts`, `seal.ts` |
 | Output paying a script with no readable address | Fatal when it carries money; the destination is what a person is meant to read, and there is none | `describePsbt` |
 | Approval computed against a different keyring | Summary carries a `walletId`; `signPsbt` refuses a mismatch | `signPsbt` |
+| A screen showing fewer destinations than the transaction pays | The wire carries every output; the screen renders one zone per payee, and a test fails if the model collapses to one | `src/bridge/summary.ts`, `test/app-wiring.test.ts` |
+| Screen and reader disagreeing about a number | Every amount is formatted once, by `formatBtc`; a test fails if any Swift file converts satoshis itself | `src/bridge/summary.ts`, `test/app-wiring.test.ts` |
 | Secrets left unwipeable in memory | Everything secret is a `Uint8Array`; strings are immutable and cannot be zeroed, so becoming text is an explicit `reveal*` call, and a test enforces it | `src/keys/monero.ts`, `test/no-network.test.ts` |
 | Seed at rest | Argon2id + XChaCha20-Poly1305, parameters authenticated with the ciphertext | `src/keys/seal.ts` |
 | Tuning weakening the vault | Calibration walks up from the default and can only strengthen | `calibrateKdf` |
@@ -71,7 +73,7 @@ hold funds you would miss with anything built on it.
 git clone https://github.com/LetsGetToWorkBro/labyrinth-vault
 cd labyrinth-vault
 npm ci        # installs exactly the lockfile, integrity-checked
-npm test      # 264 tests, including the cross-implementation vectors
+npm test      # 317 tests, including the cross-implementation vectors
 npm run typecheck
 ```
 

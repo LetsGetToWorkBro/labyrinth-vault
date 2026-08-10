@@ -170,6 +170,10 @@ export interface PsbtSummary {
   /** An estimate in sat/vB, and labelled as one: the real size is not known
    *  until the signatures exist. */
   feeRate: number | null;
+  /** Estimated virtual size in vBytes. An estimate for the same reason: the
+   *  witnesses do not exist yet. Exposed so the screen can show it without
+   *  working it out, which would be a second implementation of the estimate. */
+  vsize: number;
   warnings: PsbtWarning[];
   /** Every input is ours, every value is known, nothing fatal. */
   signable: boolean;
@@ -202,6 +206,7 @@ function failed(digest: string, walletId: string, problem: string): PsbtSummary 
     yourNet: 0n,
     fee: null,
     feeRate: null,
+    vsize: 0,
     warnings: [{ code: 'unreadable', fatal: true, message: problem }],
     signable: false,
   };
@@ -577,6 +582,7 @@ export function describePsbt(
     yourNet: spending - returning,
     fee,
     feeRate,
+    vsize,
     warnings,
     signable: !fatal && foreignInputs === 0 && valuesKnown && wallet.kind === 'full',
   };

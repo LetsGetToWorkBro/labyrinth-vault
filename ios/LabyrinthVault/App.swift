@@ -47,7 +47,7 @@ struct RootView: View {
         case .acquiring: AcquiringView()
         case .received: ReceivedView()
         case .review(let tx): ReviewView(tx: tx)
-        case .destination(let tx): DestinationView(tx: tx)
+        case .destination(let tx, let out): DestinationView(tx: tx, output: out)
         case .approve(let tx, let digest): ApproveView(tx: tx, reviewedDigest: digest)
         case .signed(let tx): SignedView(tx: tx)
         case .signedQR(let tx): SignedQRView(tx: tx)
