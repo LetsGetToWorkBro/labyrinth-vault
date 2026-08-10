@@ -385,3 +385,125 @@ describe('the same coin spent twice', () => {
     expect(summary.signable).toBe(false);
   });
 });
+
+describe('an output nobody can read', () => {
+  /* The finding an audit turned up: the entire security model is that a person
+   * reads where the money goes, and an output whose script decodes to no
+   * address gives them nothing to read. It used to pass as signable with a
+   * silently null address, which a frontend renders as an amount beside a
+   * blank space. */
+
+  function payingScript(script: Uint8Array, value: bigint): Uint8Array {
+    const tx = new btc.Transaction({ allowUnknownOutputs: true });
+    tx.addInput({
+      txid: txidFor(1),
+      index: 0,
+      witnessUtxo: { script: addressAt(wallet, 0, 0).script, amount: 200_000n },
+    });
+    tx.addOutput({ script, amount: value });
+    return tx.toPSBT();
+  }
+
+  const OPAQUE = new Uint8Array([0x6a, 0x04, 1, 2, 3, 4]);
+
+  it('is fatal when it carries money', () => {
+    const summary = describePsbt(payingScript(OPAQUE, 90_000n), wallet);
+    const caught = summary.warnings.find((w) => w.code === 'opaque-output');
+    expect(caught?.fatal).toBe(true);
+    expect(caught?.message).toMatch(/no readable address|do not sign/i);
+    expect(summary.signable).toBe(false);
+    expect(summary.outputs[0]!.address).toBeNull();
+  });
+
+  it('refuses to sign it, however the summary is presented', () => {
+    const psbt = payingScript(OPAQUE, 90_000n);
+    expect(signPsbt(psbt, wallet, describePsbt(psbt, wallet)).ok).toBe(false);
+  });
+
+  it('is only a note when it carries nothing, because data outputs are ordinary', () => {
+    const summary = describePsbt(payingScript(OPAQUE, 0n), wallet);
+    expect(summary.warnings.find((w) => w.code === 'opaque-output')).toBeUndefined();
+    expect(summary.warnings.find((w) => w.code === 'data-output')?.fatal).toBe(false);
+    expect(summary.signable).toBe(true);
+  });
+});
+
+describe('the approval belongs to one wallet', () => {
+  it('will not sign with a keyring the description was not made for', () => {
+    /* The digest proves the bytes are the approved bytes. It says nothing
+     * about whose keys "is this my change?" was answered against. */
+    const psbt = build([{ index: 0 }], [{ value: 50_000n }]);
+    const forStranger = describePsbt(psbt, stranger);
+    expect(forStranger.walletId).not.toBe(describePsbt(psbt, wallet).walletId);
+    const result = signPsbt(psbt, wallet, forStranger);
+    expect(result.ok).toBe(false);
+    expect(result.problem).toMatch(/different wallet/i);
+    expect(result.signed).toBe(0);
+  });
+
+  it('names the wallet stably, from the public key alone', () => {
+    expect(describePsbt(build([{ index: 0 }], [{ value: 50_000n }]), wallet).walletId).toBe(
+      describePsbt(build([{ index: 1 }], [{ value: 10_000n }]), wallet).walletId,
+    );
+  });
+});
+
+describe('what the transaction costs you', () => {
+  it('is your inputs less your change, not the sum of what leaves', () => {
+    const psbt = build(
+      [{ index: 0, value: 200_000n }],
+      [{ value: 150_000n }, { ours: { change: 1, index: 0 }, value: 45_000n, claimPath: [1, 0] }],
+    );
+    const summary = describePsbt(psbt, wallet);
+    expect(summary.yourNet).toBe(155_000n);
+    expect(summary.yourNet).toBe(summary.leaving + summary.fee!);
+  });
+
+  it('separates from `leaving` when somebody else funded part of it', () => {
+    /* A collaborative transaction. `leaving` counts outputs the other party
+     * paid for; showing that as "you are paying" would be alarming and false. */
+    const psbt = build(
+      [{ index: 0, value: 100_000n }, { owner: 'stranger', index: 0, value: 900_000n }],
+      [{ value: 950_000n }, { ours: { change: 1, index: 0 }, value: 40_000n }],
+    );
+    const summary = describePsbt(psbt, wallet);
+    expect(summary.leaving).toBe(950_000n);
+    expect(summary.yourNet, 'you are only out 60,000').toBe(60_000n);
+  });
+});
+
+describe('guarantees this device leans on its dependencies for', () => {
+  it('rejects a nonWitnessUtxo that is not the transaction the input names', () => {
+    /* BIP174 requires the previous transaction to be the one the input points
+     * at; without that check a signer can be lied to about an input's value.
+     * @scure/btc-signer enforces it on parse. This test exists because we
+     * depend on that and would otherwise never notice it being relaxed. */
+    const prev = new btc.Transaction();
+    prev.addInput({
+      txid: txidFor(3),
+      index: 0,
+      witnessUtxo: { script: addressAt(wallet, 0, 0).script, amount: 500_000n },
+    });
+    prev.addOutputAddress(addressAt(wallet, 0, 0).address, 499_000n);
+
+    /* Asserted as a property rather than as a specific throw. The library
+     * rejects this at different points depending on how the transaction was
+     * assembled, and pinning one mechanism makes the test fail on a harmless
+     * refactor. What must hold is that no such PSBT ever reaches a signable
+     * summary. */
+    let psbt: Uint8Array | null = null;
+    try {
+      const tx = new btc.Transaction({ allowUnknownOutputs: true, allowLegacyWitnessUtxo: true });
+      tx.addInput({ txid: txidFor(9), index: 0, nonWitnessUtxo: prev.toBytes(true, false) });
+      tx.addOutputAddress(addressAt(stranger, 0, 0).address, 400_000n);
+      psbt = tx.toPSBT();
+    } catch {
+      psbt = null; // refused at construction, which is also a pass
+    }
+
+    if (psbt) {
+      const summary = describePsbt(psbt, wallet);
+      expect(summary.signable, 'a mismatched previous transaction must never be signable').toBe(false);
+    }
+  });
+});

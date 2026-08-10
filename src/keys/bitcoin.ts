@@ -31,6 +31,7 @@ import { entropyToMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as btc from '@scure/btc-signer';
+import { wipe } from './wipe';
 
 export const SATS_PER_BTC = 100_000_000n;
 const DECIMALS = 8;
@@ -107,11 +108,18 @@ export interface BtcWallet {
  */
 export function mnemonicFromEntropy(system: Uint8Array, extra: Uint8Array = new Uint8Array(0)): string {
   if (system.length !== 32) throw new Error('The system must supply 32 bytes.');
-  if (!extra.length) return entropyToMnemonic(sha256(system).slice(0, 16), wordlist);
-  const both = new Uint8Array(system.length + extra.length);
-  both.set(system);
-  both.set(extra, system.length);
-  return entropyToMnemonic(sha256(both).slice(0, 16), wordlist);
+  const source = new Uint8Array(system.length + extra.length);
+  source.set(system);
+  source.set(extra, system.length);
+  const digest = sha256(source);
+  const entropy = digest.slice(0, 16);
+  try {
+    return entropyToMnemonic(entropy, wordlist);
+  } finally {
+    // Everything the phrase was made from, gone. The phrase is a string and
+    // cannot be; that is what `revealMnemonic`'s warning is about.
+    wipe(source, digest, entropy);
+  }
 }
 
 /** Whitespace-normalise and checksum-check a typed seed phrase. */
@@ -130,8 +138,16 @@ export function checkMnemonic(text: string): { ok: boolean; words?: string; prob
 
 export function openFromMnemonic(words: string): BtcWallet {
   const seed = mnemonicToSeedSync(words);
-  const account = HDKey.fromMasterSeed(seed, ZPUB_VERSIONS).derive(ACCOUNT_PATH);
-  return { kind: 'full', account, zpub: account.publicExtendedKey };
+  try {
+    const account = HDKey.fromMasterSeed(seed, ZPUB_VERSIONS).derive(ACCOUNT_PATH);
+    return { kind: 'full', account, zpub: account.publicExtendedKey };
+  } finally {
+    /* The BIP39 seed is the master secret; HDKey has copied what it needs, so
+     * this intermediate has no reason to outlive the call. The phrase itself
+     * arrived as a string and cannot be wiped, which is why the caller is told
+     * to keep that variable short-lived. */
+    wipe(seed);
+  }
 }
 
 /**

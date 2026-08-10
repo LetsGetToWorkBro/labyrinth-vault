@@ -157,14 +157,15 @@ describe('refusing, which is most of what a vault does', () => {
 
 describe('calibration', () => {
   it('walks memory up until the target time is met', () => {
-    // A fake timer that reports 100ms per run until m reaches 32 MiB.
+    /* The walk starts at the default and climbs; a device that reaches the
+     * target only at 256 MiB should be given 256 MiB. */
     let now = 0;
     const params = calibrateKdf(
       250,
       () => now,
-      (p) => { now += p.m >= 32768 ? 300 : 100; },
+      (p) => { now += p.m >= 262144 ? 300 : 100; },
     );
-    expect(params.m).toBe(32768);
+    expect(params.m).toBe(262144);
     expect(params.t).toBe(DEFAULT_KDF.t);
   });
 
@@ -172,5 +173,25 @@ describe('calibration', () => {
     let now = 0;
     const params = calibrateKdf(1e9, () => now, () => { now += 1; });
     expect(params.m).toBe(KDF_LIMITS.maxM);
+  });
+});
+
+describe('calibration can only strengthen', () => {
+  it('never returns parameters weaker than the default it replaces', () => {
+    /* The audit finding: the walk used to start at the floor, so on a device
+     * too slow to reach the target — exactly the old phone this app is for —
+     * calling the tuning function produced an 8 MiB vault where doing nothing
+     * would have produced 64 MiB. A function whose purpose is to make the
+     * vault harder to open must never make it easier. */
+    let now = 0;
+    const slow = calibrateKdf(1000, () => now, () => { now += 5000; });
+    expect(slow.m).toBeGreaterThanOrEqual(DEFAULT_KDF.m);
+    expect(slow.t).toBe(DEFAULT_KDF.t);
+  });
+
+  it('still climbs on a device that can afford more', () => {
+    let now = 0;
+    const fast = calibrateKdf(250, () => now, (p) => { now += p.m >= 262144 ? 300 : 10; });
+    expect(fast.m).toBe(262144);
   });
 });

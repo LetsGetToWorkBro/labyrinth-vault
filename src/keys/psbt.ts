@@ -116,6 +116,9 @@ export type WarningCode =
   | 'unusual-path'
   | 'unusual-sighash'
   | 'duplicate-input'
+  | 'opaque-output'
+  | 'data-output'
+  | 'wrong-wallet'
   | 'high-fee'
   | 'nothing-leaves'
   | 'watch-only'
@@ -133,6 +136,15 @@ export interface PsbtSummary {
   problem?: string;
   /** sha256 of the exact bytes described, hex. `signPsbt` checks it. */
   digest: string;
+  /**
+   * Which wallet this description is about.
+   *
+   * The digest binds the summary to the *bytes*; this binds it to the *keys*.
+   * Without it a summary computed against one wallet could be handed to
+   * `signPsbt` with another, and "whose change is this?" would have been
+   * answered for the wrong keyring.
+   */
+  walletId: string;
   inputs: PsbtInput[];
   outputs: PsbtOutput[];
   /** Total of the inputs that are ours. */
@@ -141,6 +153,18 @@ export interface PsbtSummary {
   leaving: bigint;
   /** Total coming back to our own addresses. */
   returning: bigint;
+  /**
+   * What this transaction actually costs *you*: your inputs, less what comes
+   * back. The number a person means by "how much am I spending?".
+   *
+   * For an ordinary transaction this is `leaving + fee`. It is a separate
+   * field because in a collaborative transaction (someone else's inputs in
+   * the same transaction) they are very different numbers: `leaving` counts
+   * every output that is not yours, including ones the other party funded,
+   * so it can be far larger than anything you are paying. A screen that shows
+   * `leaving` as "you are paying" would be alarming and wrong.
+   */
+  yourNet: bigint;
   /** Null when any input value is unknown, because then it is unknowable. */
   fee: bigint | null;
   /** An estimate in sat/vB, and labelled as one: the real size is not known
@@ -159,16 +183,23 @@ export function psbtDigest(psbt: Uint8Array): string {
   return hex(sha256(psbt));
 }
 
-function failed(digest: string, problem: string): PsbtSummary {
+/** A short, stable name for a keyring, derived from its public account key. */
+export function walletIdOf(wallet: BtcWallet): string {
+  return hex(sha256(new TextEncoder().encode(wallet.zpub))).slice(0, 16);
+}
+
+function failed(digest: string, walletId: string, problem: string): PsbtSummary {
   return {
     ok: false,
     problem,
     digest,
+    walletId,
     inputs: [],
     outputs: [],
     spending: 0n,
     leaving: 0n,
     returning: 0n,
+    yourNet: 0n,
     fee: null,
     feeRate: null,
     warnings: [{ code: 'unreadable', fatal: true, message: problem }],
@@ -306,15 +337,16 @@ export function describePsbt(
   options: DescribeOptions = {},
 ): PsbtSummary {
   const digest = psbtDigest(psbt);
+  const walletId = walletIdOf(wallet);
 
   let tx: btc.Transaction;
   try {
     tx = btc.Transaction.fromPSBT(psbt, { allowUnknown: true, allowUnknownInputs: true, allowUnknownOutputs: true });
   } catch (err) {
-    return failed(digest, 'That is not a transaction this device can read: ' + String((err as Error)?.message ?? err));
+    return failed(digest, walletId, 'That is not a transaction this device can read: ' + String((err as Error)?.message ?? err));
   }
-  if (tx.inputsLength === 0) return failed(digest, 'That transaction has no inputs.');
-  if (tx.outputsLength === 0) return failed(digest, 'That transaction has no outputs.');
+  if (tx.inputsLength === 0) return failed(digest, walletId, 'That transaction has no inputs.');
+  if (tx.outputsLength === 0) return failed(digest, walletId, 'That transaction has no outputs.');
 
   const depth = Math.max(1, options.scanDepth ?? DEFAULT_SCAN_DEPTH);
   const own = ownScriptsFor(wallet, depth);
@@ -427,11 +459,41 @@ export function describePsbt(
       });
     }
 
+    /* The destination a person cannot read.
+     *
+     * The whole security model is that somebody reads where the money goes.
+     * An output whose script does not decode to any address defeats that
+     * completely: there is no destination to show, so approving it is
+     * approving a blank. A frontend rendering `address: null` shows an amount
+     * next to an empty space, which reads as harmless and is not.
+     *
+     * Money in an unreadable script is fatal. A zero-value data carrier
+     * (OP_RETURN and friends) is ordinary and only worth naming, because it
+     * moves nothing. */
+    const address = addressFromScript(script);
+    if (address === null) {
+      if (value > 0n) {
+        warnings.push({
+          code: 'opaque-output',
+          fatal: true,
+          message:
+            `Output ${i + 1} sends ${formatBtc(value)} BTC to a script with no readable address, ` +
+            `so there is no destination anybody can check. Do not sign it.`,
+        });
+      } else {
+        warnings.push({
+          code: 'data-output',
+          fatal: false,
+          message: `Output ${i + 1} carries data rather than money. It moves nothing.`,
+        });
+      }
+    }
+
     if (spot) returning += value;
     else leaving += value;
 
     outputs.push({
-      address: addressFromScript(script),
+      address,
       script: hex(script),
       value,
       mine: spot !== null,
@@ -471,7 +533,7 @@ export function describePsbt(
   const fee = valuesKnown ? totalIn - totalOut : null;
 
   if (fee !== null && fee < 0n) {
-    return failed(digest, 'That transaction spends more than it takes in, which cannot be right.');
+    return failed(digest, walletId, 'That transaction spends more than it takes in, which cannot be right.');
   }
 
   const vsize = estimateVsize(inputs.length, outputScripts);
@@ -506,11 +568,13 @@ export function describePsbt(
   return {
     ok: true,
     digest,
+    walletId,
     inputs,
     outputs,
     spending,
     leaving,
     returning,
+    yourNet: spending - returning,
     fee,
     feeRate,
     warnings,
@@ -548,6 +612,16 @@ export function signPsbt(psbt: Uint8Array, wallet: BtcWallet, approval: PsbtSumm
       problem:
         'These are not the bytes that were approved. Something changed between the screen and the ' +
         'signature, so nothing has been signed. Scan it again.',
+    };
+  }
+  if (walletIdOf(wallet) !== approval.walletId) {
+    /* The digest proves these are the approved bytes. It says nothing about
+     * whose keys they were described against, and "is this output my change?"
+     * has a different answer for every keyring. */
+    return {
+      ok: false,
+      signed: 0,
+      problem: 'That approval was made for a different wallet. Nothing has been signed.',
     };
   }
   if (!approval.ok) return { ok: false, signed: 0, problem: approval.problem ?? 'That transaction could not be read.' };

@@ -31,6 +31,14 @@ import { wipe } from './keys/wipe';
 
 export type { Check };
 
+/** Equal contents, without turning either side into a string to find out. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
+  return diff === 0;
+}
+
 function check(name: string, proves: string, run: () => [boolean, string]): Check {
   try {
     const [ok, detail] = run();
@@ -81,8 +89,10 @@ export function selfTest(): Check[] {
       if (!sealed.ok) return [false, sealed.problem ?? 'seal failed'];
       const opened = unseal(sealed.sealed!, 'self test passphrase');
       const wrong = unseal(sealed.sealed!, 'not that passphrase');
-      const ok =
-        opened.ok && !!opened.secret && toHex(opened.secret) === toHex(secret) && !wrong.ok;
+      /* Compared as bytes. Hex-encoding them to compare would make two
+       * unwipeable copies of a secret for no reason, and while this particular
+       * one is a fixed test value, the habit is the thing being kept. */
+      const ok = opened.ok && !!opened.secret && sameBytes(opened.secret, secret) && !wrong.ok;
       if (opened.secret) wipe(opened.secret);
       return [ok, ok ? 'round-trips, refuses the wrong passphrase' : 'failed'];
     }),

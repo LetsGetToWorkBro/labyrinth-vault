@@ -52,6 +52,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { MONERO_WORDS, PREFIX_LENGTH } from './monero-words';
+import { wipe } from './wipe';
 
 const Point = ed25519.Point;
 
@@ -433,7 +434,103 @@ export function seedFromMnemonic(phrase: string | string[]): PhraseResult {
 // A wallet
 // ---------------------------------------------------------------------------
 
+/**
+ * A wallet: secrets in bytes, public facts in strings.
+ *
+ * The split is the whole point and it is a security property, not a style
+ * choice. A JavaScript string cannot be overwritten — it is immutable, so
+ * every copy the engine made lives until the garbage collector feels like
+ * moving it, and `wipe()` has nothing to write over. Anything secret is
+ * therefore a `Uint8Array`, which can be zeroed the moment it has done its
+ * job, and `wipeWallet` does exactly that.
+ *
+ * Public data stays a string, because there is nothing to protect and hex is
+ * what everything downstream wants.
+ *
+ * Turning a secret into a string is still sometimes necessary — a phrase has
+ * to be readable to be written down, a view key has to be text to cross the
+ * wire — but it is a one-way door, so it is a function with "reveal" in its
+ * name rather than something that happens by default. That way the moment a
+ * secret becomes permanent appears in the diff, at the call site, where
+ * somebody reviewing can see it.
+ */
 export interface Wallet {
+  /** The reduced spend key. Secret. Wipeable. */
+  spendSecret: Uint8Array;
+  /** The view key. A smaller secret, but a secret. Wipeable. */
+  viewSecret: Uint8Array;
+  /** Public, hex. */
+  spendPublic: string;
+  /** Public, hex. */
+  viewPublic: string;
+  address: string;
+  network: Network;
+}
+
+/**
+ * A wallet from 32 bytes.
+ *
+ * The seed is reduced before anything else happens, and the phrase is written
+ * from the *reduced* key. Monero's phrase encodes the reduced spend key, so
+ * deriving words from raw randomness would produce a phrase that restores to a
+ * different wallet than the address printed beside it. That is precisely the
+ * silent, expensive failure this file is careful about, and
+ * `test/monero.test.ts` checks it directly.
+ *
+ * The phrase is *not* computed here. It is derived on demand by
+ * `revealMnemonic`, so a wallet that only ever signs never materialises an
+ * unwipeable copy of its own recovery words.
+ */
+export function walletFromSeed(seed: Uint8Array, network: Network = 'mainnet'): Wallet {
+  const keys = keysFromSeed(seed);
+  return {
+    spendSecret: keys.spendSecret,
+    viewSecret: keys.viewSecret,
+    spendPublic: toHex(keys.spendPublic),
+    viewPublic: toHex(keys.viewPublic),
+    address: addressFor(keys.spendPublic, keys.viewPublic, network),
+    network,
+  };
+}
+
+/**
+ * Zero this wallet's secrets in place.
+ *
+ * For the lock screen, for backgrounding, and for the end of any flow that
+ * needed a key. The public half survives, so an address can still be shown.
+ * Subject to the honest limits in wipe.ts: this closes the window on the
+ * copies we hold, not on copies the runtime made behind us.
+ */
+export function wipeWallet(wallet: Wallet): void {
+  wipe(wallet.spendSecret, wallet.viewSecret);
+}
+
+/**
+ * The recovery words, as strings, for the one screen that must show them.
+ *
+ * Named to be conspicuous. Everything it returns is immutable and therefore
+ * permanent for the lifetime of the process, so it belongs behind the "write
+ * these down" step and nowhere else. Never store the result; derive it again
+ * if it is needed again.
+ */
+export function revealMnemonic(wallet: Wallet): string[] {
+  return mnemonicFromSeed(wallet.spendSecret);
+}
+
+/**
+ * A secret as hex, for the cases where it genuinely has to be text.
+ *
+ * Same warning as `revealMnemonic`, and the same reason for the name: this is
+ * `toHex` with a sign on it. The legitimate uses are narrow — a view key going
+ * out to a companion, a key being displayed for a paper backup — and every one
+ * of them should be obvious in review.
+ */
+export function revealSecretHex(secret: Uint8Array): string {
+  return toHex(secret);
+}
+
+/** Everything about a wallet as text, for a paper backup or an export screen. */
+export interface RevealedWallet {
   mnemonic: string[];
   address: string;
   spendSecret: string;
@@ -443,23 +540,20 @@ export interface Wallet {
 }
 
 /**
- * A wallet from 32 bytes.
+ * The single door from bytes to strings, for the screens that need all of it.
  *
- * The seed is reduced before the phrase is written, not after. Monero's phrase
- * encodes the *reduced* spend key, so writing the phrase from raw randomness
- * would produce words that restore to a different wallet than the address
- * printed beside them. That is precisely the silent, expensive failure this
- * file is careful about, and `test/monero.test.ts` checks it directly.
+ * One function rather than six scattered conversions, so "where does this
+ * project make a secret permanent?" has a short answer: here, and the two
+ * reveals above.
  */
-export function walletFromSeed(seed: Uint8Array, network: Network = 'mainnet'): Wallet {
-  const keys = keysFromSeed(seed);
+export function revealWallet(wallet: Wallet): RevealedWallet {
   return {
-    mnemonic: mnemonicFromSeed(keys.spendSecret),
-    address: addressFor(keys.spendPublic, keys.viewPublic, network),
-    spendSecret: toHex(keys.spendSecret),
-    viewSecret: toHex(keys.viewSecret),
-    spendPublic: toHex(keys.spendPublic),
-    viewPublic: toHex(keys.viewPublic),
+    mnemonic: revealMnemonic(wallet),
+    address: wallet.address,
+    spendSecret: revealSecretHex(wallet.spendSecret),
+    viewSecret: revealSecretHex(wallet.viewSecret),
+    spendPublic: wallet.spendPublic,
+    viewPublic: wallet.viewPublic,
   };
 }
 
@@ -491,7 +585,10 @@ export function mixEntropy(system: Uint8Array, extra: Uint8Array = new Uint8Arra
   const both = new Uint8Array(system.length + extra.length);
   both.set(system);
   both.set(extra, system.length);
-  return keccak_256(both);
+  const mixed = keccak_256(both);
+  // The join buffer held both inputs verbatim; it has done its job.
+  wipe(both);
+  return mixed;
 }
 
 /** Restore, for checking a phrase written down earlier. */

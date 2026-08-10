@@ -40,7 +40,11 @@ import {
   seedFromMnemonic,
   selfTest,
   restoreHeight,
+  revealMnemonic,
+  revealSecretHex,
+  revealWallet,
   toHex,
+  wipeWallet,
   watchOnlyExport,
   walletFromMnemonic,
   walletFromSeed,
@@ -280,10 +284,10 @@ describe('the seed phrase', () => {
   it('restores to the same wallet it came from', () => {
     // The property that matters most to somebody holding a piece of paper.
     const wallet = walletFromSeed(seedFrom('restore me'));
-    const restored = walletFromMnemonic(wallet.mnemonic);
+    const restored = walletFromMnemonic(revealMnemonic(wallet));
     expect('problem' in restored).toBe(false);
     expect((restored as typeof wallet).address).toBe(wallet.address);
-    expect((restored as typeof wallet).spendSecret).toBe(wallet.spendSecret);
+    expect((restored as typeof wallet).spendSecret).toEqual(wallet.spendSecret);
   });
 });
 
@@ -324,9 +328,9 @@ describe('a wallet', () => {
     // restore to a different wallet than the address printed beside them.
     const raw = new Uint8Array(32).fill(0xff);
     const wallet = walletFromSeed(raw);
-    const restored = walletFromMnemonic(wallet.mnemonic) as typeof wallet;
+    const restored = walletFromMnemonic(revealMnemonic(wallet)) as typeof wallet;
     expect(restored.address).toBe(wallet.address);
-    expect(restored.spendSecret).toBe(wallet.spendSecret);
+    expect(restored.spendSecret).toEqual(wallet.spendSecret);
     // And the seed really was out of range, so this test is testing something.
     expect(toHex(reduceScalar(raw))).not.toBe(toHex(raw));
   });
@@ -337,9 +341,15 @@ describe('a wallet', () => {
     expect(a).toEqual(b);
   });
 
-  it('gives every field as hex of the right length', () => {
+  it('keeps secrets as bytes and public facts as hex', () => {
+    /* The split is a security property, not a style: a string cannot be
+     * overwritten, so anything secret has to be a buffer to be wipeable. */
     const wallet = walletFromSeed(seedFrom('fields'));
-    for (const key of ['spendSecret', 'viewSecret', 'spendPublic', 'viewPublic'] as const) {
+    for (const key of ['spendSecret', 'viewSecret'] as const) {
+      expect(wallet[key], key).toBeInstanceOf(Uint8Array);
+      expect(wallet[key], key).toHaveLength(32);
+    }
+    for (const key of ['spendPublic', 'viewPublic'] as const) {
       expect(wallet[key], key).toMatch(/^[0-9a-f]{64}$/);
     }
   });
@@ -504,24 +514,27 @@ describe('the watch-only export', () => {
     // The single most important property here. A "watch-only" export that
     // included the spend key would be a full wallet wearing a safe name.
     const w = wallet();
-    const exported = watchOnlyExport(w.address, w.viewSecret, Date.UTC(2026, 6, 1));
-    expect(exported.json).toContain(w.viewSecret);
+    const view = revealSecretHex(w.viewSecret);
+    const spend = revealSecretHex(w.spendSecret);
+    const exported = watchOnlyExport(w.address, view, Date.UTC(2026, 6, 1));
+    expect(exported.json).toContain(view);
     expect(exported.json).toContain(w.address);
-    expect(exported.json).not.toContain(w.spendSecret);
-    expect(JSON.stringify(exported)).not.toContain(w.spendSecret);
+    expect(exported.json).not.toContain(spend);
+    expect(JSON.stringify(exported)).not.toContain(spend);
   });
 
   it('produces JSON the restore format expects', () => {
     const w = wallet();
-    const parsed = JSON.parse(watchOnlyExport(w.address, w.viewSecret, Date.UTC(2026, 6, 1)).json);
-    expect(parsed).toMatchObject({ version: 1, viewkey: w.viewSecret, address: w.address });
+    const view = revealSecretHex(w.viewSecret);
+    const parsed = JSON.parse(watchOnlyExport(w.address, view, Date.UTC(2026, 6, 1)).json);
+    expect(parsed).toMatchObject({ version: 1, viewkey: view, address: w.address });
     expect(parsed.scan_from_height).toBeGreaterThan(3_000_000);
     expect('spendkey' in parsed).toBe(false);
   });
 
   it('names the command to run', () => {
     const w = wallet();
-    const exported = watchOnlyExport(w.address, w.viewSecret);
+    const exported = watchOnlyExport(w.address, revealSecretHex(w.viewSecret));
     expect(exported.steps[0]).toContain('--generate-from-view-key');
     expect(exported.steps.join(' ')).toMatch(/view key/i);
   });
@@ -564,5 +577,64 @@ describe('what can be watched', () => {
 
   it('passes on the reason an address was invalid', () => {
     expect(canWatch(parseAddress('nonsense')).problem).toBeTruthy();
+  });
+});
+
+describe('secrets are bytes, and bytes can be wiped', () => {
+  /* The audit finding this API exists to answer: a JavaScript string is
+   * immutable, so a secret that has ever been one cannot be overwritten and
+   * lives until the collector moves it. Anything secret is therefore a buffer,
+   * and turning one into text is a function with "reveal" in the name so the
+   * moment it becomes permanent is visible at the call site. */
+
+  it('hands back no secret as a string, anywhere in the object', () => {
+    const wallet = walletFromSeed(seedFrom('no strings'));
+    const spendHex = toHex(wallet.spendSecret);
+    const viewHex = toHex(wallet.viewSecret);
+    for (const [key, value] of Object.entries(wallet)) {
+      if (typeof value !== 'string') continue;
+      expect(value, `${key} contains the spend key`).not.toContain(spendHex);
+      expect(value, `${key} contains the view key`).not.toContain(viewHex);
+    }
+    // And the whole object serialised, which is what a careless log would do.
+    const serialised = JSON.stringify(wallet);
+    expect(serialised).not.toContain(spendHex);
+    expect(serialised).not.toContain(viewHex);
+  });
+
+  it('does not compute the recovery phrase until it is asked to', () => {
+    // A wallet that only ever signs never materialises an unwipeable copy of
+    // its own words.
+    const wallet = walletFromSeed(seedFrom('lazy phrase'));
+    expect('mnemonic' in wallet).toBe(false);
+    expect(revealMnemonic(wallet)).toHaveLength(25);
+  });
+
+  it('wipes both secrets in place, leaving the public half usable', () => {
+    const wallet = walletFromSeed(seedFrom('wipe me'));
+    const address = wallet.address;
+    wipeWallet(wallet);
+    expect(toHex(wallet.spendSecret)).toBe('00'.repeat(32));
+    expect(toHex(wallet.viewSecret)).toBe('00'.repeat(32));
+    expect(wallet.address, 'the public half survives').toBe(address);
+  });
+
+  it('reveals everything through one door, and it matches the bytes', () => {
+    const wallet = walletFromSeed(seedFrom('reveal'));
+    const shown = revealWallet(wallet);
+    expect(shown.spendSecret).toBe(revealSecretHex(wallet.spendSecret));
+    expect(shown.viewSecret).toBe(revealSecretHex(wallet.viewSecret));
+    expect(shown.mnemonic).toEqual(revealMnemonic(wallet));
+    expect(shown.address).toBe(wallet.address);
+  });
+
+  it('still round-trips through the phrase after the change', () => {
+    // The property that matters to somebody holding a piece of paper, checked
+    // again now that the phrase comes from a different place.
+    const wallet = walletFromSeed(seedFrom('paper'));
+    const restored = walletFromMnemonic(revealMnemonic(wallet)) as typeof wallet;
+    expect(restored.address).toBe(wallet.address);
+    expect(toHex(restored.spendSecret)).toBe(toHex(wallet.spendSecret));
+    expect(toHex(restored.viewSecret)).toBe(toHex(wallet.viewSecret));
   });
 });

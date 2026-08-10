@@ -27,7 +27,11 @@ hold funds you would miss with anything built on it.
 | UI describes one transaction and signs another | `signPsbt` requires the shown summary and checks its digest against the bytes | `signPsbt` |
 | Misread camera frames assembling wrong bytes | Checksums fail closed; fuzzed with the property that success implies byte-exact payload | `test/fuzz.test.ts` |
 | Hostile QR claims absurd sizes (memory DoS) | Caps on part counts and message sizes, on both wires; KDF ceilings checked before allocating | `envelope.ts`, `ur.ts`, `seal.ts` |
+| Output paying a script with no readable address | Fatal when it carries money; the destination is what a person is meant to read, and there is none | `describePsbt` |
+| Approval computed against a different keyring | Summary carries a `walletId`; `signPsbt` refuses a mismatch | `signPsbt` |
+| Secrets left unwipeable in memory | Everything secret is a `Uint8Array`; strings are immutable and cannot be zeroed, so becoming text is an explicit `reveal*` call, and a test enforces it | `src/keys/monero.ts`, `test/no-network.test.ts` |
 | Seed at rest | Argon2id + XChaCha20-Poly1305, parameters authenticated with the ciphertext | `src/keys/seal.ts` |
+| Tuning weakening the vault | Calibration walks up from the default and can only strengthen | `calibrateKdf` |
 | Dependency compromise via version ranges | Every version exact-pinned; the transitive closure is walked by a test and must stay inside the audited family | `test/supply-chain.test.ts` |
 | Broken build generating wrong keys | Self-test against outside vectors at every launch; nothing runs if it fails | `src/selftest.ts` |
 | RNG failure at signing time | Deterministic nonces (RFC 6979) in the signer | `@scure/btc-signer` |
@@ -42,6 +46,20 @@ hold funds you would miss with anything built on it.
 - **Memory forensics against a live process.** Secrets are wiped after use
   (`src/keys/wipe.ts`), and that file says plainly why JavaScript cannot make
   wiping a guarantee. Treat it as narrowing a window, not closing one.
+- **Secrets that a person has to read.** A recovery phrase must become text to
+  be written down, and a view key must become text to cross the wire. Those
+  strings are immutable and therefore permanent for the life of the process.
+  The design does not pretend otherwise; it narrows the surface to three
+  functions with `reveal` in their names (`revealMnemonic`, `revealSecretHex`,
+  `revealWallet`), so "where does a secret become permanent?" has a short,
+  greppable answer, and a test fails if that list grows. Everything else —
+  every wallet object, every seal, every signature — stays in wipeable bytes.
+- **Wiping of internal scratch buffers.** Intermediates are zeroed
+  (`mnemonicFromEntropy`, `openFromMnemonic`, `deriveKey`), but a local buffer
+  that nothing else can reach has no observable behaviour, so unlike every
+  other claim on this page it cannot be mutation-tested. Removing those calls
+  breaks no test. It is kept by review, and it is listed here rather than
+  counted among the things the suite proves.
 - **Timing side channels on the vault.** The primitives are constant-time
   (noble); our encoding layers are not, and operate on data an attacker who
   could measure them would already have. An adversary positioned to time this
@@ -53,11 +71,19 @@ hold funds you would miss with anything built on it.
 git clone https://github.com/LetsGetToWorkBro/labyrinth-vault
 cd labyrinth-vault
 npm ci        # installs exactly the lockfile, integrity-checked
-npm test      # 244 tests, including the cross-implementation vectors
+npm test      # 264 tests, including the cross-implementation vectors
 npm run typecheck
 ```
 
 The claims above are tests, not prose: delete a defence and the suite goes
-red. Several were verified by mutation — the change-swap check, the sighash
-check, the KDF ceilings, the part-count caps and the approval digest were each
-removed in turn to confirm tests actually fail.
+red. Every one has been verified by mutation — each guard removed in turn, the
+suite re-run, and the failure confirmed. That includes the guards added by the
+most recent audit: the opaque-output refusal, the wallet binding, the `yourNet`
+arithmetic, the calibration floor, the account validation and the single-frame
+cap.
+
+That exercise is worth doing rather than assuming. One test in this suite
+originally passed with the defence it was written for deleted — a
+denial-of-service cap whose effect is invisible in the return value — and was
+rewritten to measure the work avoided instead. A test nobody has tried to break
+is a test of unknown value.

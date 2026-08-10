@@ -48,7 +48,9 @@ export const UR_BYTES = 'bytes';
  * anything that hurts.
  */
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
-const MAX_FRAGMENTS = 5000;
+/** Matches envelope.ts's MAX_PARTS: two wires, one answer to "how many is too
+ *  many", so neither becomes the soft spot by accident. */
+const MAX_FRAGMENTS = 2048;
 
 /** UR type names are lower-case letters, digits and hyphens, and nothing else. */
 function isUrType(type: string): boolean {
@@ -184,6 +186,10 @@ export function parseUr(text: string): UrPart | null {
   if (!isUrType(type) || components.length < 2 || components.length > 3) return null;
 
   if (components.length === 2) {
+    /* Bounded before decoding, not after: bytewords allocates proportionally
+     * to the input, so the length has to be refused while it is still just a
+     * string. Two characters per byte, so this is the message ceiling. */
+    if (components[1]!.length > MAX_MESSAGE_BYTES * 2) return null;
     const cbor = bytewordsDecode(components[1]!, 'minimal');
     if (cbor === null) return null;
     return { type, cbor };
