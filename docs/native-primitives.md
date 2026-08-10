@@ -143,9 +143,16 @@ allowed because it is a Unicode operation with a specification, both
 implementations are the platform's rather than ours, and
 `test/fixtures/primitives.json` pins the exact bytes for inputs chosen to catch
 a disagreement. `test/primitives.test.ts` checks the TypeScript half;
-`ios/LabyrinthVaultTests/PassphraseContractTests.swift` checks the Swift half
-and has never been run, because there is no Swift toolchain here. It is written
-anyway, so the first person with a Mac runs a check rather than inventing one.
+`ios/LabyrinthVaultTests/PassphraseContractTests.swift` checks the Swift half,
+and both now run in the same `npm test` — the Swift through a SwiftPM target
+that needs no Xcode.
+
+One honest limit on that. NFKD under `swift test` on Linux comes from
+swift-corelibs-foundation; on a phone it comes from Apple's Foundation. Those
+are two implementations of the same Unicode annex, so a Linux pass is evidence
+of the same kind as agreeing with libsodium — real, and not a statement about
+iOS. The test target is in `project.yml`, so confirming it on a device costs
+one ⌘U.
 
 ## Not on the list
 

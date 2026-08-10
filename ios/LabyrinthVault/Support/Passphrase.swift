@@ -34,6 +34,17 @@
 
 import Foundation
 
+/* The wipe below needs a function the compiler is forbidden to optimise away,
+ * and the two platforms spell it differently. Both imports are here so that
+ * this file builds on a phone and under a plain `swift test` on Linux, which
+ * is the only reason any of it is checked by a compiler at all — see
+ * Package.swift. */
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 enum Passphrase {
     /// Typed text to the bytes the engine seals under.
     ///
@@ -51,14 +62,26 @@ enum Passphrase {
 
     /// Zero a byte array in place.
     ///
-    /// `withUnsafeMutableBufferPointer` so the write goes to the array's real
-    /// storage, and the pointer keeps the optimiser from deciding that stores
-    /// to memory nobody reads afterwards can be skipped — which is exactly
-    /// what a plain loop over the elements invites it to do.
+    /// `withUnsafeMutableBufferPointer` so the write reaches the array's real
+    /// storage rather than a copy. The function called through it is the part
+    /// that matters: a plain `for i in ...  { bytes[i] = 0 }` is a store to
+    /// memory nothing reads afterwards, which is precisely the store an
+    /// optimiser is allowed to delete. `memset_s` and `explicit_bzero` exist
+    /// because that deletion is a real and repeatedly-observed bug, and both
+    /// carry a guarantee that it will not happen.
+    ///
+    /// Two spellings because they are different platforms' answers to the same
+    /// problem: Annex K's on Apple's, glibc's on Linux. There is no portable
+    /// one, and picking a portable-looking loop instead would be choosing the
+    /// version that silently does nothing.
     static func wipe(_ bytes: inout [UInt8]) {
         bytes.withUnsafeMutableBufferPointer { buffer in
             guard let base = buffer.baseAddress else { return }
+            #if canImport(Darwin)
             memset_s(base, buffer.count, 0, buffer.count)
+            #else
+            explicit_bzero(base, buffer.count)
+            #endif
         }
     }
 

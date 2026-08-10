@@ -90,6 +90,33 @@ describe('the built bundle', () => {
     expect(engine).toMatch(/guard measured == BundleDigest\.sha256 else \{[\s\S]*?throw/);
   });
 
+  it('ships Swift fixtures that were generated from this source', () => {
+    /* The Swift tests decode JSON that the TypeScript produced, which is a far
+     * better contract than two regexes comparing field lists — but only while
+     * the JSON is current. A fixture generated in March describes March's
+     * shape and passes happily against April's. So it is regenerated and
+     * compared, the same way the bundle is. */
+    const paths = [
+      'ios/LabyrinthVaultTests/Fixtures/summary.json',
+      'ios/LabyrinthVaultTests/Fixtures/primitives.json',
+    ];
+    const before = paths.map((path) => readFileSync(path));
+    execFileSync('node', ['scripts/emit-swift-fixtures.mjs'], { stdio: 'pipe' });
+    paths.forEach((path, i) => {
+      expect(readFileSync(path).equals(before[i]!), `${path} is stale`).toBe(true);
+    });
+  });
+
+  it('gives Swift the same cross-language vectors, byte for byte', () => {
+    /* Two copies exist because SwiftPM will not copy a symlinked resource, and
+     * a resource that silently fails to arrive turns the contract test into a
+     * test that passes by not running. Two copies that can differ would be
+     * worse than one, hence this. */
+    const canonical = readFileSync('test/fixtures/primitives.json');
+    const forSwift = readFileSync('ios/LabyrinthVaultTests/Fixtures/primitives.json');
+    expect(forSwift.equals(canonical), 'the Swift copy has drifted').toBe(true);
+  });
+
   it('builds byte-for-byte the same way twice', () => {
     const before = readFileSync(BUNDLE);
     execFileSync('node', ['scripts/build-bundle.mjs'], { stdio: 'pipe' });

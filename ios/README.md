@@ -20,18 +20,66 @@ sit on top of:
 
 ## Building
 
-The project file is generated, not committed, so diffs stay readable:
+The project file is generated, not committed, so diffs stay readable. From the
+repository root:
 
 ```sh
+npm install
+npm test                 # builds the engine bundle and the Swift fixtures
 brew install xcodegen
-cd ios
-xcodegen generate
-open LabyrinthVault.xcodeproj
+cd ios && xcodegen generate && open LabyrinthVault.xcodeproj
 ```
 
-Signing: set your team in the generated project; there are no entitlements
-beyond camera access. The app requests exactly one permission — the camera —
-because the camera is the only wire it has.
+`npm test` before `xcodegen` is not optional housekeeping. It regenerates
+`Resources/vault.bundle.js`, writes its SHA-256 into `Support/BundleDigest.swift`,
+and regenerates the fixtures the test target reads. Open the project without
+it and the app will refuse to launch — correctly — because the digest baked
+into the binary will not match the bundle beside it.
+
+Signing: set your team in the generated project. There are no entitlements
+beyond camera access; the app asks for exactly one permission, because the
+camera is the only wire it has.
+
+### What to expect on the first build
+
+**This has never been compiled by Xcode.** It was written on Linux, where
+there is no Apple toolchain, so treat the first build as a code review the
+compiler is performing on your behalf rather than as something that should
+already work.
+
+What *has* been compiled, and is green, is the platform-free half — the
+transaction shapes, the refusal model and the passphrase encoding — which
+builds as a SwiftPM target and runs 12 tests on any machine with a Swift
+toolchain (`npm run swift:check`, or `swift test` directly). That split is
+deliberate: those files import Foundation and nothing else so that a compiler
+can reach them. It is also how a genuine bug was found — `Refusal.detail` was
+a non-exhaustive switch missing five of its nine cases, which no amount of
+grepping would have shown.
+
+Everything that imports SwiftUI, JavaScriptCore, CryptoKit or CoreImage has
+only been *parsed*. Syntax, balanced braces, well-formed declarations. Not
+types, not exhaustiveness, not whether a call exists. So expect the first
+build to surface real errors in `Engine.swift`, `Vault.swift`, the screens and
+the design system, and expect them to be ordinary ones: a renamed symbol, an
+argument label, a `@MainActor` isolation complaint from Swift 6's concurrency
+checking.
+
+Two things worth running as soon as it builds:
+
+1. **⌘U.** The test target runs `PassphraseContractTests`, which checks NFKD
+   against `test/fixtures/primitives.json` — the same file the TypeScript is
+   checked against. It passes on Linux, where NFKD comes from
+   swift-corelibs-foundation. On a phone it comes from Apple's Foundation.
+   Two implementations of one Unicode annex, and only one of them is the one
+   a real passphrase will go through. This is the check that catches a vault
+   that opens on the device that sealed it and nowhere else.
+
+2. **Time one unseal on the oldest device you would ship to.** That single
+   number decides whether the key derivation needs to be native, and nothing
+   else can produce it — see [../docs/native-primitives.md](../docs/native-primitives.md).
+   For reference, `npm run bench:kdf` reports about 1554 ms for the default
+   parameters on a server CPU *with* a JIT, and JavaScriptCore inside a
+   third-party app does not get one.
 
 ## What is real and what is staged
 
@@ -46,13 +94,17 @@ Real, in this code:
 - The state machine: the signing route cannot be entered without a reviewed
   summary, and a refusal cannot be left except through the scanner.
 
+Also real: the engine. `Engine.swift` loads the compiled TypeScript into
+JavaScriptCore, verifies its SHA-256 against a constant written into the
+binary at build time before evaluating a line of it, and every decision the
+app makes — what a transaction says, whether it can be signed — comes from
+there rather than being reimplemented here.
+
 Staged, and marked at the definition site:
 
-- The transaction itself. `Fixtures.swift` supplies the decoded summary the
-  screens render. The shipped app gets this from the transaction reader that
-  already exists and is tested in `src/keys/psbt.ts`; the view code does not
-  change when that is wired in, which is the point of building the shell
-  against the same shapes.
+- The demo fixtures in `Fixtures`, which feed the screens when there is no
+  scanned transaction. The real path is wired: `Vault.offer(frame:)` goes to
+  the engine and renders what it returns.
 - The scanner falls back to a simulated frame stream in the Simulator, where
   there is no camera.
 

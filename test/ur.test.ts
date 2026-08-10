@@ -288,6 +288,18 @@ describe('bounds on a single frame', () => {
     const raw = performance.now() - rawStart;
 
     expect(raw, 'the unguarded decode should be slow enough to be worth guarding').toBeGreaterThan(100);
-    expect(capped * 20, `capped ${capped.toFixed(1)}ms vs raw ${raw.toFixed(1)}ms`).toBeLessThan(raw);
+
+    /* Five, and the number comes from measurement rather than taste. On an
+     * idle machine the cap buys about 40x. Under a loaded suite that fell to
+     * under 10x, which is what made an earlier threshold of 20 flake. With the
+     * cap deleted the ratio is 0.5x to 1.9x across runs — the two legs are
+     * then doing the same work, so it hovers around one and can land either
+     * side of it.
+     *
+     * Anything above 2 separates "guarded" from "not guarded"; 5 leaves room
+     * for a slow machine without ever letting a deleted cap through. Widening
+     * it further to silence a failure would be tuning until green, which is
+     * how a guard becomes decoration. */
+    expect(capped * 5, `capped ${capped.toFixed(1)}ms vs raw ${raw.toFixed(1)}ms`).toBeLessThan(raw);
   });
 });

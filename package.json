@@ -6,10 +6,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "npm run build:bundle && vitest run",
+    "test": "npm run build:bundle && vitest run && npm run swift:check",
     "typecheck": "tsc --noEmit",
-    "build:bundle": "node scripts/build-bundle.mjs",
-    "bench:kdf": "node scripts/bench-kdf.mjs"
+    "build:bundle": "node scripts/build-bundle.mjs && node scripts/emit-swift-fixtures.mjs",
+    "bench:kdf": "node scripts/bench-kdf.mjs",
+    "swift:check": "bash scripts/swift-check.sh"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

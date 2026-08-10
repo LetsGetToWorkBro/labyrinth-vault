@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .DS_Store
+
+# SwiftPM build products (Package.swift builds the platform-free model).
+.build/

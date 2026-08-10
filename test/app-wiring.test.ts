@@ -274,7 +274,13 @@ describe('the screen can name every refusal the reader makes', () => {
    * the entire job. */
 
   const psbt = readFileSync('src/keys/psbt.ts', 'utf8');
-  const swift = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+  /* The refusal model moved out of Vault.swift into a file with no SwiftUI
+   * in it, so that a compiler can check it — see Package.swift. Both are read
+   * here: the enum lives in one and the screen that routes to it in the
+   * other, and a code with no case in either is the drift this guards. */
+  const swift =
+    readFileSync('ios/LabyrinthVault/Model/Refusal.swift', 'utf8') +
+    readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
 
   /** Codes that psbt.ts can raise with fatal: true. */
   const fatalCodes = new Set(
@@ -337,6 +343,70 @@ describe('the screen can name every refusal the reader makes', () => {
   });
 });
 
+describe('the Swift a compiler can actually check', () => {
+  /* Package.swift builds the platform-free half of the app — the transaction
+   * shapes, the refusal model, the passphrase encoding — as a real SwiftPM
+   * target with real tests, on any machine with a Swift toolchain. That is
+   * worth a great deal more than the regex guards in this file, and it works
+   * only while the boundary stays clean: one Apple import in a listed file and
+   * the target stops building everywhere except Xcode, at which point the
+   * tempting fix is to drop the target from the pipeline. */
+
+  const manifest = readFileSync('Package.swift', 'utf8');
+  /* Only the `sources:` array. The first version of this matched every Swift
+   * path in the file and therefore also matched the `exclude:` list — which is
+   * where Vault.swift is named precisely *because* it imports SwiftUI. A guard
+   * that reads the exclusion list as the inclusion list fails on the file it
+   * was told to ignore. */
+  const sourcesBlock = /sources:\s*\[([^\]]*)\]/.exec(manifest)?.[1] ?? '';
+  const listed = [...sourcesBlock.matchAll(/"([^"]+\.swift)"/g)].map((m) => m[1]!);
+
+  it('lists the files it claims to compile', () => {
+    expect(listed.length, 'Package.swift compiles nothing').toBeGreaterThan(3);
+    expect(listed).toContain('Model/Refusal.swift');
+    expect(listed).toContain('Model/TxSummary.swift');
+    expect(listed).toContain('Support/Passphrase.swift');
+  });
+
+  it('compiles nothing that imports an Apple framework', () => {
+    /* The whole boundary in one assertion. `Refusal` and `TxSummary` were
+     * inside Vault.swift next to `import SwiftUI` until they were pulled out
+     * — which is why a non-exhaustive switch in `Refusal.detail`, missing five
+     * of its nine cases, survived in this repository unnoticed. */
+    const appleOnly = /^import (SwiftUI|Combine|JavaScriptCore|CryptoKit|CoreImage|UIKit)\b/m;
+    for (const relative of listed) {
+      const text = readFileSync(`ios/LabyrinthVault/${relative}`, 'utf8');
+      const found = appleOnly.exec(text)?.[1];
+      expect(found, `${relative} imports ${found}, so it can only build in Xcode`).toBeUndefined();
+    }
+  });
+
+  it('keeps the security-critical model on the compiled side', () => {
+    /* Not merely "some files compile". These specific ones: what a
+     * confirmation screen is allowed to know, what stops a signature, and how
+     * a passphrase becomes bytes. */
+    const refusal = readFileSync('ios/LabyrinthVault/Model/Refusal.swift', 'utf8');
+    expect(refusal).toMatch(/enum Refusal/);
+    expect(refusal).toMatch(/var detail: String/);
+    const summary = readFileSync('ios/LabyrinthVault/Model/TxSummary.swift', 'utf8');
+    expect(summary).toMatch(/struct TxSummary/);
+  });
+
+  it('runs those tests as part of the suite, and says so when it cannot', () => {
+    const script = readFileSync('scripts/swift-check.sh', 'utf8');
+    const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts['test'], 'npm test does not run the Swift check').toMatch(/swift:check/);
+    expect(script).toMatch(/swift build/);
+    expect(script).toMatch(/swift test/);
+    /* A missing toolchain must skip loudly rather than either failing the
+     * suite or passing silently. Both of those teach people to ignore it. */
+    expect(script).toMatch(/skipping/);
+    expect(script).toMatch(/syntax only/);
+  });
+});
+
 describe('a passphrase is never a string on either side of the bridge', () => {
   /* The rule and its enforcement, because this is a property that is true when
    * written and quietly false after the first "just pass the text through"
@@ -383,19 +453,22 @@ describe('a passphrase is never a string on either side of the bridge', () => {
     expect(wire!).not.toMatch(/TextEncoder|typeof value === 'string'/);
   });
 
-  it('has a Swift test for the half of the contract this suite cannot run', () => {
+  it('has a Swift test for the half of the contract TypeScript cannot reach', () => {
     /* NFKD is implemented twice, in two runtimes, against two Unicode
-     * versions. TypeScript's half is checked in test/primitives.test.ts. The
-     * Swift half needs a Swift runner, which this environment does not have —
-     * so the test exists, unrun, rather than the check existing on one side
-     * only. */
+     * versions. TypeScript's half is checked in test/primitives.test.ts; the
+     * Swift half is a real XCTest that `npm run swift:check` runs. */
     const swiftTest = readFileSync(
       'ios/LabyrinthVaultTests/PassphraseContractTests.swift', 'utf8',
     );
     expect(swiftTest).toMatch(/primitives/);
     expect(swiftTest).toMatch(/passphraseNormalisation/);
-    expect(swiftTest, 'it should be honest that it has never been run')
-      .toMatch(/never been run|no Swift toolchain/i);
+    /* It runs now — `swift test`, in this suite. What it must keep saying is
+     * the limit of what a pass off a device proves: NFKD on Linux is
+     * swift-corelibs-foundation's, and on a phone it is Apple's. Two
+     * implementations of one Unicode annex. A file that stopped saying so
+     * would be overclaiming, which is the failure this repository minds most. */
+    expect(swiftTest, 'it should state what a non-Apple pass does and does not prove')
+      .toMatch(/swift-corelibs-foundation/);
   });
 });
 
@@ -410,7 +483,12 @@ describe('the screen model matches the wire, field for field', () => {
    * between the two halves, and it fails loudly, which is the requirement. */
 
   const wire = readFileSync('src/bridge/summary.ts', 'utf8');
-  const swift = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+  /* The shapes now live in their own file, compiled by Package.swift and
+   * decoded from real engine output by WireContractTests.swift. This guard
+   * still earns its place alongside that one: `Decodable` ignores a field it
+   * has never heard of, so a wire field Swift silently drops would decode
+   * cleanly and show nothing. Only comparing the lists catches that. */
+  const swift = readFileSync('ios/LabyrinthVault/Model/TxSummary.swift', 'utf8');
 
   /**
    * TypeScript types, translated into the Swift they must be written as.

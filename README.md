@@ -5,10 +5,12 @@ your drawer.**
 
 > ### Do not put money on this yet
 >
-> The libraries are tested and the app is wired to them, but nothing here has
-> been independently audited and the iOS target has never been compiled — there
-> is no Swift toolchain where it was written. Tested is not the same as safe to
-> hold your savings.
+> Nothing here has been independently audited. The engine is tested, the app is
+> wired to it, and the platform-free half of the Swift — the transaction
+> shapes, the refusal model, the passphrase encoding — compiles and passes its
+> own tests. The rest of the iOS target, everything touching SwiftUI and
+> JavaScriptCore, has never been through a compiler: it was written where there
+> is no Apple toolchain. Tested is not the same as safe to hold your savings.
 >
 > Read it, break it, tell us what is wrong with it. Do not trust it with a
 > balance you would miss.
@@ -201,6 +203,27 @@ Early. What exists and is tested:
   other. Get it wrong and nothing fails loudly: you get a vault that opens on
   the phone that sealed it and on no other device.
 
+- **A compiler over the Swift that matters** (`Package.swift`,
+  `scripts/swift-check.sh`). Everything on this side used to be checked by
+  regular expressions — greps for a case in an enum, a name in a signature —
+  because nothing in the repository could compile Swift. That is not the same
+  thing, and the gap was not hypothetical: `Refusal.detail`, the switch that
+  produces the words on every refusal screen, was missing five of its nine
+  cases and would not have built.
+
+  So the parts that can be reached without Xcode are reached. The transaction
+  shapes, the refusal model and the passphrase encoding import Foundation and
+  nothing else — deliberately, because those are the parts where a mistake is a
+  wrong number on a confirmation screen — and they build as a SwiftPM target
+  with 12 tests that run in the same `npm test` as everything else. Two of
+  them decode JSON the TypeScript actually produced, from a real PSBT through
+  the real reader, rather than comparing two descriptions of a shape.
+
+  Both guards are kept, and each catches what the other cannot: renaming a
+  field in Swift fails the decode *and* the regex, while a field Swift silently
+  drops decodes perfectly and is caught only by the list comparison. That is
+  checked rather than assumed.
+
 - **The engine is verified before it runs** (`scripts/build-bundle.mjs`,
   `ios/.../Engine.swift`). The app is a signed binary plus half a megabyte of
   *data* that it then evaluates as code. Code signing covers that resource at
@@ -219,13 +242,12 @@ Early. What exists and is tested:
 
 Next, in order:
 
-1. Build the iOS target in Xcode. The Swift sources have never been compiled —
-   there is no Swift toolchain where this was written — so that is the first
-   real check on them. Two things are waiting on it specifically: the Swift
-   half of the passphrase contract
-   (`ios/LabyrinthVaultTests/PassphraseContractTests.swift`, written and never
-   run), and the one measurement that decides whether the key derivation should
-   be native. `npm run bench:kdf` says 1554 ms for the default parameters on a
+1. Build the iOS target in Xcode. The half of the Swift that imports SwiftUI,
+   JavaScriptCore and CryptoKit has only ever been *parsed*, because those
+   frameworks exist nowhere but Apple's platforms — so that build is the first
+   real check on it. The other half already compiles and is tested; see below.
+   One measurement is waiting on a real device specifically: whether the key
+   derivation needs to be native. `npm run bench:kdf` says 1554 ms for the default parameters on a
    server CPU *with* a JIT; JavaScriptCore in an app has no JIT, and how much
    worse that is on a decade-old phone is a number nobody should guess. See
    [docs/native-primitives.md](docs/native-primitives.md), which is also the

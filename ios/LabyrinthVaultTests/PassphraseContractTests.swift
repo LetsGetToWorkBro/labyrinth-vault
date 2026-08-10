@@ -19,19 +19,25 @@
 //  person finds out while restoring a backup after losing that phone, which is
 //  the worst moment anything could be discovered.
 //
-//  ## This test has never been run
+//  ## Where this runs
 //
-//  There is no Swift toolchain where this repository was written, so this file
-//  is written and not executed. It is here rather than absent because the
-//  alternative is that the first person with a Mac has to invent the check as
-//  well as run it, and because a contract with only one side tested is a
-//  contract nobody is keeping.
+//  Everything it touches imports Foundation and nothing else, so it is part of
+//  the `LabyrinthVaultCore` package target and runs under a plain `swift test`
+//  on any platform — including the Linux container this was written in, where
+//  there is no Xcode. `npm test` runs it.
 //
-//  The fixture is loaded from the test bundle, so add
-//  `test/fixtures/primitives.json` to this target's resources.
+//  One honest limit on what a Linux pass proves. NFKD there comes from
+//  swift-corelibs-foundation; on a phone it comes from Apple's Foundation.
+//  They are two implementations of the same Unicode annex, and agreement on
+//  Linux is real evidence rather than proof about iOS — the same class of
+//  evidence as agreeing with libsodium. Run it again on a device, which costs
+//  nothing now that it is written.
+//
+//  The fixture is the file test/fixtures/primitives.json, symlinked into this
+//  target's resources so there is one copy and it cannot drift.
 
 import XCTest
-@testable import LabyrinthVault
+@testable import LabyrinthVaultCore
 
 final class PassphraseContractTests: XCTestCase {
 
@@ -45,9 +51,8 @@ final class PassphraseContractTests: XCTestCase {
     }
 
     private func loadFixture() throws -> Fixture {
-        let bundle = Bundle(for: type(of: self))
-        guard let url = bundle.url(forResource: "primitives", withExtension: "json") else {
-            XCTFail("primitives.json is not in this test target's resources")
+        guard let url = Bundle.module.url(forResource: "primitives", withExtension: "json") else {
+            XCTFail("primitives.json is not in this target's resources")
             throw CocoaError(.fileNoSuchFile)
         }
         return try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))

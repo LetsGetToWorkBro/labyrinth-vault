@@ -32,3 +32,38 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_UIRequiresFullScreen: true
         ENABLE_USER_SCRIPT_SANDBOXING: true
+
+  # The contract tests.
+  #
+  # These already run on any machine with a Swift toolchain, through
+  # Package.swift and `npm run swift:check`: the model they cover imports
+  # Foundation and nothing else, deliberately, so it needs no Xcode to compile.
+  #
+  # They are a target here as well because of what one of them checks. NFKD on
+  # Linux comes from swift-corelibs-foundation; NFKD on a phone comes from
+  # Apple's Foundation. Two implementations of the same Unicode annex, and only
+  # one of them is the one your passphrase will actually go through. Agreement
+  # on Linux is evidence. Agreement on the device is the thing that matters,
+  # and it costs one ⌘U to find out.
+  LabyrinthVaultTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: LabyrinthVaultTests
+    dependencies:
+      - target: LabyrinthVault
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: true
+
+schemes:
+  LabyrinthVault:
+    build:
+      targets:
+        LabyrinthVault: all
+        LabyrinthVaultTests: [test]
+    test:
+      targets: [LabyrinthVaultTests]
+    run:
+      config: Debug
