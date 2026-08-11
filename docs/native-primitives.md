@@ -23,7 +23,7 @@ pinned to the reference C code in `test/seal.test.ts` and
 not care which language answers.
 
 PSBT reading, the refusal rules, change re-derivation, the approval-digest
-binding, the wire format, the summary — none of these have external vectors.
+binding, the wire format, the summary: none of these have external vectors.
 *Our tests are the specification.* A Swift copy of any of them is pure downside
 with nothing to check it against.
 
@@ -35,7 +35,7 @@ with nothing to check it against.
 | --- | --- | --- |
 | Argon2id | libsodium, or the argon2 reference C | reference C, in `primitives.json` |
 | XChaCha20-Poly1305 | libsodium | libsodium, in `primitives.json` |
-| Keccak-256 | libsodium (`crypto_hash_sha3` is *not* it — see below) | published, in `primitives.json` |
+| Keccak-256 | libsodium (`crypto_hash_sha3` is *not* it, see below) | published, in `primitives.json` |
 
 Note the trap in the third row, because it is the same trap `src/keys/monero.ts`
 already guards against at launch: SHA3-256 is not Keccak-256. They differ in one
@@ -68,7 +68,7 @@ argued about. `npm run bench:kdf`, on a modern server CPU, with a JIT:
 ```
 
 That is a **floor**. JavaScriptCore inside a third-party iOS app does not get a
-JIT — the dynamic-codesigning entitlement is Apple's, and WKWebView only has
+JIT. The dynamic-codesigning entitlement is Apple's, and WKWebView only has
 one because it runs in a separate entitled process. So the engine is
 interpreted, on a decade-old phone, and the honest statement about how much
 worse than 1554 ms that is is that nobody here knows. Nobody should guess it in
@@ -83,7 +83,7 @@ never a weaker vault. This was fixed earlier for exactly this reason and it is
 what makes the port optional rather than urgent.
 
 **Calibration is currently doing nothing useful.** `app/storage.ts` calls
-`calibrateForThisDevice`, which targets 1000 ms — and the default already costs
+`calibrateForThisDevice`, which targets 1000 ms, and the default already costs
 1554 ms on hardware far faster than the target device. So the walk exits on its
 first iteration, always, and the only thing calibration achieves today is
 spending one full derivation at setup to rediscover the default. It is harmless
@@ -99,7 +99,7 @@ allocating. Nothing should ever seal at it here.
 
 Do not port the KDF because this document lists it. Port it when the measured
 on-device number for `t=3, m=64 MiB` is bad enough that a person would rather
-weaken their vault than wait — because *that* is the moment the JavaScript
+weaken their vault than wait, because *that* is the moment the JavaScript
 implementation starts costing security instead of patience.
 
 When that happens, the order is:
@@ -107,7 +107,7 @@ When that happens, the order is:
 1. Add libsodium to the iOS target and nothing else. One dependency, one
    reason, written down in `NOTICE.md`.
 2. Make the Swift test target pass every vector in
-   `test/fixtures/primitives.json` — the same file `test/primitives.test.ts`
+   `test/fixtures/primitives.json`, the same file `test/primitives.test.ts`
    checks TypeScript against. Neither side gets to be the oracle for the other.
 3. Move *only* `deriveKey` across, as a function the bridge calls out to. The
    sealed-blob format, the parameter floors and ceilings, the header
@@ -138,19 +138,19 @@ rather than encoding one, so the convenient path cannot quietly become the
 unwipeable path again.
 
 That second change is the one place in this project where the same behavior is
-deliberately implemented twice — NFKD, in Swift and in TypeScript. It is
+deliberately implemented twice: NFKD, in Swift and in TypeScript. It is
 allowed because it is a Unicode operation with a specification, both
 implementations are the platform's rather than ours, and
 `test/fixtures/primitives.json` pins the exact bytes for inputs chosen to catch
 a disagreement. `test/primitives.test.ts` checks the TypeScript half;
 `ios/LabyrinthVaultTests/PassphraseContractTests.swift` checks the Swift half,
-and both now run in the same `npm test` — the Swift through a SwiftPM target
+and both now run in the same `npm test`, the Swift through a SwiftPM target
 that needs no Xcode.
 
 One honest limit on that. NFKD under `swift test` on Linux comes from
 swift-corelibs-foundation; on a phone it comes from Apple's Foundation. Those
 are two implementations of the same Unicode annex, so a Linux pass is evidence
-of the same kind as agreeing with libsodium — real, and not a statement about
+of the same kind as agreeing with libsodium: real, and not a statement about
 iOS. The test target is in `project.yml`, so confirming it on a device costs
 one ⌘U.
 
@@ -160,6 +160,6 @@ one ⌘U.
 doing and it is not a port: nothing in `src/` moves. Wrapping the sealed blob's
 key with an SE-backed key gated on biometrics or the passcode is a change to
 `app/storage.ts`'s Keychain usage, and it would help far more than a faster KDF
-— it makes the file useless off the device it was sealed on. It belongs in its
+It makes the file useless off the device it was sealed on. It belongs in its
 own piece of work, against a real device, and it is the strongest remaining
 item on this list.

@@ -50,6 +50,55 @@ Every one of those is public information. None of it can move a coin.
 no field that would accept one, and no type in `src/core/model.ts` with
 anywhere to put one.
 
+## Swapping, and the address nothing can check
+
+`src/core/swap.ts` trades one coin for another through a keyless exchange, and
+it is the only feature in this product that the vault cannot fully cover.
+
+A swap is three addresses. The **deposit** address belongs to the exchange and
+the vault does see it: it is the recipient of an ordinary send, rendered in
+full, approved by a person. The **refund** address and the **payout** address
+are handed to the exchange over the network, and they are in no transaction at
+all. Nothing signs them and no confirmation screen shows them.
+
+So picture a compromised build of this app. It quotes honestly, it shows the
+real deposit address, the vault renders it, you read it, you approve it, and
+the money goes exactly where the screen said. The payout address that went to
+the exchange was the attacker's. The swap completes, your coins arrive in
+somebody else's wallet, and every screen along the way was telling the truth.
+
+Two things are done about it.
+
+**The payout address is derived, never accepted.** When the coin coming back is
+one this wallet watches, the address comes from the account key the vault
+handed over, and the screen has no field to type one into. A field is somewhere
+to paste an attacker's address, and there is nothing here to paste.
+
+**The order is checked against the request.** `verifyOrder` compares what the
+exchange sent back against what it was given, and a refusal returns no order at
+all. A `SwapOrder` is the only thing that carries a deposit address, so after a
+refusal there is nothing on the screen to send coins to. That is the same shape
+as `verifySigned`, for the same reason: a guarantee made of structure rather
+than of a warning somebody can scroll past.
+
+Swapping into a coin this wallet does not hold means typing an address neither
+device can verify. That is allowed and it is labeled, in the same tone the rest
+of the app uses for something it cannot promise.
+
+Once an order exists, the deposit is an ordinary payment. Same compose, same
+`prepare`, same vault, same confirmation screen. A swap does not get a private
+road to a signature, because the deposit address is the one part of a swap the
+vault *can* check and it must not be routed around.
+
+The last thing, and it is on the screen every time rather than once: a swap
+tells an exchange your IP address, the coin you are sending, and two addresses
+you own. It is the least private thing this wallet can do.
+
+The provider adapters come from the sibling project, where these request shapes
+have run against the live APIs. Only the keyless providers came across. This
+app has no server to keep an API key on, and a key compiled into a phone app is
+a published key.
+
 ## Why the check on the way back is the interesting part
 
 The obvious reading of the architecture is that the vault is the careful half

@@ -1,4 +1,4 @@
-# Labyrinth Vault — iOS shell
+# Labyrinth Vault: the iOS shell
 
 The native iPhone front end. The README at the repository root promises two
 things next: the iOS shell, and the confirmation screen itself. This directory
@@ -9,7 +9,7 @@ sit on top of:
 
 - **No network code.** There is no `URLSession`, no `Network` framework, no
   socket anywhere in this target, and `test/ios-no-network.test.ts` walks the
-  Swift source on every test run to keep it that way — the same treatment the
+  Swift source on every test run to keep it that way, the same treatment the
   TypeScript gets.
 - **Fail closed.** The three refusal screens have exactly one action each,
   `SCAN AGAIN`. There is no "continue anyway" in the view code and no state in
@@ -33,7 +33,7 @@ cd ios && xcodegen generate && open LabyrinthVault.xcodeproj
 `npm test` before `xcodegen` is not optional housekeeping. It regenerates
 `Resources/vault.bundle.js`, writes its SHA-256 into `Support/BundleDigest.swift`,
 and regenerates the fixtures the test target reads. Open the project without
-it and the app will refuse to launch — correctly — because the digest baked
+it and the app will correctly refuse to launch, because the digest baked
 into the binary will not match the bundle beside it.
 
 Signing: set your team in the generated project. There are no entitlements
@@ -47,12 +47,12 @@ there is no Apple toolchain, so treat the first build as a code review the
 compiler is performing on your behalf rather than as something that should
 already work.
 
-What *has* been compiled, and is green, is the platform-free half — the
-transaction shapes, the refusal model and the passphrase encoding — which
+What *has* been compiled, and is green, is the platform-free half: the
+transaction shapes, the refusal model and the passphrase encoding, which
 builds as a SwiftPM target and runs 12 tests on any machine with a Swift
 toolchain (`npm run swift:check`, or `swift test` directly). That split is
 deliberate: those files import Foundation and nothing else so that a compiler
-can reach them. It is also how a genuine bug was found — `Refusal.detail` was
+can reach them. It is also how a genuine bug was found. `Refusal.detail` was
 a non-exhaustive switch missing five of its nine cases, which no amount of
 grepping would have shown.
 
@@ -67,7 +67,7 @@ checking.
 Two things worth running as soon as it builds:
 
 1. **⌘U.** The test target runs `PassphraseContractTests`, which checks NFKD
-   against `test/fixtures/primitives.json` — the same file the TypeScript is
+   against `test/fixtures/primitives.json`, the same file the TypeScript is
    checked against. It passes on Linux, where NFKD comes from
    swift-corelibs-foundation. On a phone it comes from Apple's Foundation.
    Two implementations of one Unicode annex, and only one of them is the one
@@ -76,7 +76,7 @@ Two things worth running as soon as it builds:
 
 2. **Time one unseal on the oldest device you would ship to.** That single
    number decides whether the key derivation needs to be native, and nothing
-   else can produce it — see [../docs/native-primitives.md](../docs/native-primitives.md).
+   else can produce it. See [../docs/native-primitives.md](../docs/native-primitives.md).
    For reference, `npm run bench:kdf` reports about 1554 ms for the default
    parameters on a server CPU *with* a JIT, and JavaScriptCore inside a
    third-party app does not get one.
@@ -97,7 +97,7 @@ Real, in this code:
 Also real: the engine. `Engine.swift` loads the compiled TypeScript into
 JavaScriptCore, verifies its SHA-256 against a constant written into the
 binary at build time before evaluating a line of it, and every decision the
-app makes — what a transaction says, whether it can be signed — comes from
+app makes, meaning what a transaction says and whether it can be signed, comes from
 there rather than being reimplemented here.
 
 Staged, and marked at the definition site:

@@ -25,6 +25,8 @@ import { DemoWatcher, DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
 import { parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
+import type { OwnAddresses, SwapOrder, SwapTransport } from '../core/swap';
+import { demoSwapTransport } from '../core/demo';
 import { transmit } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
 
@@ -51,6 +53,23 @@ export interface Store {
    *  stand-in vault. Always goes through `verifySigned`. */
   offerSignature(raw: Uint8Array | null): void;
   broadcast(): void;
+
+  /** The addresses a swap payout may be sent to, derived rather than typed.
+   *  See core/swap.ts for why that distinction is the whole feature. */
+  own: OwnAddresses;
+  /** Whatever performs a swap provider's HTTP call. A fixture, in this build. */
+  swapTransport: SwapTransport;
+  /**
+   * Turn a verified swap order into an ordinary payment.
+   *
+   * This is the join between the two halves of the feature. A swap deposit is
+   * not special: it is a send to an address, and it goes through the same
+   * compose, the same prepare, the same vault and the same confirmation screen
+   * as any other. That is deliberate. The moment a swap gets its own quiet
+   * path to a signature, the vault stops covering the part of a swap the vault
+   * can actually cover.
+   */
+  depositForSwap(order: SwapOrder, from: Asset): void;
 
   pairVault(label: string): void;
   unpairVault(): void;
@@ -207,6 +226,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }, [session.verified, asset]);
 
+  /**
+   * Where a swap pays out to.
+   *
+   * The first address the chain has not seen a payment to, which is the same
+   * one the receive screen shows, derived from the account key the vault
+   * handed over. Not typed and not remembered: a swap payout address is in no
+   * transaction, so it appears on no vault screen, and deriving it is the only
+   * check there is.
+   */
+  const own: OwnAddresses = useMemo(
+    () => ({
+      receive(target: Asset) {
+        const addresses = snapshot.assets[target]?.addresses ?? [];
+        const unused = addresses.find((entry) => !entry.used) ?? addresses[0];
+        return unused?.address ?? null;
+      },
+    }),
+    [snapshot],
+  );
+
+  const depositForSwap = useCallback(
+    (order: SwapOrder, from: Asset) => {
+      setAsset(from);
+      dispatch({ type: 'reset' });
+      dispatch({ type: 'recipient', value: order.depositAddress, source: 'scanned' });
+      dispatch({ type: 'amount', value: String(order.depositAmount) });
+    },
+    [dispatch],
+  );
+
   const store: Store = {
     now,
     snapshot,
@@ -221,6 +270,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     readBack,
     offerSignature,
     broadcast,
+    own,
+    swapTransport: demoSwapTransport,
+    depositForSwap,
     pairVault: (label: string) =>
       setVault({
         state: 'ready',

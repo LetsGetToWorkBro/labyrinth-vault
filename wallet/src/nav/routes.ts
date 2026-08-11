@@ -38,6 +38,16 @@ export type Routes = {
    * destination, are both ways to end up paying the wrong thing.
    */
   Scan: { purpose: 'wire' | 'address' } | undefined;
+  /**
+   * Swapping one coin for another through an exchange.
+   *
+   * Its own route rather than a face of Send, unlike the send flow's eight
+   * steps, because it is not a step of a payment: it is the thing that decides
+   * what payment to make. Once an order exists it hands off to `Send`, and
+   * from there a swap deposit is an ordinary payment with an ordinary
+   * confirmation on the vault. See core/swap.ts.
+   */
+  Swap: undefined;
   Vault: undefined;
   Pair: undefined;
   Security: undefined;

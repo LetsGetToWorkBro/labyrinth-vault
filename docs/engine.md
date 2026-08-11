@@ -1,8 +1,8 @@
 # The engine, and why the app does not reimplement it
 
-The screens are SwiftUI. Everything that *decides* anything — what a
+The screens are SwiftUI. Everything that *decides* anything, meaning what a
 transaction says, whether it can be signed, what an address is, what a key
-derives to — is the TypeScript in `src/`, compiled to one file and run on the
+derives to, is the TypeScript in `src/`, compiled to one file and run on the
 device inside JavaScriptCore.
 
 ## Why not port it to Swift
@@ -21,7 +21,7 @@ than any library we could add, and it is why this option exists at all.
 
 ```
 SwiftUI screens
-      │  strings: hex in, JSON out — except the passphrase, which is bytes
+      │  strings: hex in, JSON out. Except the passphrase, which is bytes
 Engine.swift            ← a telephone, not a participant
       │  verifies the bundle's SHA-256 before it evaluates a line of it
       │  JSContext.invokeMethod
@@ -77,7 +77,7 @@ refused, because that is what locking means.
   is reproducible and the artefact can be checked by anybody;
 - scans the bundle itself for network calls, because the guard that walks
   `src/` cannot see what a dependency dragged in;
-- loads it in a bare context with no Node globals — if it needs `process` or
+- loads it in a bare context with no Node globals. If it needs `process` or
   `Buffer`, it fails here rather than on a phone that has neither;
 - drives the entire flow through it: create a vault, unlock, export the
   watch-only key, read a transaction, sign it, lock.
@@ -90,7 +90,7 @@ with no network is worth less than being able to read it.
 
 There is no Swift toolchain in the environment this was written in, so the
 iOS sources are **not compiled**. The engine contract is checked from the
-TypeScript side — every function Swift names is asserted to exist, the version
+TypeScript side. Every function Swift names is asserted to exist, the version
 is pinned on both sides, and the model structs are compared field for field
-against the wire — but "it compiles" is not among the things the suite proves.
+against the wire. But "it compiles" is not among the things the suite proves.
 Build it in Xcode before trusting it.

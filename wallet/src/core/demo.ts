@@ -312,3 +312,71 @@ export class DemoWatcher implements Watcher {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Swaps
+//
+// There is no network client in this app, and the swap screen is the last
+// place to pretend otherwise: it is the one screen where a made-up number is
+// a made-up exchange rate next to a real address. So the transport is a
+// fixture, it is named one, and the screen says DEMO DATA like everywhere else.
+//
+// What the fixture is careful about is being *honest in shape*. It answers
+// with the field names the real providers answer with, so `parseExolixCreate`
+// and `verifyOrder` do the same work here that they will do against a live
+// exchange. In particular it echoes back the payout address it was given,
+// which is what an honest provider does. `test/swap.test.ts` supplies the
+// dishonest one.
+
+import type { HttpRequest, SwapTransport } from './swap';
+
+/** A deposit address that is plainly not one of ours, per chain. */
+const DEMO_DEPOSIT: Record<string, string> = {
+  BTC: 'bc1qdemodepositaddress0000000000000000000000',
+  XMR: '87JaLLTrpjmpKfvJcgLwaFdmDLpBBGVLmFqCPXsvT4YnPnvVE5QpcVfmqNyRDWbVUqSGxDcnvqjZmQEcnpLzVkzKAmYPXvL',
+};
+
+export function makeSwapTransport(options: { rate?: number } = {}): SwapTransport {
+  const rate = options.rate ?? 152.4;
+  return {
+    async send(request: HttpRequest): Promise<unknown> {
+      const isGodex = request.url.includes('godex');
+      const body = (request.body ?? {}) as Record<string, unknown>;
+
+      if (request.url.includes('rate') || request.url.endsWith('/info')) {
+        const amount = Number(body['amount'] ?? 0) || 0.05;
+        const out = amount * rate;
+        return isGodex
+          ? { amount: String(out), min_amount: '0.001', max_amount: '10' }
+          : { toAmount: out, minAmount: 0.001, maxAmount: 10 };
+      }
+
+      if (request.method === 'POST') {
+        const payout = String(body['withdrawal'] ?? body['withdrawalAddress'] ?? '');
+        const from = String(body['coin_from'] ?? body['coinFrom'] ?? 'BTC').toUpperCase();
+        const amount = Number(body['deposit_amount'] ?? body['amount'] ?? 0);
+        const deposit = DEMO_DEPOSIT[from] ?? DEMO_DEPOSIT['BTC']!;
+        return isGodex
+          ? {
+              transaction_id: 'demo-godex-4417',
+              deposit,
+              withdrawal: payout,
+              deposit_amount: String(amount),
+              withdrawal_amount: String(amount * rate),
+            }
+          : {
+              id: 'demo-exolix-4417',
+              depositAddress: deposit,
+              withdrawalAddress: payout,
+              amount,
+              amountTo: amount * rate,
+            };
+      }
+
+      return isGodex ? { status: 'wait' } : { status: 'wait' };
+    },
+  };
+}
+
+/** The one the store hands to the swap screen. */
+export const demoSwapTransport: SwapTransport = makeSwapTransport();

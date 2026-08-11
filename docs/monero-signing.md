@@ -3,8 +3,8 @@
 The vault holds Monero keys today. It makes a seed, derives the spend and view
 keys, encodes the address, prints the twenty-five word phrase, and exports a
 watch-only view. What it cannot do is spend, and this document is the honest
-account of why — written because "coming soon" is not an engineering statement
-and because the gap is four distinct pieces of work, not one.
+account of why. "Coming soon" is not an engineering statement, and the gap is
+four distinct pieces of work rather than one.
 
 The short version: the primitives are built and checked against Monero's own
 test vectors. The container format and the signature scheme are not built, and
@@ -14,7 +14,7 @@ neither is being guessed at.
 
 `src/keys/monerocrypto.ts` implements the six operations every Monero
 transaction rests on, and `test/monerocrypto.test.ts` checks all six against
-720 vectors taken verbatim from monero-project's `tests/crypto/tests.txt` — the
+720 vectors taken verbatim from monero-project's `tests/crypto/tests.txt`, the
 file their own unit tests read. 120 vectors each:
 
 | Operation | What it is for |
@@ -28,22 +28,22 @@ file their own unit tests read. 120 vectors each:
 
 Five of those six are compositions of Keccak, scalar arithmetic and ed25519
 group operations, all of which come from audited libraries. The sixth,
-`ge_fromfe_frombytes_vartime`, has no audited implementation anywhere — it is
-an Elligator-style map that predates the standard hash-to-curve constructions
-and exists only in Monero's `crypto-ops.c`. It is transcribed by hand in this
+`ge_fromfe_frombytes_vartime`, has no audited implementation anywhere. It is an
+Elligator-style map that predates the standard hash-to-curve constructions and
+exists only in Monero's `crypto-ops.c`. It is transcribed by hand in this
 repository, which is precisely why the Monero project's own vectors for it,
 with nothing wrapped around them, are in the test suite.
 
 `src/keys/monerotx.ts` recognizes Monero's own file formats and refuses them by
 name. All six magic strings from `src/wallet/wallet2.cpp`:
 
-- `Monero unsigned tx set` — the file a watching wallet writes for an offline
+- `Monero unsigned tx set`: the file a watching wallet writes for an offline
   signer. This is the one that matters.
-- `Monero signed tx set` — what comes back.
-- `Monero multisig unsigned tx set` — the same, for multisig.
-- `Monero key image export` — which of your outputs are already spent.
-- `Monero multisig export` — multisig information exchange.
-- `Monero output export` — which outputs you own.
+- `Monero signed tx set`: what comes back.
+- `Monero multisig unsigned tx set`: the same, for multisig.
+- `Monero key image export`: which of your outputs are already spent.
+- `Monero multisig export`: multisig information exchange.
+- `Monero output export`: which outputs you own.
 
 Each literal in wallet2.cpp ends in a version byte. That byte is deliberately
 not part of the match: the vault refuses all six anyway, and a file from a
@@ -51,9 +51,9 @@ newer Monero should still be *named* rather than reported as unrecognised
 bytes. The version seen and the version this code was written against are both
 reported.
 
-Recognition is not a feature for its own sake. The alternative — a signing
-device telling somebody their perfectly good `unsigned_monero_tx` "is not a
-transaction" — sends them off to re-export a file that was never wrong, or to
+Recognition is not a feature for its own sake. Consider the alternative: a
+signing device tells somebody their perfectly good `unsigned_monero_tx` "is not
+a transaction", and they go off to re-export a file that was never wrong, or
 conclude the app is broken. The refusal says what the file is and what is
 missing.
 
@@ -64,8 +64,8 @@ Four layers, in the order they have to be built.
 ### 1. CryptoNight (`cn_slow_hash`)
 
 The contents of every file above are encrypted, and the key comes from
-`crypto::generate_chacha_key`, which is `crypto::cn_slow_hash` — Monero's
-original proof-of-work function — over the relevant secret key, looped
+`crypto::generate_chacha_key`, which is `crypto::cn_slow_hash`, Monero's
+original proof-of-work function, over the relevant secret key, looped
 `kdf_rounds` times.
 
 CryptoNight is not a hash function anybody would choose for a key derivation
@@ -75,8 +75,8 @@ Implementing it means:
 - a 2 MiB scratchpad and roughly half a million memory-hard rounds;
 - an AES round function (the raw round, not a mode);
 - Keccak with the full 1600-bit state exposed, not just a 256-bit digest;
-- **four additional hash functions** — Blake-256, Groestl-256, JH-256 and
-  Skein-256 — one of which is selected by the low bits of the state to produce
+- **four additional hash functions**: Blake-256, Groestl-256, JH-256 and
+  Skein-256, one of which is selected by the low bits of the state to produce
   the final result.
 
 That is four hash functions this repository does not have, none of them
@@ -93,14 +93,14 @@ particular library, including its class-version tracking, its object tracking,
 and its handling of pointers and containers.
 
 Writing a reader for it means matching an implementation, and the way to know
-you have matched it is differential testing against real archives — which needs
-a Monero wallet producing them.
+you have matched it is differential testing against real archives, which needs a
+Monero wallet producing them.
 
 ### 3. The `unsigned_tx_set` structure
 
-What the archive holds: `tx_construction_data` for each transaction — sources
-with their ring members and real-output index, destinations, the change
-address, subaddress indices, extra, unlock time, the RCT config — plus the
+What the archive holds: `tx_construction_data` for each transaction, meaning
+sources with their ring members and real-output index, destinations, the change
+address, subaddress indices, extra, unlock time and the RCT config, plus the
 transfer details the signer needs.
 
 This layer is readable from wallet2's headers and is the least uncertain of the
@@ -118,7 +118,7 @@ The signing itself, which is two separate cryptographic constructions:
 
 Both must produce output the network accepts. Neither has an audited JavaScript
 implementation. Both are the kind of code where a subtle error is not a
-rejected transaction but a leak — a range proof that reveals an amount, a ring
+rejected transaction but a leak. A range proof that reveals an amount, a ring
 signature that narrows the anonymity set, a key image that links two spends
 that were meant to be unlinkable.
 
@@ -126,7 +126,7 @@ that were meant to be unlinkable.
 
 The requirement this repository holds itself to is that anything which can lose
 money is checked against an implementation that is not ours. For layers 1 to 4
-that means differential testing against a real Monero wallet or daemon —
+that means differential testing against a real Monero wallet or daemon:
 generating an unsigned set, signing it here, and having Monero accept the
 result.
 

@@ -54,8 +54,8 @@ hold funds you would miss with anything built on it.
   The design does not pretend otherwise; it narrows the surface to three
   functions with `reveal` in their names (`revealMnemonic`, `revealSecretHex`,
   `revealWallet`), so "where does a secret become permanent?" has a short,
-  greppable answer, and a test fails if that list grows. Everything else —
-  every wallet object, every seal, every signature — stays in wipeable bytes.
+  greppable answer, and a test fails if that list grows. Everything else stays
+  in wipeable bytes: every wallet object, every seal, every signature.
 - **Wiping of internal scratch buffers.** Intermediates are zeroed
   (`mnemonicFromEntropy`, `openFromMnemonic`, `deriveKey`), but a local buffer
   that nothing else can reach has no observable behavior, so unlike every

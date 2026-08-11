@@ -111,29 +111,29 @@ Early. What exists and is tested:
   loop without being told which, and keeps both going, so pointing it at a
   different wallet mid-scan is not a restart.
 
-- **The keys** (`src/keys/`) — Monero seed phrases, addresses and view keys;
+- **The keys** (`src/keys/`). Monero seed phrases, addresses and view keys;
   Bitcoin BIP84 derivation, addresses and watch-only export. The derivations
   are ported unchanged from the sibling project, with their tests: they have
   been checked against the official wallets, and tidying working money code is
   how you get a well-formed address nobody holds the key for.
 
   What did change is where secrets live. Anything secret is a `Uint8Array`,
-  because a JavaScript string cannot be overwritten — every copy the engine
-  made survives until the collector moves it, and `wipe()` has nothing to write
+  because a JavaScript string cannot be overwritten. Every copy the engine made
+  survives until the collector moves it, and `wipe()` has nothing to write
   over. Turning a secret into text is unavoidable sometimes (a phrase has to be
   readable to be written down) but it is a one-way door, so it happens only
   through `revealMnemonic`, `revealSecretHex` and `revealWallet`. A test fails
   if that list grows.
 
-- **Monero's spending primitives** (`src/keys/monerocrypto.ts`) — the six
+- **Monero's spending primitives** (`src/keys/monerocrypto.ts`). The six
   operations every Monero transaction rests on: the Diffie-Hellman step that
   finds your own outputs, the one-time key it derives, and the key image that
   stops a double spend. Checked against 720 vectors taken verbatim from the
   Monero project's own `tests/crypto/tests.txt`.
 
   Five of the six are compositions of audited primitives. The sixth,
-  `ge_fromfe_frombytes_vartime`, has no audited implementation anywhere — it is
-  an Elligator-style map that exists only in Monero's `crypto-ops.c` — so it is
+  `ge_fromfe_frombytes_vartime`, has no audited implementation anywhere. It is
+  an Elligator-style map that exists only in Monero's `crypto-ops.c`, so it is
   transcribed by hand here, and that is exactly why its 120 vectors are tested
   in isolation, with no hashing before and no cofactor multiplication after.
 
@@ -190,9 +190,8 @@ Early. What exists and is tested:
 
 - **The passphrase is bytes, not text** (`src/keys/seal.ts`,
   `ios/.../Passphrase.swift`). Everything secret in this project is a
-  `Uint8Array`, because a string cannot be overwritten — and the passphrase used
-  to be the exception, which is the worst possible thing to make an exception
-  of. It was crossing into the engine as text, so the one secret a person
+  `Uint8Array`, because a string cannot be overwritten. The passphrase used to be
+  the exception, which is the worst possible thing to make an exception of. It was crossing into the engine as text, so the one secret a person
   actually types existed unwipeable in two heaps at once.
 
   It now becomes NFKD bytes at the keyboard, crosses as bytes, and is zeroed on
@@ -204,30 +203,30 @@ Early. What exists and is tested:
   implemented twice, in Swift and in TypeScript, because the text has to stop
   being text before it crosses. It is allowed to be twice because
   `test/fixtures/primitives.json` pins the exact bytes for the inputs where two
-  platforms could disagree — ligatures, half-width characters, two spellings of
-  é — and both sides are checked against the file rather than against each
-  other. Get it wrong and nothing fails loudly: you get a vault that opens on
+  platforms could disagree, meaning ligatures, half-width characters and two
+  spellings of e-acute, and both sides are checked against the file rather than
+  against each other. Get it wrong and nothing fails loudly: you get a vault that opens on
   the phone that sealed it and on no other device.
 
 - **A compiler over the Swift that matters** (`Package.swift`,
   `scripts/swift-check.sh`). Everything on this side used to be checked by
-  regular expressions — greps for a case in an enum, a name in a signature —
-  because nothing in the repository could compile Swift. That is not the same
+  regular expressions, meaning greps for a case in an enum or a name in a
+  signature, because nothing in the repository could compile Swift. That is not the same
   thing, and the gap was not hypothetical: `Refusal.detail`, the switch that
   produces the words on every refusal screen, was missing five of its nine
   cases and would not have built.
 
   So the parts that can be reached without Xcode are reached. The transaction
   shapes, the refusal model and the passphrase encoding import Foundation and
-  nothing else — deliberately, because those are the parts where a mistake is a
-  wrong number on a confirmation screen — and they build as a SwiftPM target
+  nothing else, deliberately, because those are the parts where a mistake is a
+  wrong number on a confirmation screen, and they build as a SwiftPM target
   with 12 tests that run in the same `npm test` as everything else. Two of
   them decode JSON the TypeScript actually produced, from a real PSBT through
   the real reader, rather than comparing two descriptions of a shape.
 
   Both guards are kept, and each catches what the other cannot: renaming a
-  field in Swift fails the decode *and* the regex, while a field Swift silently
-  drops decodes perfectly and is caught only by the list comparison. That is
+  field in Swift fails the decode as well as the regex, while a field Swift
+  silently drops decodes perfectly and is caught only by the list comparison. That is
   checked rather than assumed.
 
 - **The engine is verified before it runs** (`scripts/build-bundle.mjs`,
@@ -239,7 +238,7 @@ Early. What exists and is tested:
   signed text segment and the bundle does not, which is the asymmetry that
   makes the check worth making.
 
-- **The engine** (`src/bridge/host.ts`, `ios/.../Engine.swift`) — the app does
+- **The engine** (`src/bridge/host.ts`, `ios/.../Engine.swift`). The app does
   not reimplement any of the above. The TypeScript is compiled to one file and
   run on the device in JavaScriptCore, so there is exactly one implementation
   of what a transaction says and it is the one under test. The bundle is
@@ -259,12 +258,32 @@ Early. What exists and is tested:
   is a test. There is no node client behind it yet, and it says so on screen.
   See [wallet/README.md](wallet/README.md).
 
+- **Swapping** (`wallet/src/core/swap.ts`), which is the one feature in this
+  product the vault cannot fully cover, and is built around admitting that.
+
+  A swap has three addresses. The deposit address belongs to the exchange, and
+  the vault does see it: it is the recipient of an ordinary send, rendered in
+  full and approved by a person. The refund and payout addresses go to the
+  exchange over the network and appear in no transaction, so nothing signs them
+  and no confirmation screen shows them. A compromised build could quote
+  honestly, show the real deposit address, let the vault render it, and hand
+  the exchange its own payout address. The money would go exactly where the
+  screen said, the swap would complete, and the proceeds would land somewhere
+  else.
+
+  So the payout address is derived from the account key rather than typed, and
+  there is no field on the screen to type one into. The order that comes back
+  is compared against the request, and a refusal returns no order, which means
+  no deposit address, which means nothing on the screen to send coins to. Once
+  an order is verified the deposit goes through the ordinary send flow and the
+  vault, because that part *is* checkable and must not be routed around.
+
 Next, in order:
 
 1. Build the iOS target in Xcode. The half of the Swift that imports SwiftUI,
    JavaScriptCore and CryptoKit has only ever been *parsed*, because those
-   frameworks exist nowhere but Apple's platforms — so that build is the first
-   real check on it. The other half already compiles and is tested; see below.
+   frameworks exist nowhere but Apple's platforms. That build is the first real
+   check on it. The other half already compiles and is tested; see below.
    One measurement is waiting on a real device specifically: whether the key
    derivation needs to be native. `npm run bench:kdf` says 1554 ms for the default parameters on a
    server CPU *with* a JIT; JavaScriptCore in an app has no JIT, and how much

@@ -65,7 +65,7 @@ the derived key itself is fresh per seal and nonce reuse cannot arise.
 passphrase typed on one keyboard opens the vault sealed from another.
 
 `passphraseToBytes` in `src/keys/seal.ts` is the one place text becomes bytes,
-and `seal`/`unseal` take only bytes — a string cannot be wiped, and the
+and `seal`/`unseal` take only bytes. A string cannot be wiped, and the
 passphrase is the one secret a person types. The app normalizes in Swift, since
 the text has to stop being text before it crosses into the engine, which makes
 this the single behavior in the project implemented twice on purpose. Both

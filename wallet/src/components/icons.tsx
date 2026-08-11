@@ -79,3 +79,14 @@ export function CopyIcon(props: IconProps) {
 export function OutIcon(props: IconProps) {
   return <Glyph {...props} d="M12 4 H4 V20 H20 V12 M14 4 H20 V10 M20 4 L11 13" />;
 }
+
+/**
+ * Two arrows passing, for a swap.
+ *
+ * Deliberately not a circular-arrows glyph. A swap in this wallet is not a
+ * refresh and not a loop: coins leave on one chain and different coins arrive
+ * on another, and the two paths never meet. The icon says that.
+ */
+export function SwapIcon(props: IconProps) {
+  return <Glyph {...props} d="M4 8 h12 l-4 -4 M20 16 h-12 l4 4" />;
+}

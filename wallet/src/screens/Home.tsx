@@ -36,7 +36,7 @@ import { SectionHead, VaultStatus, Wordmark } from '../components/chrome';
 import { AssetLine } from '../components/money';
 import { Allocation } from '../labyrinth/glyphs';
 import { TxRow } from '../components/tx';
-import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon } from '../components/icons';
+import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon, SwapIcon } from '../components/icons';
 import { assetColor, color, space } from '../design/tokens';
 import { fiatCents, formatFiat } from '../core/units';
 import { useStore } from '../state/store';
@@ -136,6 +136,15 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
               }}
             />
             <Cell label="SCAN" glyph={<ScanIcon />} onPress={() => navigation.navigate('Scan')} />
+          </ActionRow>
+
+          <Gap size={space.step} />
+          <ActionRow>
+            <Cell
+              label="SWAP"
+              glyph={<SwapIcon />}
+              onPress={() => navigation.navigate('Swap')}
+            />
           </ActionRow>
 
           {vault.state === 'unpaired' ? (
