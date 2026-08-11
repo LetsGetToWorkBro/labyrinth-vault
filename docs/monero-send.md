@@ -33,10 +33,24 @@ where the online device never touches a spend key.
   estimated weight, and, the line that matters most, sends the change to the
   account's own address. There is no parameter for a change address, because
   the one time it would be set to something else is the one time money is lost.
+  A spend that would come to a single output is padded with a zero-amount
+  self-output, because consensus has required at least two outputs since hard
+  fork 12. The weight is transcribed from wallet2's `estimate_rct_tx_size`
+  term for term, Bulletproof+ clawback included, so the fee is never too low.
 - `moneroplan.ts` ties them to the node: fetch the distribution, build a ring
   per input, fetch the members, and assemble the unsigned set. It refuses a
   node that returns a different output at the real ring position than the one
-  being spent.
+  being spent, and it refuses to spend an output that is not yet ten blocks
+  deep, so a fresh coin cannot be walked into a transaction every relay rejects.
+- `moneroscan.ts` turns found outputs into spendable ones: it records the
+  global index (from the node's `output_indices`) and the commitment while
+  scanning, and `toSpendable` promotes a fully known output into one the spend
+  path can use, refusing anything missing an index or a commitment rather than
+  guessing.
+- `monerosend.ts` is the whole cold-signing loop as one function,
+  `executeMoneroSend`: gate, plan, sign across the airgap, broadcast. It takes
+  a double-spend guard (the key image book) that excludes coins already spent
+  or in flight, and locks a spend's inputs the moment it is broadcast.
 
 **Offline (`src/keys/`):**
 
@@ -63,12 +77,23 @@ where the online device never touches a spend key.
   every input from the vault's own keys (the one-time key must re-derive, the
   claimed amount must recommit to the on-chain commitment), build the outputs
   with their view tags and encrypted amounts, close the balance on the curve,
-  prove the range, sign every ring, and emit the raw hex plus its id. The test
-  then does what the network and the receiver would do to the bytes: re-parse
-  them independently, check the money equation, re-verify every proof, and run
-  the receiver's own scan, which finds the payment and decrypts the exact
-  amount. The bridge exposes it as `moneroDescribe` and `moneroSign`, the same
-  describe-then-approve contract the Bitcoin signer uses.
+  prove the range, sign every ring, and emit the raw hex plus its id. It pays
+  standard, subaddress, and integrated addresses: a subaddress gets the
+  additional-transaction-key treatment (`R_i = r_i·D`, shared secret `r_i·C`)
+  transcribed from `generate_output_ephemeral_keys`, and every spend carries an
+  encrypted payment id, real for an integrated address and a dummy zero
+  otherwise, so the two are indistinguishable on the chain. The test does what
+  the network and the receiver would do to the bytes: re-parse them
+  independently, check the money equation, re-verify every proof, and run the
+  receiver's own scan, which finds the payment and decrypts the exact amount,
+  including a subaddress payment found through its additional key. The bridge
+  exposes it as `moneroDescribe` and `moneroSign`, the same describe-then-approve
+  contract the Bitcoin signer uses.
+
+The view tags every output carries are pinned to Monero's 70 published
+`derive_view_tag` vectors, because a wrong tag is the quiet kind of wrong: a
+receiving wallet that view-tag-filters would skip a payment that is genuinely
+theirs and never see the money.
 
 ## Where a mistake loses money, and where it does not
 
@@ -139,6 +164,37 @@ that also records the evidence: a stagenet transaction id, built by this code,
 that a real node accepted. That commit is the one that fills in the section
 below, and the test in `test/moneroplan.test.ts` is the tripwire that forces
 the constant and the evidence to move together.
+
+## How the evidence gets made
+
+`wallet/scripts/stagenet-send.ts` is what a person runs to make it. It drives
+the exact loop the app drives, `executeMoneroSend`, with the real vault signer
+in process instead of across a QR airgap, because on stagenet the airgap buys
+nothing and the loop is identical either way. Given a seed, a stagenet node, a
+destination, and the funded output to spend, it plans, signs, broadcasts, and
+prints the accepted transaction id. That id and the node that accepted it are
+what fill in the section below, in the same commit that flips the constant. The
+script refuses mainnet; the gate is not its to lift.
+
+## What is not built: the in-app screens
+
+Everything above is built and tested. What is not is the presentation layer on
+the two devices: the wallet's screen for composing a Monero spend and animating
+the unsigned set across as QR, and the vault's screen for rendering the
+destination and amount from `moneroDescribe`, taking the approval, and showing
+the signed frames from `moneroSign`. The functions those screens call all
+exist and are tested at the boundary Swift and React Native reach them through;
+what remains is the pixels and the camera, which need a device and a person to
+build and to judge, not a test runner.
+
+## A known limitation, stated because hiding it would be worse
+
+The vault's byte-array secrets are wiped after signing, but the Bulletproof+
+prover and the assembly do their arithmetic in JavaScript `bigint`s, which
+cannot be zeroed and may leave copies of a mask or a transaction key in the
+engine's heap until garbage collection reclaims them. On an airgapped device
+that never touches a network this is a small, bounded risk, but it is a real
+one, and it is written here rather than left for someone to discover.
 
 ## Recorded live acceptances
 
