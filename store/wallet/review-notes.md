@@ -1,10 +1,17 @@
 # Review notes: Labyrinth Wallet
 
-**This build shows demonstration data. There is no chain client behind it yet,
-and the app labels every screen that shows a number.**
+**With no node configured this build shows fixture data, and the app labels
+every screen that shows a number.**
 
 Please read that first, because a reviewer who assumes the balances are real
 will reasonably conclude the app is not doing what it says.
+
+Bitcoin will read a real chain if you set a node on the Nodes screen. There is
+deliberately no default node: the app explains on that screen that a public node
+learns every address in the account, and running your own is presented as the
+ordinary choice. Monero can reach a node and broadcast through it; scanning for
+outputs is not finished and the balance is labeled as not scanned rather than
+shown as zero.
 
 ## What it does
 

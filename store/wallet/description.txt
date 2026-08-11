@@ -24,8 +24,14 @@ RECEIVING WORKS ALONE
 
 An address is public information derived from a public key, so a wallet with no keys can hand one out all day. Receiving needs no vault. Spending does. That asymmetry is the architecture, visible.
 
-THIS BUILD HAS NO NODE
+YOU CHOOSE THE NODE
 
-There is no chain client yet. Every balance, price, fee estimate and confirmation count comes from a fixture, and the app says DEMO DATA on screen for exactly as long as that is true. You can walk the whole send flow and watch the airgap work. You cannot watch your own money.
+The wallet reads the chain through a node, and there is none set by default. Every other light wallet ships pointing at a server the developer picked, which works immediately and means one person decided who gets to watch every user's addresses forever.
+
+This app makes that choice in front of you, on a screen that says what it costs first. A public Bitcoin node learns every address in your account, because a light client has to ask about each one. Your own node learns nothing. Running your own is presented as the ordinary option, with the command to do it.
+
+Bitcoin works against any Esplora node, including one on your own machine. Monero is not finished: the wallet can reach a node and broadcast through it, but scanning for your outputs needs work that is described honestly in the repository rather than hidden. Until it lands, the Monero balance reads as not scanned rather than as zero.
+
+With no node set, every number is a fixture and the app says DEMO DATA on screen.
 
 Do not put money on this.

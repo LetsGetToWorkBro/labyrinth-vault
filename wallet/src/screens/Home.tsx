@@ -36,7 +36,7 @@ import { SectionHead, VaultStatus, Wordmark } from '../components/chrome';
 import { AssetLine } from '../components/money';
 import { Allocation } from '../labyrinth/glyphs';
 import { TxRow } from '../components/tx';
-import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon, SwapIcon } from '../components/icons';
+import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon, SwapIcon, NodeIcon } from '../components/icons';
 import { assetColor, color, space } from '../design/tokens';
 import { fiatCents, formatFiat } from '../core/units';
 import { useStore } from '../state/store';
@@ -69,7 +69,19 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <Wordmark />
             <View style={{ flex: 1 }} />
-            {snapshot.demo ? <Chip tone={color.warn}>DEMO DATA</Chip> : null}
+            {/* Three states, three different things to say. Fixture data, a
+                node whose last answer did not arrive, and a live one. A wallet
+                that showed nothing in the middle case would be presenting an
+                old balance as a current one. */}
+            {snapshot.demo ? (
+              <Press onPress={() => navigation.navigate('Nodes')}>
+                <Chip tone={color.warn}>DEMO DATA · SET A NODE</Chip>
+              </Press>
+            ) : snapshot.stale ? (
+              <Press onPress={() => navigation.navigate('Nodes')}>
+                <Chip tone={color.warn}>NOT UP TO DATE</Chip>
+              </Press>
+            ) : null}
           </View>
 
           <Gap size={space.snug} />
@@ -144,6 +156,11 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
               label="SWAP"
               glyph={<SwapIcon />}
               onPress={() => navigation.navigate('Swap')}
+            />
+            <Cell
+              label="NODES"
+              glyph={<NodeIcon />}
+              onPress={() => navigation.navigate('Nodes')}
             />
           </ActionRow>
 

@@ -50,6 +50,39 @@ Every one of those is public information. None of it can move a coin.
 no field that would accept one, and no type in `src/core/model.ts` with
 anywhere to put one.
 
+## Nodes
+
+The wallet reads the chain through a node, and there is no node set by default.
+
+That is deliberate and it costs convenience. Every other light wallet ships
+pointing at a server the developer picked, which works the moment it is
+installed and means one person decided, once, who gets to watch every user's
+addresses forever. This app makes that choice in front of the person it affects,
+on a screen that says what it costs before they make it.
+
+**Bitcoin** goes through Esplora, which is `electrs` or Blockstream's server,
+both of which run on an ordinary machine against your own bitcoind.
+`src/net/esplora.ts` speaks it, `src/core/discover.ts` walks the account to
+BIP44's gap limit of twenty, and `src/core/watcher.ts` turns the answers into
+the same `ChainSnapshot` the fixture produced. The screens did not change.
+
+What a public Bitcoin node learns is every address in the account, because a
+light client has to ask about each one and they arrive in sequence from one IP.
+That is inherent to light clients, not a flaw in this implementation, and the
+nodes screen says it in those words. Running your own is the only fix and it is
+presented as the ordinary option rather than the advanced one.
+
+**Monero** is different, and better, and unfinished. A node serving blocks
+learns nothing about which outputs are yours, because the scan happens on the
+device. The scan itself is four operations and they are written, using the
+vault's primitives that are pinned to the Monero project's own vectors. What is
+missing is the block download, which needs either an epee decoder or a light
+wallet server, and those are a fork in the road rather than a task. See
+[../docs/monero-sync.md](../docs/monero-sync.md).
+
+Until then the Monero view carries a real height and a balance of zero that is
+labeled as not scanned. A zero that is labeled is honest.
+
 ## Swapping, and the address nothing can check
 
 `src/core/swap.ts` trades one coin for another through a keyless exchange, and

@@ -48,6 +48,15 @@ export type Routes = {
    * confirmation on the vault. See core/swap.ts.
    */
   Swap: undefined;
+  /**
+   * Which node the wallet reads the chain through.
+   *
+   * Its own route rather than a panel inside Security, because it is not a
+   * security setting in the usual sense: it is the one screen where somebody
+   * chooses who watches their addresses, and burying that under a gear is how
+   * every other wallet ends up making the choice for its users.
+   */
+  Nodes: undefined;
   Vault: undefined;
   Pair: undefined;
   Security: undefined;

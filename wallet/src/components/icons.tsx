@@ -90,3 +90,9 @@ export function OutIcon(props: IconProps) {
 export function SwapIcon(props: IconProps) {
   return <Glyph {...props} d="M4 8 h12 l-4 -4 M20 16 h-12 l4 4" />;
 }
+
+/** A box with a line out of it: something this device talks to and does not
+ *  contain. Deliberately not a cloud. */
+export function NodeIcon(props: IconProps) {
+  return <Glyph {...props} d="M4 6 H14 V14 H4 Z M14 10 H21 M18 7 L21 10 L18 13" />;
+}

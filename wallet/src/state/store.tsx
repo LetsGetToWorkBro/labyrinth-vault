@@ -26,11 +26,28 @@ import type { Asset, Draft, VaultLink } from '../core/model';
 import { parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
 import type { OwnAddresses, SwapOrder, SwapTransport } from '../core/swap';
+import type { NodeConfig, NodeKind } from '../core/nodes';
+import { NodeWatcher, type RefreshResult, type WatcherNodes } from '../core/watcher';
 import { demoSwapTransport } from '../core/demo';
 import { transmit } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
 
-const watcher = new DemoWatcher();
+const demoWatcher = new DemoWatcher();
+
+/**
+ * Node configuration is held in memory and not written anywhere.
+ *
+ * Not an oversight and not a security decision: this package has no storage
+ * dependency, and adding one is a change to the dependency list that deserves
+ * its own commit rather than being smuggled in beside a node client. Until
+ * then a node has to be set again after a relaunch, the nodes screen says so,
+ * and nothing pretends otherwise.
+ *
+ * When storage does land, it goes here and only here. A node address is not a
+ * secret, so it wants ordinary storage rather than the keychain, and the
+ * distinction is worth keeping visible.
+ */
+const NO_NODES: WatcherNodes = { btc: null, xmr: null };
 
 export interface Store {
   /** One clock for the whole interface. */
@@ -53,6 +70,15 @@ export interface Store {
    *  stand-in vault. Always goes through `verifySigned`. */
   offerSignature(raw: Uint8Array | null): void;
   broadcast(): void;
+
+  /** Which nodes are set. Null on both means the fixture is showing. */
+  nodes: WatcherNodes;
+  /** True while a refresh is in flight, for the one spinner in the app. */
+  refreshing: boolean;
+  /** What went wrong on the last refresh, per asset, in sentences. */
+  nodeProblems: { asset: Asset; problem: string }[];
+  refresh(): Promise<void>;
+  setNode(kind: NodeKind, config: NodeConfig | null): void;
 
   /** The addresses a swap payout may be sent to, derived rather than typed.
    *  See core/swap.ts for why that distinction is the whole feature. */
@@ -105,7 +131,52 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, []);
 
-  const snapshot = useMemo(() => watcher.snapshot(now), [now]);
+  const [nodes, setNodes] = useState<WatcherNodes>(NO_NODES);
+  const [refreshing, setRefreshing] = useState(false);
+  const [nodeProblems, setNodeProblems] = useState<RefreshResult['problems']>([]);
+  /* Bumped after every refresh so the snapshot below is recomputed. The
+   * watcher holds the data and hands back the same object until something
+   * fetches; a counter is what tells React that something did. */
+  const [fetched, setFetched] = useState(0);
+
+  /**
+   * The watcher, which is the fixture until a node is set and the node after.
+   *
+   * Rebuilt when the nodes change, which also throws away the previous
+   * snapshot. That is correct: a balance from a different node is not a
+   * balance from this one, and showing it while the new one loads would be
+   * showing somebody a number from a source they just stopped trusting.
+   */
+  const watcher = useMemo(() => {
+    if (!nodes.btc && !nodes.xmr) return demoWatcher;
+    return new NodeWatcher(nodes, DEMO_ZPUB);
+  }, [nodes]);
+
+  const snapshot = useMemo(
+    () => watcher.snapshot(now),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [watcher, now, fetched],
+  );
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!(watcher instanceof NodeWatcher)) return;
+    setRefreshing(true);
+    try {
+      const result = await watcher.refresh(Date.now());
+      setNodeProblems(result.problems);
+    } finally {
+      setRefreshing(false);
+      setFetched((count) => count + 1);
+    }
+  }, [watcher]);
+
+  /* One refresh when a node is set, and none on a timer. Polling a node every
+   * thirty seconds is a wallet telling somebody's node operator exactly when
+   * that phone is awake, forever, for a number that changes a few times a
+   * month. Pull to refresh is the whole strategy. */
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const feeOption = useCallback(
     (key: string): FeeOption => {
@@ -273,6 +344,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     own,
     swapTransport: demoSwapTransport,
     depositForSwap,
+      nodes,
+    refreshing,
+    nodeProblems,
+    refresh,
+    setNode: (kind: NodeKind, config: NodeConfig | null) =>
+      setNodes((current) => (kind === 'esplora' ? { ...current, btc: config } : { ...current, xmr: config })),
     pairVault: (label: string) =>
       setVault({
         state: 'ready',

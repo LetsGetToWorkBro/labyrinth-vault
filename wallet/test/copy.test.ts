@@ -81,3 +81,47 @@ describe('the copy the app shows', () => {
     expect(withComments.length, 'no comment uses one, so the exemption is untested').toBeGreaterThan(0);
   });
 });
+
+describe('a wallet with no chain behind it says so, everywhere it shows a number', () => {
+  /* The claim the store metadata makes and the App Store listing repeats. It
+   * has to be true on screen, and it has to stay true when a node is set and
+   * the fixture stops being what is shown.
+   *
+   * Three states and three different sentences: fixture data, a node whose
+   * last answer did not arrive, and a live one. A wallet that showed nothing
+   * in the middle case would be presenting yesterday's balance as today's. */
+
+  const home = readFileSync('src/screens/Home.tsx', 'utf8');
+  const nodes = readFileSync('src/screens/Nodes.tsx', 'utf8');
+  const watcher = readFileSync('src/core/watcher.ts', 'utf8');
+
+  it('labels fixture data and offers the way out of it', () => {
+    expect(home).toMatch(/DEMO DATA/);
+    expect(home).toMatch(/SET A NODE/);
+  });
+
+  it('labels a snapshot that did not come back', () => {
+    expect(home).toMatch(/NOT UP TO DATE/);
+    expect(watcher).toMatch(/stale: !ok/);
+  });
+
+  it('starts stale, because nothing has been fetched yet', () => {
+    /* A fresh-looking snapshot full of zeroes is the most misleading state
+     * this app can be in: it reads as "you have nothing" rather than as
+     * "nothing has been asked". */
+    const constructor = watcher.slice(watcher.indexOf('constructor('), watcher.indexOf('snapshot():'));
+    expect(constructor).toMatch(/stale: true/);
+  });
+
+  it('never picks a node for somebody', () => {
+    /* The default that other wallets ship as a constant. There is no constant
+     * here, and this fails if one appears. */
+    const store = readFileSync('src/state/store.tsx', 'utf8');
+    expect(store).toMatch(/NO_NODES: WatcherNodes = \{ btc: null, xmr: null \}/);
+    expect(nodes).toMatch(/no node set by/i);
+  });
+
+  it('says the node is not remembered, because it is not', () => {
+    expect(nodes).toMatch(/NOT REMEMBERED YET/);
+  });
+});
