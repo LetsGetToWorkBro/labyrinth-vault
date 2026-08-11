@@ -30,7 +30,8 @@ function recordingXmrNode(): { transport: Transport; calls: Request[] } {
 
 const RAW = Uint8Array.from({ length: 300 }, (_, i) => i & 0xff);
 const TXID = 'a'.repeat(64);
-const nodes = { btc: null, xmr: { url: 'https://node.example', name: 'test' } };
+/* The transport is injected directly, so no node config is needed here. */
+const nodes = { btc: null, xmr: null };
 
 describe('the Monero broadcast gate reads the transaction network', () => {
   it('refuses a mainnet spend and never touches the node', async () => {
