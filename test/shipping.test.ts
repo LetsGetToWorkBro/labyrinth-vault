@@ -177,6 +177,9 @@ describe('the wallet is shaped like something that can be uploaded', () => {
     };
   };
   const ios = app.expo.ios;
+  const walletPackage = JSON.parse(readFileSync('wallet/package.json', 'utf8')) as {
+    dependencies: Record<string, string>;
+  };
 
   it('has its own bundle identifier, an icon and a build number', () => {
     expect(ios.bundleIdentifier).toBe('vision.labyrinth.wallet');
@@ -202,5 +205,27 @@ describe('the wallet is shaped like something that can be uploaded', () => {
      * inconsistency. docs/shipping.md carries the reasoning. */
     expect(ios.infoPlist['ITSAppUsesNonExemptEncryption']).toBe(false);
     expect(readFileSync('docs/shipping.md', 'utf8')).toMatch(/watch only/i);
+  });
+
+  it('carries every dependency its own config leans on', () => {
+    /* Found by running `expo prebuild` on Linux rather than discovering it in
+     * the first Xcode session: the config's `backgroundColor` silently does
+     * nothing on iOS without expo-system-ui, and a dark app whose root view
+     * stays white flashes on every overscroll. The prebuild dry run is the
+     * check; this pins its finding. */
+    expect(walletPackage.dependencies['expo-system-ui']).toBeDefined();
+    /* And the two storage choices that carry privacy claims stay declared,
+     * not merely present transitively where a lockfile update could drop
+     * them. */
+    expect(walletPackage.dependencies['expo-file-system']).toBeDefined();
+    expect(walletPackage.dependencies['expo-secure-store']).toBeDefined();
+  });
+
+  it('never commits the generated native project', () => {
+    /* `wallet/ios` regenerates from app.json on every prebuild. Committing a
+     * copy freezes it against the config and the two drift; the config is the
+     * source, this suite is what holds the config, and the ignore rule is
+     * what keeps the copy out. */
+    expect(readFileSync('.gitignore', 'utf8')).toMatch(/wallet\/ios\//);
   });
 });

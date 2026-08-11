@@ -17,7 +17,7 @@ needs a Mac, and it is marked.
 | Icon | generated, committed | generated, committed |
 | Privacy manifest | four empty lists, tested | four empty lists, tested |
 | Export compliance | **yes**, mass market | **no**, and here is why |
-| Compiles | model only, the rest parsed | never built natively |
+| Compiles | model only, the rest parsed | prebuild proven; never compiled |
 
 ## Export compliance: the two apps have different true answers
 
@@ -102,6 +102,15 @@ npm test
 npx expo prebuild --platform ios --clean
 npx expo run:ios --configuration Release
 ```
+
+Prebuild itself has already been proven on Linux with `--no-install`, so the
+generated project is a known quantity: the camera usage string, the export
+compliance answer and the empty privacy manifest all land in the generated
+`Info.plist` and `PrivacyInfo.xcprivacy`, and the bundle identifier comes out
+as `vision.labyrinth.wallet`. What the dry run cannot do is run CocoaPods or
+the compiler, which is what the Mac step above is for. The generated `ios/`
+directory is deliberately not committed; it regenerates from `app.json`, and
+`test/shipping.test.ts` is what holds `app.json`.
 
 `--configuration Release` for the first run, not Debug. That is the
 configuration where `__DEV__` is false, which is the configuration where the
