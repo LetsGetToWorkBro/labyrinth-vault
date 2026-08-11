@@ -402,8 +402,20 @@ describe('the Swift a compiler can actually check', () => {
     expect(script).toMatch(/swift test/);
     /* A missing toolchain must skip loudly rather than either failing the
      * suite or passing silently. Both of those teach people to ignore it. */
-    expect(script).toMatch(/skipping/);
+    expect(script).toMatch(/being skipped/);
     expect(script).toMatch(/syntax only/);
+    /* And it must say how to stop having to skip. A check that reports its own
+     * absence and leaves you to work out the fix gets skipped forever. */
+    expect(script).toMatch(/install-swift\.sh/);
+    const install = readFileSync('scripts/install-swift.sh', 'utf8');
+    /* The toolchain compiles everything in this repository that ends up on a
+     * signing device, so it is checked twice and neither check is optional:
+     * the signature says the Swift project made it, the digest says it is the
+     * build this repository was checked against. */
+    expect(install).toMatch(/gpg --status-fd 1 --verify/);
+    expect(install).toMatch(/GOODSIG/);
+    expect(install).toMatch(/KEY_FINGERPRINT="[0-9A-F]{40}"/);
+    expect(install).toMatch(/SHA256="[0-9a-f]{64}"/);
   });
 });
 

@@ -32,9 +32,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# A toolchain put here by scripts/install-swift.sh is on nobody's PATH. Finding
+# it anyway is the difference between a check that runs and a check that runs
+# when somebody remembers to export something first.
+if ! command -v swift >/dev/null 2>&1 && [ -x "${SWIFT_PREFIX:-/opt/swift}/usr/bin/swift" ]; then
+  PATH="${SWIFT_PREFIX:-/opt/swift}/usr/bin:$PATH"
+  export PATH
+fi
+
 if ! command -v swift >/dev/null 2>&1; then
-  echo "swift-check: no Swift toolchain on PATH — skipping."
-  echo "             Install one from https://swift.org/download to run this."
+  echo "swift-check: no Swift toolchain on PATH, so this is being skipped."
+  echo "             ./scripts/install-swift.sh puts one in place, checked"
+  echo "             against the Swift project's signature and a pinned digest."
   echo "             (Everything else in the suite still ran.)"
   exit 0
 fi
@@ -84,6 +93,6 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "        parsed ${#apple_only[@]} files (syntax only — Xcode still has to type-check them)"
+echo "        parsed ${#apple_only[@]} files (syntax only, so Xcode still has to type-check them)"
 echo
 echo "swift-check: model compiled and tested; the rest parsed."

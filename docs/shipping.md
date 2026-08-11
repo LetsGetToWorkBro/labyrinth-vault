@@ -85,7 +85,11 @@ the fixtures the test target reads.
 
 Expect the first build to surface real errors. Everything that imports SwiftUI,
 JavaScriptCore, CryptoKit or CoreImage has only ever been *parsed*, because
-those frameworks exist nowhere but Apple's platforms. See
+those frameworks exist nowhere but Apple's platforms. The model layer is a
+different story: it really compiles and its tests really run, on Linux as
+easily as on a Mac, via `./scripts/install-swift.sh` and then
+`npm run swift:check`. Anything you can move out of the first group and into
+the second is a file a compiler starts checking. See
 [`../ios/README.md`](../ios/README.md) for what to expect and the two things
 worth running the moment it builds.
 
@@ -129,8 +133,14 @@ the whole send flow, watch the airgap work, and see a mismatch refused, but
 they cannot watch their own money. This is the gate for external testing, and
 it is a node client rather than a polish pass.
 
-**The vault has never been compiled.** Its model layer has, and passes twelve
-tests on any machine with a Swift toolchain. The screens have not.
+**The vault's screens have never been compiled.** Its model layer has, and
+passes twelve tests on any machine with a Swift toolchain, including a Linux
+container: `./scripts/install-swift.sh` fetches one, checks it against the
+Swift project's signature and a pinned digest, and `npm test` picks it up from
+there without any exporting. What no compiler off a Mac can reach is every
+file importing SwiftUI, JavaScriptCore, CryptoKit or CoreImage, which is the
+whole interface and the engine that runs the bundle. Those are parsed and
+nothing more, and Xcode is still the only thing that can say the app builds.
 
 **The vault alone is a limited test.** Without the wallet or Sparrow there is
 no transaction to sign, so a solo tester can make a vault, export a watch-only
