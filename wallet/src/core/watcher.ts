@@ -60,6 +60,7 @@ import {
   type SpendEvent,
 } from './moneroscan';
 import { live, type Transport } from '../net/http';
+import { moneroBroadcastGate } from './moneroreadiness';
 import * as esplora from '../net/esplora';
 import * as monerod from '../net/monerod';
 
@@ -702,6 +703,16 @@ export class NodeWatcher implements Watcher {
     const transport = asset === 'BTC' ? this.transports.btc : this.transports.xmr;
     if (!transport) {
       return { ok: false, txid: null, problem: `No ${asset} node is set, so there is nothing to broadcast through.` };
+    }
+
+    if (asset === 'XMR') {
+      /* The gate. A Monero spend may be built and signed as far as the
+       * verified pieces reach, but it is not broadcast with real value until a
+       * live node has accepted bytes this code produced. `core/moneroreadiness`
+       * carries the whole reasoning; this is the chokepoint it guards. The app
+       * is mainnet-only today, so the network is mainnet. */
+      const gate = moneroBroadcastGate('mainnet');
+      if (!gate.allowed) return { ok: false, txid: null, problem: gate.problem };
     }
 
     const hex = Array.from(raw, (byte) => byte.toString(16).padStart(2, '0')).join('');

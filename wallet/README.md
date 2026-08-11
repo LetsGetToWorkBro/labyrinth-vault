@@ -238,13 +238,22 @@ keeps the result in the device keychain; and the key image round trip above.
 Node addresses and the scan height live in one readable JSON file, and there
 are no keys in it, because the keys have a keychain.
 
-What does not exist yet:
+**Monero sending** is built up to its honest frontier. The online half is
+done and tested: decoy selection over the chain's output distribution
+(`core/decoys.ts`, matched to wallet2's gamma), coin selection and fee and the
+change-goes-home arithmetic that is the real money-loss surface
+(`core/monerospend.ts`), and the orchestration that assembles an unsigned set
+against a node (`core/moneroplan.ts`). The vault's CLSAG ring signature
+(`@vault/keys/monerosign`) round-trips and survives every adversarial tamper.
 
-1. **Monero sending.** The transport is finished: `XMRUNSIGNED` frames, and
-   BC-UR the way Cupcake animates it. What is missing is `wallet2`'s
-   unsigned-set format, which is not written on either side yet. Until it is, a Monero draft is tagged
-   `provisional`, the interface says so on screen, and `verifySigned` refuses it
-   outright rather than waving a stub through.
+What is not established anywhere without a live node is that a from-scratch
+Bulletproof+ range proof is accepted by the network, so the wallet refuses to
+broadcast a Monero spend with real value on mainnet until a stagenet
+acceptance is recorded. The gate is `core/moneroreadiness.ts`, it is a source
+constant rather than a flag, and [../docs/monero-send.md](../docs/monero-send.md)
+carries the whole argument, including why a range proof verified only against
+its own prover is exactly the unverifiable thing this repository refuses to
+write blind.
 
 See [SECURITY.md](../SECURITY.md) for the threat model of the system, and
 [docs/airgap-protocol.md](../docs/airgap-protocol.md) for what crosses between

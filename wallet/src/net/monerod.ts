@@ -600,3 +600,131 @@ export async function isKeyImageSpent(
     })),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Selecting decoys: the two calls a spend needs from the node
+//
+// A Monero spend hides each real input in a ring of decoys, chosen from the
+// chain's own distribution of outputs (core/decoys.ts). Choosing them needs
+// two things a node can answer and the airgapped vault cannot: how many
+// spendable outputs exist and at what ages, and the public key and commitment
+// of each chosen decoy. Both are ordinary reads, available on a restricted
+// node, and both are about the chain rather than about you.
+
+/** The cumulative count of RingCT outputs per block, for the gamma picker. */
+export interface OutputDistribution {
+  /** `distribution[i]` is the total RingCT outputs up to `startHeight + i`. */
+  cumulative: number[];
+  /** The height `cumulative[0]` counts up to. */
+  startHeight: number;
+}
+
+/**
+ * The RingCT output distribution, for choosing decoys by age.
+ *
+ * `amounts: [0]` is RingCT; every output since 2017 is amount-zero with a
+ * hidden value. `cumulative: true` asks for a running total rather than
+ * per-block counts, which is the form the gamma picker walks.
+ */
+export async function outputDistribution(
+  transport: Transport,
+  fromHeight: number,
+  toHeight: number,
+): Promise<Parsed<OutputDistribution>> {
+  const reply = await rpc<{
+    distributions?: { distribution?: unknown; start_height?: number; base?: number }[];
+  }>(transport, 'get_output_distribution', {
+    amounts: [0],
+    from_height: fromHeight,
+    to_height: toHeight,
+    cumulative: true,
+    binary: false,
+  });
+  if (!reply.ok) return reply;
+
+  const first = reply.value.distributions?.[0];
+  if (!first || !Array.isArray(first.distribution)) {
+    return { ok: false, problem: 'That node did not answer with an output distribution. A spend needs one; some restricted nodes do not serve it.' };
+  }
+  const base = typeof first.base === 'number' ? first.base : 0;
+  /* The node returns per-window counts on top of `base`; add the base back so
+   * `cumulative` is the true running total from the chain's start, which is
+   * what maps an age to a global output index. */
+  const cumulative = first.distribution.map((entry, index) => {
+    const value = Number(entry);
+    return (Number.isSafeInteger(value) ? value : 0) + (index === 0 ? base : 0);
+  });
+  /* Repair the running total: the node already made it cumulative, but adding
+   * base only to element 0 would understate the rest, so carry it forward. */
+  for (let i = 1; i < cumulative.length; i++) {
+    if (cumulative[i]! < cumulative[i - 1]!) cumulative[i] = cumulative[i - 1]!;
+  }
+  return {
+    ok: true,
+    value: { cumulative, startHeight: typeof first.start_height === 'number' ? first.start_height : fromHeight },
+  };
+}
+
+/** One output the node knows: its key, its commitment, whether it is spendable. */
+export interface ChainOutput {
+  /** Global output index, the handle everything else refers to. */
+  globalIndex: number;
+  /** The one-time public key, hex. */
+  key: string;
+  /** The amount commitment, hex. */
+  commitment: string;
+  /** True when the output is old enough to be spent. */
+  unlocked: boolean;
+  height: number;
+}
+
+/**
+ * Fetch the outputs at these global indices.
+ *
+ * `get_outs` is what a light wallet uses to assemble a ring, so it is on the
+ * restricted surface. The reply is one entry per requested index, in order,
+ * and this refuses an answer that does not line up: a ring assembled from
+ * mismatched keys and commitments would be a signature over nothing.
+ */
+export async function outs(
+  transport: Transport,
+  indices: readonly number[],
+): Promise<Parsed<ChainOutput[]>> {
+  if (indices.length === 0) return { ok: true, value: [] };
+  for (const index of indices) {
+    if (!Number.isSafeInteger(index) || index < 0) {
+      return { ok: false, problem: 'That is not an output index.' };
+    }
+  }
+
+  const reply = parseJson<{
+    outs?: { key?: string; mask?: string; unlocked?: boolean; height?: number }[];
+    status?: string;
+  }>(
+    await transport.send({
+      method: 'POST',
+      path: '/get_outs',
+      body: { outputs: indices.map((index) => ({ amount: 0, index })), get_txid: false },
+    }),
+  );
+  if (!reply.ok) return reply;
+  if (!Array.isArray(reply.value.outs) || reply.value.outs.length !== indices.length) {
+    return { ok: false, problem: 'That node did not answer once per output.' };
+  }
+
+  const out: ChainOutput[] = [];
+  for (let i = 0; i < indices.length; i++) {
+    const entry = reply.value.outs[i]!;
+    if (!/^[0-9a-f]{64}$/i.test(String(entry.key)) || !/^[0-9a-f]{64}$/i.test(String(entry.mask))) {
+      return { ok: false, problem: 'That node answered with an output that is not a key and a commitment.' };
+    }
+    out.push({
+      globalIndex: indices[i]!,
+      key: String(entry.key).toLowerCase(),
+      commitment: String(entry.mask).toLowerCase(),
+      unlocked: entry.unlocked === true,
+      height: typeof entry.height === 'number' ? entry.height : 0,
+    });
+  }
+  return { ok: true, value: out };
+}
