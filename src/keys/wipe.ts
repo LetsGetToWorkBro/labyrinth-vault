@@ -19,6 +19,17 @@
  *     diff rather than a default nobody chose. Some reveals are unavoidable —
  *     a recovery phrase has to be readable to be written down — and those are
  *     a short, greppable list instead of a property of every wallet object.
+ *   - `bigint` is as unwipeable as a string, and this one is not optional.
+ *     Signing does field and scalar arithmetic, and a secret scalar becomes a
+ *     `bigint` to be added or multiplied, and again to multiply a point, since
+ *     `@noble/curves` takes the scalar as one. Every such value is a fresh
+ *     heap allocation the engine frees on its own schedule and never zeroes,
+ *     and none of it is ours to reach. This is unavoidable for signing in
+ *     JavaScript: both the field math and the audited curve library speak
+ *     `bigint`, and rewriting either over wipeable buffers would be unanchored
+ *     crypto bought for partial credit, which this project refuses. The real
+ *     answer, if it is ever needed, is a native secure-memory signer, not a
+ *     patch here; `docs/monero-send.md` states the residue plainly.
  *   - Crossing a React Native bridge serialises and copies.
  *
  * So the real protections remain the outer ones: the device is offline, the
