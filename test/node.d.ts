@@ -13,6 +13,12 @@ declare module 'node:fs' {
     path: string,
     options: { withFileTypes: true },
   ): { name: string; isDirectory(): boolean }[];
+  /** Without options: just the names. Used to check a directory holds exactly
+   *  the store metadata fields App Store Connect asks for. */
+  export function readdirSync(path: string): string[];
+  /** For the shipping guards, which assert that a file a manifest or an asset
+   *  catalog *names* is a file that is actually there. */
+  export function existsSync(path: string): boolean;
   export function readFileSync(path: string, encoding: 'utf8'): string;
   /** Without an encoding: the bytes, for hashing and comparing artefacts. */
   export function readFileSync(path: string): {

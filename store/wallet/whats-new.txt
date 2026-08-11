@@ -1,0 +1,5 @@
+First TestFlight build.
+
+The complete interface: send, receive, activity, the vault pairing screen, the swap flow, and the state that matters most, which is a returned transaction that does not match the one that was approved.
+
+No node client yet. Every number you see is a fixture and the app labels it as one.

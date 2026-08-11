@@ -297,6 +297,22 @@ Next, in order:
    along with the reason none of it ships until it can be tested against a real
    Monero wallet rather than against itself.
 
+## Shipping
+
+[docs/shipping.md](docs/shipping.md) is the TestFlight runbook: what is done,
+what needs a Mac, and the export compliance question written out with its
+answer rather than left as a checkbox. The two apps answer that one
+differently, and the difference is correct.
+
+The App Store listing lives in [store/](store), one file per field, so the
+words are version controlled next to the code they describe and a review
+rejection is answered by editing a file.
+
+```sh
+npm run ship            # where both apps are
+npm run ship -- --bump  # raise both build numbers together
+```
+
 ## Running the tests
 
 ```sh

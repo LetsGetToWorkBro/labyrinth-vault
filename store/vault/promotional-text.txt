@@ -1,0 +1,1 @@
+Turn the old phone in your drawer into a hardware wallet. No network code at all: the only thing that leaves is a QR code you point a camera at.

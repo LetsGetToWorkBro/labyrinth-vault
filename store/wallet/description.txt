@@ -1,0 +1,31 @@
+Labyrinth Wallet is the everyday half of a two-device wallet. It watches your Bitcoin and Monero, builds the payments, and hands them to an airgapped vault on a second phone to be signed.
+
+It has never seen a private key and there is no screen that would accept one.
+
+WHAT IT IS ALLOWED TO KNOW
+
+An extended public key, a Monero view key, addresses, balances, unspent outputs, fee markets, history. Every one of those is public information, and none of it can move a coin. That is what lets this half live on the phone you carry, with a network and an app store on it.
+
+WHAT MAKES THE RETURN TRIP THE INTERESTING PART
+
+The obvious reading is that the vault is the careful half and this one is a display. The missing half of that thought: after the vault signs, the signed bytes come back through a camera into an app on a networked phone, and the thing that broadcasts is this device.
+
+So before anything is published, the wallet compares what came back against the intent it recorded before the vault ever saw it. The same coins, the same recipient, the same amount, the same fee, no extra outputs. A mismatch is terminal. There is no state in the app that can broadcast after one, which is why there is no "broadcast anyway" button: there is nowhere for it to lead.
+
+SWAPPING, AND WHAT NOTHING CAN CHECK
+
+A swap has an address in it that appears in no transaction, so it reaches no confirmation screen and the vault cannot help. That is the payout address, and the wallet derives it from your own account key rather than offering a field to paste one into. The order that comes back from the exchange is compared against the one that was sent, and a refusal produces no order at all, which means no address to deposit to.
+
+Once an order is verified the deposit is an ordinary payment, through the same vault and the same confirmation screen as anything else.
+
+A swap tells an exchange your IP address and two addresses you own. The app says so every time, not once.
+
+RECEIVING WORKS ALONE
+
+An address is public information derived from a public key, so a wallet with no keys can hand one out all day. Receiving needs no vault. Spending does. That asymmetry is the architecture, visible.
+
+THIS BUILD HAS NO NODE
+
+There is no chain client yet. Every balance, price, fee estimate and confirmation count comes from a fixture, and the app says DEMO DATA on screen for exactly as long as that is true. You can walk the whole send flow and watch the airgap work. You cannot watch your own money.
+
+Do not put money on this.

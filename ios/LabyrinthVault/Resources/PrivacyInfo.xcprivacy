@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PrivacyInfo.xcprivacy
+
+  Every list in this file is empty, and every empty list is the truth rather
+  than an omission.
+
+  The vault has no network layer at all, which is checked by a test that walks
+  the source on every run rather than asserted here. It collects nothing
+  because there is nowhere for anything to go. It tracks nothing because there
+  is no identifier to track with and no request to carry one.
+
+  The API list is empty because the app calls none of the required-reason APIs.
+  No user defaults, no file timestamps, no disk space, no boot time, no
+  keyboard list. Checked, not assumed: test/shipping.test.ts greps the Swift
+  for each of those families and fails if one appears without a matching
+  declaration here.
+
+  If any of that stops being true, this file is wrong and the test is what
+  will say so. An accurate manifest is a promise to somebody reading the App
+  Store listing, and it is the cheapest promise in the product to keep.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key>
+    <false/>
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array/>
+</dict>
+</plist>

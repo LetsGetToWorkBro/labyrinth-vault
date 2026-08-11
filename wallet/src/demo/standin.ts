@@ -40,8 +40,34 @@ import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import type { Draft } from '../core/model';
 
-/** Whether the stand-in exists at all in this build. */
-export const DEMO = true;
+/**
+ * Whether the stand-in exists at all in this build.
+ *
+ * `__DEV__` rather than a constant somebody has to remember to flip. Metro
+ * substitutes `false` for it in a release bundle and then removes the branch,
+ * so the code below is not merely unreachable in a TestFlight build, it is not
+ * in the build.
+ *
+ * Two honest limits on that claim, because it is the kind of claim worth being
+ * precise about.
+ *
+ * Dead-code elimination removes the *branches*. A top-level string constant is
+ * a different matter: `PUBLISHED_TEST_WORDS` may survive into the bundle even
+ * when nothing can reach it. So the guarantee that carries weight is not "the
+ * seed is absent", it is "the signer cannot be called": `standInVault` checks
+ * this flag itself and returns null, which is the same thing the UI does when
+ * no vault is paired.
+ *
+ * And a debug build installed on a phone still has all of it. That is what a
+ * debug build is for. The gate is about what a stranger installs from
+ * TestFlight, not about what sits on the desk it was written at.
+ */
+export const DEMO = typeof __DEV__ !== 'undefined' && __DEV__;
+
+/* Note which way the default falls. Where `__DEV__` is not defined at all,
+ * which is any context that is not a React Native bundle, this reads false and
+ * the stand-in is off. A flag that cannot be read should disable a signer
+ * holding a published seed, not enable one. */
 
 /** BIP84's published test vector. Empty, and everybody's. */
 export const PUBLISHED_TEST_WORDS =
@@ -64,6 +90,12 @@ export type StandinBehaviour =
  * being checked should agree only by both being right.
  */
 export function standInVault(draft: Draft, words: string, behavior: StandinBehaviour = 'sign'): Uint8Array | null {
+  /* The load-bearing half of the gate. Everything above this line can be
+   * argued about; this cannot. A release build returns null here, the caller
+   * treats it exactly as it treats a vault that refused, and no signature made
+   * from a seed published in a specification reaches a session. */
+  if (!DEMO) return null;
+
   if (!DEMO) return null;
   if (behavior === 'silent') return null;
   if (draft.asset !== 'BTC') return null;

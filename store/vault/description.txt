@@ -1,0 +1,37 @@
+Labyrinth Vault turns a phone you no longer use into an airgapped signing device for Bitcoin and Monero.
+
+Take the SIM out, turn the radios off, install this. It makes keys, keeps them, and signs what you approve. It is not a wallet in the usual sense: it does not watch the chain, it does not know your balance, and it cannot send anything on its own.
+
+NO NETWORK CODE
+
+Not "no network calls we know about". There is no networking layer in the app at all, so there is nothing to misconfigure and nothing to leak. The app asks for no network permission, which means the absence is something you can check in Settings rather than something we claim in a description.
+
+The only channel is the camera, in one direction at a time. Your everyday wallet shows an unsigned transaction as a QR code. The vault reads it, shows you what it does, and shows you a signed one back.
+
+THE CONFIRMATION SCREEN IS THE SECURITY
+
+The vault renders every transaction in full before anything is signed: every amount, every destination, the change, the fee. That screen is the whole point.
+
+It has to be. The online half of any airgap setup might be compromised, and if it is, it can hand over a transaction where every byte is valid and the money goes to someone else. No checksum catches that. No encryption catches that. A person reading the destination catches that.
+
+There is no "Sign" button that hides the details, because a build that hides them has thrown away the only defense it had.
+
+IT REFUSES
+
+Some transactions cannot be shown honestly, and those are not signed at all. An output that claims to be your change but pays somebody else. A transaction that will not say what its inputs are worth, so the fee is unknowable. A signature that would not commit to where the money goes. These get a refusal, not a warning to scroll past.
+
+Whether an output is yours is re-derived from your own key. It is never read from the file.
+
+IT CHECKS ITSELF, EVERY LAUNCH
+
+Before it will make or use a key, the app proves its own cryptography against published test vectors from NIST, from BIP84, from the Monero project, from libsodium and from the Argon2 reference implementation. If anything fails, nothing runs.
+
+AT REST
+
+Your seed is encrypted before it touches any store: Argon2id into XChaCha20-Poly1305, with the parameters authenticated alongside the ciphertext. There is no cloud, no account and no backup service.
+
+OPEN SOURCE
+
+Every claim above is a test in a public repository. Read it, break it, tell us what is wrong with it.
+
+This is early software and it has not been independently audited. Do not trust it with a balance you would miss.

@@ -1,0 +1,1 @@
+Watches the chain, builds the payments, hands them to an airgapped vault as QR codes, and checks what comes back before broadcasting it.

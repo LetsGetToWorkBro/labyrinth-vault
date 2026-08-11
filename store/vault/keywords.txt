@@ -1,0 +1,1 @@
+bitcoin,monero,airgap,cold storage,psbt,hardware wallet,offline,signing,seed,xmr,btc,security

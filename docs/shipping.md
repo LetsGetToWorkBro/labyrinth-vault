@@ -1,0 +1,153 @@
+# Shipping: TestFlight, and the questions that have real answers
+
+Two apps, one App Store Connect account, and a handful of questions where the
+convenient answer and the true answer are not the same. This document is the
+ordered runbook plus the reasoning behind the answers, so that the person
+filling in the forms is answering rather than clicking.
+
+Everything mechanical in here is already done in the repository. What is left
+needs a Mac, and it is marked.
+
+## The state of things
+
+| | Vault | Wallet |
+| --- | --- | --- |
+| Bundle id | `vision.labyrinth.vault` | `vision.labyrinth.wallet` |
+| Version / build | 0.1.0 (1) | 0.1.0 (1) |
+| Icon | generated, committed | generated, committed |
+| Privacy manifest | four empty lists, tested | four empty lists, tested |
+| Export compliance | **yes**, mass market | **no**, and here is why |
+| Compiles | model only, the rest parsed | never built natively |
+
+## Export compliance: the two apps have different true answers
+
+App Store Connect asks whether the app uses non-exempt encryption. Both apps
+now answer in their Info.plist so the question stops appearing on every upload.
+They answer differently, and that is correct rather than an inconsistency.
+
+**The wallet answers no.** It is watch only. It holds an extended public key, a
+Monero view key, addresses and balances, and there is no secret in it to
+protect. Its only cryptography is signature-shaped, and the stand-in signer is
+compiled out of a release build. Nothing in it encrypts data for
+confidentiality, so no non-exempt encryption is present.
+
+**The vault answers yes.** It encrypts a seed at rest with Argon2id and
+XChaCha20-Poly1305. That is data confidentiality. It is not authentication, not
+a digital signature, and not copy protection, which are the exempt uses people
+reach for. Answering no here would be a misstatement on a US export form, and
+it would be one made in writing.
+
+Answering yes does not mean paperwork forever. The vault qualifies as a mass
+market product under ECCN **5D992.c**, the ordinary category for publicly
+available encryption software. What that requires:
+
+1. **A self-classification report to BIS**, emailed to
+   `crypt-supp8@bis.doc.gov` and `enc@nsa.gov`, listing the product. It is a
+   spreadsheet in a documented format, submitted once and then annually by
+   1 February for anything shipped in the previous year.
+2. **No CCATS, no license.** 5D992.c mass market does not need either. The
+   self-classification report is the whole obligation.
+3. **France** has a separate declaration for encryption products distributed
+   there. Apple's export compliance questionnaire asks about it directly.
+
+Leave `ITSEncryptionExportComplianceCode` empty unless Apple issues one. It
+applies to apps that went through CCATS, and this one does not.
+
+None of this blocks a TestFlight build. It has to be true by the time the app
+is on the Store, and it is much cheaper to do once at the start than to unpick
+after a rejection.
+
+## Ordered runbook
+
+### 1. Register the two apps
+
+App Store Connect, two records, using the identifiers above. The organization
+enrollment is the prerequisite here: Apple requires wallet apps to come from a
+developer enrolled as an organization rather than an individual.
+
+Names, subtitles, descriptions and the rest of the metadata are written out in
+[`store/`](../store), one directory per app, so the words in the listing are
+version controlled next to the code they describe.
+
+### 2. Vault: generate and build (needs a Mac)
+
+```sh
+npm install
+npm test                 # rebuilds the engine, its digest, the icons, the fixtures
+brew install xcodegen
+cd ios && xcodegen generate && open LabyrinthVault.xcodeproj
+```
+
+`npm test` first is not housekeeping. It writes the engine's SHA-256 into
+`BundleDigest.swift`, and the app refuses to launch if the digest and the
+bundle disagree. It also regenerates the icons from the app's own geometry and
+the fixtures the test target reads.
+
+Expect the first build to surface real errors. Everything that imports SwiftUI,
+JavaScriptCore, CryptoKit or CoreImage has only ever been *parsed*, because
+those frameworks exist nowhere but Apple's platforms. See
+[`../ios/README.md`](../ios/README.md) for what to expect and the two things
+worth running the moment it builds.
+
+### 3. Wallet: prebuild and build (needs a Mac)
+
+```sh
+cd wallet
+npm ci
+npm test
+npx expo prebuild --platform ios --clean
+npx expo run:ios --configuration Release
+```
+
+`--configuration Release` for the first run, not Debug. That is the
+configuration where `__DEV__` is false, which is the configuration where the
+stand-in vault disappears, and the difference is worth seeing before an upload
+rather than after one.
+
+### 4. Archive and upload
+
+Xcode: Product, Archive, Distribute App, App Store Connect, Upload. Both apps.
+Signing is automatic once the team is set on each target.
+
+### 5. Internal testing first
+
+Internal TestFlight takes up to 100 testers who are members of your team and
+**skips Beta App Review entirely**. External testing takes up to 10,000 and
+requires review.
+
+Ship internal first, for both apps, for a reason that is not only speed: the
+wallet has no node client yet, so every balance and fee it shows is a fixture.
+An external tester who has not read this document will reasonably believe the
+numbers. Internal testers can be told.
+
+## What is not ready, honestly
+
+**The wallet has no chain behind it.** `src/core/demo.ts` supplies every
+balance, price, fee estimate and confirmation count, and the app says
+`DEMO DATA` on screen for exactly as long as that is true. A tester can walk
+the whole send flow, watch the airgap work, and see a mismatch refused, but
+they cannot watch their own money. This is the gate for external testing, and
+it is a node client rather than a polish pass.
+
+**The vault has never been compiled.** Its model layer has, and passes twelve
+tests on any machine with a Swift toolchain. The screens have not.
+
+**The vault alone is a limited test.** Without the wallet or Sparrow there is
+no transaction to sign, so a solo tester can make a vault, export a watch-only
+key, run the launch self-test and watch it refuse things. Pair the rollout with
+an instruction to point Sparrow at it, or all the feedback will be about the
+setup flow.
+
+## Build numbers
+
+`CFBundleVersion` and `ios.buildNumber` must rise on every upload. TestFlight
+orders builds by them and rejects a repeat. They are both at 1; bump both
+before the second upload of the same version.
+
+## The two things that stay true
+
+The vault has no network layer, and a test walks the source on every run to
+keep it that way. Both privacy manifests declare four empty lists, and
+`test/shipping.test.ts` checks each emptiness against the code rather than
+trusting the plist. If either of those becomes untrue, the suite says so before
+an upload does.

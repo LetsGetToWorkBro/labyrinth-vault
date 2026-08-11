@@ -8,9 +8,11 @@
   "scripts": {
     "test": "npm run build:bundle && vitest run && npm run swift:check",
     "typecheck": "tsc --noEmit",
-    "build:bundle": "node scripts/build-bundle.mjs && node scripts/emit-swift-fixtures.mjs",
+    "build:bundle": "node scripts/build-bundle.mjs && node scripts/emit-swift-fixtures.mjs && node scripts/make-icons.mjs",
     "bench:kdf": "node scripts/bench-kdf.mjs",
-    "swift:check": "bash scripts/swift-check.sh"
+    "swift:check": "bash scripts/swift-check.sh",
+    "icons": "node scripts/make-icons.mjs",
+    "ship": "node scripts/ship.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

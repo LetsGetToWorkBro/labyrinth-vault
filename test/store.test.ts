@@ -1,0 +1,116 @@
+/**
+ * The listing, against Apple's limits and against the truth.
+ *
+ * Two kinds of check, and the second is the one that matters.
+ *
+ * The limits are Apple's and they are hard. A subtitle of 31 characters is not
+ * a subtitle that gets shortened, it is a form that will not submit, found at
+ * the end of a release rather than at the start of one. Cheap to check here.
+ *
+ * The rest is about the listing telling the truth. A description is a promise
+ * made to somebody deciding whether to trust an app with money, and it is
+ * written months before the build it ships beside. The two claims most likely
+ * to go quietly false are the vault's "no network code" and the wallet's "the
+ * numbers are fixtures", so both are checked against the code rather than
+ * against a memory of the code.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+
+const read = (path: string) => readFileSync(path, 'utf8').trim();
+
+/** App Store Connect's limits, per field. */
+const LIMITS: Record<string, number> = {
+  'name.txt': 30,
+  'subtitle.txt': 30,
+  'promotional-text.txt': 170,
+  'keywords.txt': 100,
+  'description.txt': 4000,
+  'whats-new.txt': 4000,
+};
+
+describe('both listings are complete and fit', () => {
+  for (const app of ['vault', 'wallet']) {
+    describe(app, () => {
+      const dir = `store/${app}`;
+
+      it('has every field App Store Connect asks for', () => {
+        const present = readdirSync(dir).sort();
+        expect(present).toEqual([...Object.keys(LIMITS).sort(), 'review-notes.md'].sort());
+      });
+
+      for (const [file, limit] of Object.entries(LIMITS)) {
+        it(`${file} fits in ${limit} characters`, () => {
+          const text = read(`${dir}/${file}`);
+          expect(text.length, `${dir}/${file} is ${text.length} characters`).toBeLessThanOrEqual(limit);
+          expect(text.length, `${dir}/${file} is empty`).toBeGreaterThan(0);
+        });
+      }
+
+      it('keeps keywords comma separated with no wasted spaces', () => {
+        /* Apple counts the spaces. A hundred characters is not many and a
+         * space after every comma is a keyword thrown away. */
+        const keywords = read(`${dir}/keywords.txt`);
+        expect(keywords).not.toMatch(/, /);
+        expect(keywords.split(',').length).toBeGreaterThan(5);
+      });
+
+      it('has review notes, which is the field that decides how a review goes', () => {
+        const notes = read(`${dir}/review-notes.md`);
+        expect(notes.length).toBeGreaterThan(400);
+        // Both apps need the reviewer told how to exercise them without a
+        // second device, because neither is usable alone by default.
+        expect(notes).toMatch(/without a second device/i);
+        expect(notes).toMatch(/camera permission/i);
+        expect(notes).toMatch(/encryption/i);
+      });
+    });
+  }
+});
+
+describe('the listings say what the code does', () => {
+  it("the vault's no-network claim is the one the source guard enforces", () => {
+    const description = read('store/vault/description.txt');
+    expect(description).toMatch(/NO NETWORK CODE/);
+    /* The same claim is a test that walks the source on every run. If that
+     * test were ever deleted, this one would still pass, so the point here is
+     * narrower and still worth making: the guard file exists and the listing
+     * is not claiming something nothing checks. */
+    expect(existsSync('test/no-network.test.ts')).toBe(true);
+  });
+
+  it('the vault does not claim Monero signing, because it cannot do it', () => {
+    /* The most tempting overclaim in the product. Monero is keys, addresses
+     * and recovery phrases; spending needs four layers that are named in
+     * docs/monero-signing.md and not built. */
+    const description = read('store/vault/description.txt');
+    const whatsNew = read('store/vault/whats-new.txt');
+    expect(`${description}\n${whatsNew}`).toMatch(/cannot spend|Monero is keys/i);
+  });
+
+  it('the wallet says its numbers are fixtures, in the listing and on screen', () => {
+    const description = read('store/wallet/description.txt');
+    expect(description).toMatch(/DEMO DATA/);
+    expect(description).toMatch(/no (chain client|node)/i);
+    // And the screen it promises says it too.
+    expect(readFileSync('wallet/src/screens/Home.tsx', 'utf8')).toMatch(/DEMO DATA/);
+  });
+
+  it('the wallet review notes explain the stand-in before a reviewer finds it', () => {
+    /* A signer using a published seed, discovered by a reviewer who was not
+     * told, is a rejection. Told in advance, it is a demonstration. */
+    const notes = read('store/wallet/review-notes.md');
+    expect(notes).toMatch(/STAND-IN VAULT/);
+    expect(notes).toMatch(/BIP84/);
+    expect(notes).toMatch(/compiled out/);
+  });
+
+  it('neither listing promises something the other app does', () => {
+    /* They are two apps and they will be read side by side. The vault holds
+     * keys and the wallet does not, and that is the sentence a person needs
+     * to come away with. */
+    expect(read('store/wallet/description.txt')).toMatch(/never seen a private key/i);
+    expect(read('store/vault/description.txt')).toMatch(/does not watch the chain/i);
+  });
+});

@@ -1,0 +1,1 @@
+bitcoin,monero,watch only,airgap,vault,psbt,xpub,view key,swap,btc,xmr,privacy
