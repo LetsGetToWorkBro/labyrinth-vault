@@ -51,6 +51,7 @@ import {
   progressFraction,
   scan,
   scanOne,
+  toSpendable,
   totalReceived,
   SPEND_BLINDNESS,
 } from '../src/core/moneroscan';
@@ -254,7 +255,12 @@ function fakeNode(chain: FakeChain): Transport & { asked: string[]; heights: num
             status: 'OK',
             txs: wanted.flatMap((hash) => {
               const tx = byHash.get(hash);
-              return tx ? [{ tx_hash: hash, as_json: tx.json }] : [];
+              if (!tx) return [];
+              /* The node reports a global index per output; a plausible dense
+               * range is enough for the scan to record something spendable. */
+              const nOut = (JSON.parse(tx.json).vout as unknown[]).length;
+              const output_indices = Array.from({ length: nOut }, (_, i) => 2_000_000 + i);
+              return [{ tx_hash: hash, as_json: tx.json, output_indices }];
             }),
           }),
         };
@@ -520,10 +526,54 @@ describe('walking the chain', () => {
   });
 });
 
+describe('turning found outputs into spendable ones', () => {
+  const openBook = { isAvailable: () => true };
+
+  it('records the global index and commitment while scanning', async () => {
+    const node = fakeNode({ blocks: { 1: [payTo([1_000_000_000_000n])] }, tip: 1 });
+    const result = await scan(node, account, { birth: 1, height: 1 }, 1);
+    expect(result.received).toHaveLength(1);
+    const output = result.received[0]!;
+    /* The fake node hands back a global index and the tx a commitment; both
+     * are now on the found output, which is what spending needs. */
+    expect(output.globalIndex).toBe(2_000_000);
+    expect(output.commitment).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('promotes a fully-known output to a spendable one', async () => {
+    const node = fakeNode({ blocks: { 1: [payTo([2_000_000_000_000n])] }, tip: 1 });
+    const { received } = await scan(node, account, { birth: 1, height: 1 }, 1);
+    const spendable = toSpendable(received, openBook);
+    expect(spendable).toHaveLength(1);
+    expect(spendable[0]).toMatchObject({
+      globalIndex: 2_000_000,
+      amount: 2_000_000_000_000n,
+      indexInTx: 0,
+    });
+    expect(spendable[0]!.key).toMatch(/^[0-9a-f]{64}$/);
+    expect(spendable[0]!.commitment).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('leaves out an output with no known amount, index, or commitment', () => {
+    const base = { txid: 'a'.repeat(64), height: 1, index: 0, txPublicKey: 'p', at: 0, unknownBecause: null };
+    const noAmount = { ...base, key: 'k1', amount: null, globalIndex: 5, commitment: 'c'.repeat(64) };
+    const noIndex = { ...base, key: 'k2', amount: 5n, globalIndex: null, commitment: 'c'.repeat(64) };
+    const noCommit = { ...base, key: 'k3', amount: 5n, globalIndex: 5, commitment: '' };
+    expect(toSpendable([noAmount, noIndex, noCommit], openBook)).toHaveLength(0);
+  });
+
+  it('excludes an output the book has already locked', async () => {
+    const node = fakeNode({ blocks: { 1: [payTo([2_000_000_000_000n])] }, tip: 1 });
+    const { received } = await scan(node, account, { birth: 1, height: 1 }, 1);
+    const lockedBook = { isAvailable: (key: string) => key !== received[0]!.key };
+    expect(toSpendable(received, lockedBook)).toHaveLength(0);
+  });
+});
+
 describe('adding it up', () => {
-  const one = { txid: 'a'.repeat(64), height: 1, index: 0, key: 'k1', txPublicKey: 'p1', at: 0, amount: 100n, unknownBecause: null };
-  const two = { txid: 'a'.repeat(64), height: 1, index: 1, key: 'k2', txPublicKey: 'p1', at: 0, amount: 250n, unknownBecause: null };
-  const hidden = { txid: 'b'.repeat(64), height: 2, index: 0, key: 'k3', txPublicKey: 'p2', at: 0, amount: null, unknownBecause: 'no' };
+  const one = { txid: 'a'.repeat(64), height: 1, index: 0, key: 'k1', txPublicKey: 'p1', at: 0, amount: 100n, unknownBecause: null, globalIndex: null, commitment: '' };
+  const two = { txid: 'a'.repeat(64), height: 1, index: 1, key: 'k2', txPublicKey: 'p1', at: 0, amount: 250n, unknownBecause: null, globalIndex: null, commitment: '' };
+  const hidden = { txid: 'b'.repeat(64), height: 2, index: 0, key: 'k3', txPublicKey: 'p2', at: 0, amount: null, unknownBecause: 'no', globalIndex: null, commitment: '' };
 
   it('sums what it knows', () => {
     expect(totalReceived([one, two])).toEqual({ total: 350n, outputs: 2, counted: 2, unknown: 0 });

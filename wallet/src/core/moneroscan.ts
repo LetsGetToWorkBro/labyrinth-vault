@@ -73,6 +73,7 @@ import {
 } from '@vault/keys/monerocrypto';
 import { fromHex, toHex, parseAddress, publicFromSecret, canWatch } from '@vault/keys/monero';
 import type { Atoms } from './model';
+import type { SpendableOutput } from './monerospend';
 import type { Transport } from '../net/http';
 import {
   blockAt,
@@ -174,6 +175,11 @@ export interface Received {
   amount: Atoms | null;
   /** One sentence saying why the amount is unknown, when it is. */
   unknownBecause: string | null;
+  /** The output's global index, from the node, which a ring is built around.
+   *  Null when the node did not give one, which spending then refuses. */
+  globalIndex: number | null;
+  /** The output's Pedersen commitment, hex, needed to spend it. */
+  commitment: string;
 }
 
 /** A watched key image, seen on an input somewhere in the chain. */
@@ -377,6 +383,7 @@ export function scanOne(
     const owned = ownsWithDerivation(derivation, account.spendPublic, candidate);
     if (!owned) continue;
     const value = amountOf(tx, derivation, candidate.index, candidate.amount);
+    const globalIndex = tx.outputIndices[candidate.index];
     found.push({
       txid: tx.hash,
       height,
@@ -386,6 +393,8 @@ export function scanOne(
       at,
       amount: value.amount,
       unknownBecause: value.unknownBecause,
+      globalIndex: typeof globalIndex === 'number' && globalIndex >= 0 ? globalIndex : null,
+      commitment: tx.commitments[candidate.index] ?? '',
     });
   }
   return found;
@@ -500,6 +509,42 @@ export function totalReceived(found: readonly Received[]): ReceivedTotal {
     }
   }
   return { total, outputs: seen.size, counted, unknown };
+}
+
+/**
+ * A found output turned into one the spend path can use, when it can be.
+ *
+ * Spending needs three things a `Received` may or may not have: a known amount,
+ * a global index (the node gives one only for confirmed outputs), and a
+ * commitment. When any is missing the output is not spendable yet, and this
+ * says so rather than inventing a value, because a spend built on a guessed
+ * index or amount is one the network rejects at best. The `book` excludes
+ * anything already spent or in flight, so the result is what may be selected
+ * right now.
+ */
+export function toSpendable(
+  found: readonly Received[],
+  book: { isAvailable(oneTimeKey: string): boolean },
+): SpendableOutput[] {
+  const seen = new Map<string, Received>();
+  for (const entry of found) seen.set(outputKey(entry), entry);
+
+  const spendable: SpendableOutput[] = [];
+  for (const entry of seen.values()) {
+    if (entry.amount === null || entry.amount <= 0n) continue;
+    if (entry.globalIndex === null) continue;
+    if (entry.commitment.length !== 64) continue;
+    if (!book.isAvailable(entry.key)) continue;
+    spendable.push({
+      globalIndex: entry.globalIndex,
+      key: entry.key,
+      commitment: entry.commitment,
+      amount: entry.amount,
+      txPublicKey: entry.txPublicKey,
+      indexInTx: entry.index,
+    });
+  }
+  return spendable;
 }
 
 /**

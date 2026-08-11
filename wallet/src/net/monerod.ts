@@ -418,6 +418,13 @@ export interface ScannableTx {
   /** The Pedersen commitment for each output, hex, in output order. */
   commitments: string[];
   /**
+   * The global index of each output, in output order, from the node's
+   * `output_indices`. These are what a ring is built around, so an owned
+   * output cannot be spent without its own. Empty for an unconfirmed
+   * transaction, whose outputs have no global index yet.
+   */
+  outputIndices: number[];
+  /**
    * The key image on each input, which is how the chain names a spend.
    *
    * To anyone without the matching list, these are unlinkable points and
@@ -468,7 +475,7 @@ export async function transactions(
     }
   }
 
-  const reply = parseJson<{ txs?: { tx_hash?: string; as_json?: string }[]; status?: string }>(
+  const reply = parseJson<{ txs?: { tx_hash?: string; as_json?: string; output_indices?: number[] }[]; status?: string }>(
     await transport.send({
       method: 'POST',
       path: '/get_transactions',
@@ -530,6 +537,10 @@ export async function transactions(
       .map((vin) => hexOrNull(vin?.key?.k_image, 32))
       .filter((image): image is string => image !== null);
 
+    const outputIndices = Array.isArray(entry.output_indices)
+      ? entry.output_indices.map((index) => (Number.isInteger(index) && index >= 0 ? index : -1))
+      : [];
+
     out.push({
       hash,
       outputs,
@@ -537,6 +548,7 @@ export async function transactions(
       rctType: typeof rct?.type === 'number' ? rct.type : 0,
       ecdh: (rct?.ecdhInfo ?? []).map((entry) => hexOrNull(entry?.amount) ?? ''),
       commitments,
+      outputIndices,
       spends,
     });
   }
