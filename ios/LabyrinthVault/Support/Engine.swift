@@ -203,7 +203,11 @@ final class Engine {
         let payload: String?
     }
     struct DescribeReply: Decodable { let summary: TxSummary }
-    struct SignReply: Decodable {
+    /// Equatable because `Route` carries it and `Route` is Equatable: the
+    /// screens compare routes for their animation identity, and a reply that
+    /// was not comparable would make the enum uncompilable rather than merely
+    /// awkward. Every field already is.
+    struct SignReply: Decodable, Equatable {
         let signed: Int
         let txid: String?
         let frames: [String]?
@@ -213,7 +217,8 @@ final class Engine {
         struct Params: Decodable { let t: Int; let m: Int; let p: Int }
     }
     struct CheckReply: Decodable { let state: String; let note: String? }
-    struct KeyImagesReply: Decodable {
+    /// Equatable for the same reason as `SignReply`: `Route.keyImages` carries it.
+    struct KeyImagesReply: Decodable, Equatable {
         let answered: Int
         let refused: Int
         let frames: [String]

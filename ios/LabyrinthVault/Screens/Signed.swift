@@ -7,9 +7,11 @@
 import SwiftUI
 
 struct SignedView: View {
+    // Declaration order is the memberwise-init order, and the router builds
+    // this as `SignedView(tx:result:)`. Keep `tx` first so the two agree.
+    let tx: TxSummary
     let result: Engine.SignReply
     @EnvironmentObject private var vault: Vault
-    let tx: TxSummary
 
     var body: some View {
         Screen {
@@ -54,9 +56,10 @@ struct SignedView: View {
 }
 
 struct SignedQRView: View {
+    // Same order contract as SignedView: the router builds `SignedQRView(tx:result:)`.
+    let tx: TxSummary
     let result: Engine.SignReply
     @EnvironmentObject private var vault: Vault
-    let tx: TxSummary
 
     /// STAGED: on device these are the real TXSIGNED frames from the envelope
     /// encoder in src/airgap/envelope.ts. Twelve frames, same wire format.

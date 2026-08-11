@@ -11,7 +11,10 @@
 //
 //  2. The destination zone. The destination is the one thing an attacker must
 //     change to steal, so it is the one thing given a zone of its own:
-//     full-width, full-string, never truncated, never behind a disclosure.
+//     full-width, full-string, never truncated, never behind a disclosure. A
+//     transaction can pay several people, and every one of them gets its own
+//     zone rather than a summary, because a summary is where the payee nobody
+//     approved goes to hide.
 //
 //  3. The digest. What continues to approval is the summary plus its digest,
 //     so the thing that gets signed is provably the thing that was read.
@@ -26,6 +29,7 @@ struct ReviewView: View {
     @State private var armed = false
 
     private var stage: Int { progress >= 0.985 ? 2 : progress > 0.05 ? 1 : 0 }
+    private var unit: String { tx.asset.rawValue }
 
     var body: some View {
         Screen {
@@ -36,7 +40,7 @@ struct ReviewView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             header
                             sending
-                            DestinationZone(tx: tx) { vault.go(.destination(tx)) }
+                            destinations
                             feeSection
                             changeSection
                             structureSection
@@ -120,17 +124,21 @@ struct ReviewView: View {
         .padding(.bottom, 26)
     }
 
+    /// The amount leaving to other people. `leaving` is the sum paid to every
+    /// payee, which is the number this screen is about; the fee sits in its own
+    /// section and the change comes back, so neither belongs in this figure.
     private var sending: some View {
         VStack(alignment: .leading, spacing: 0) {
             Hairline(weight: 2, color: Ink.ruleHeavy)
-            Eyebrow("SENDING").padding(.top, 28)
-            Text(tx.sendAmount)
+            Eyebrow(tx.paysSeveral ? "SENDING TO \(tx.payees.count) RECIPIENTS" : "SENDING")
+                .padding(.top, 28)
+            Text(tx.leaving)
                 .font(Type.readout(58))
                 .foregroundStyle(Ink.paper)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
                 .padding(.top, 14)
-            Text(tx.asset.rawValue)
+            Text(unit)
                 .font(.system(size: 20, weight: .semibold))
                 .kerning(2)
                 .foregroundStyle(tx.asset.color)
@@ -148,12 +156,45 @@ struct ReviewView: View {
         }
     }
 
+    /// One destination zone per payee. A single-payee spend reads exactly as it
+    /// did before; a multi-payee one lists every recipient rather than folding
+    /// them into a count, because the recipient that is not shown is the one
+    /// that gets stolen to.
+    @ViewBuilder private var destinations: some View {
+        let payees = tx.payees
+        if payees.isEmpty {
+            // A spend with no external output: everything returns to the wallet
+            // (a consolidation or a self-send). Say so plainly.
+            VStack(alignment: .leading, spacing: 8) {
+                Hairline(weight: 2, color: Ink.ruleHeavy)
+                Eyebrow("NO EXTERNAL RECIPIENT").padding(.top, 24)
+                Text("Every output of this transaction returns to your own wallet. " +
+                     "Nothing leaves to anyone else.")
+                    .font(Type.body(13.5))
+                    .lineSpacing(4)
+                    .foregroundStyle(Ink.paperDim)
+                    .padding(.top, 8)
+                    .padding(.bottom, 26)
+            }
+        } else {
+            ForEach(payees.indices, id: \.self) { i in
+                DestinationZone(
+                    payee: payees[i],
+                    unit: unit,
+                    label: payees.count > 1 ? "RECIPIENT \(i + 1)" : "DESTINATION"
+                ) {
+                    vault.go(.destination(tx, payees[i]))
+                }
+            }
+        }
+    }
+
     private var feeSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Eyebrow("FEE").padding(.top, 32)
-            amountLine(tx.fee, unit: tx.asset.rawValue)
-            FieldRow(label: "SHARE OF AMOUNT", value: tx.feeShare).padding(.top, 12)
-            FieldRow(label: "RATE", value: tx.feeRate)
+            amountLine(tx.fee ?? "0", unit: unit)
+            FieldRow(label: "SHARE OF AMOUNT", value: tx.feeShare ?? "N/A").padding(.top, 12)
+            FieldRow(label: "RATE", value: tx.feeRate ?? "N/A")
             FieldRow(label: "VIRTUAL SIZE", value: tx.vsize)
             FieldRow(label: "INPUT VALUES", value: "ALL KNOWN", tone: .verified)
             Text("The fee is not written in a transaction — it is what is left over. The " +
@@ -166,42 +207,60 @@ struct ReviewView: View {
         }
     }
 
-    private var changeSection: some View {
+    /// Change can be more than one output too. List each: the amount, the
+    /// address the vault re-derived, and where it derived it from.
+    @ViewBuilder private var changeSection: some View {
+        let change = tx.change
         VStack(alignment: .leading, spacing: 0) {
-            Eyebrow("CHANGE RETURNING TO YOU").padding(.top, 32)
-            amountLine(tx.change, unit: tx.asset.rawValue)
-            Text(tx.changeAddress)
-                .font(Type.mono(12.5))
-                .kerning(0.4)
-                .lineSpacing(5)
-                .foregroundStyle(Ink.paperDim)
-                .padding(.top, 12)
-            FieldRow(label: "DERIVED AT", value: tx.changePath).padding(.top, 10)
-            FieldRow(label: "SCRIPT RE-DERIVED HERE", value: "MATCHES", tone: .verified)
-            Text("The transaction claims this output is yours. The vault ignored that claim " +
-                 "and rebuilt the address from its own key. The two agree, so it is yours.")
-                .font(Type.body(13.5))
-                .lineSpacing(4)
-                .foregroundStyle(Ink.paperDim)
-                .padding(.top, 14)
+            Eyebrow(change.count > 1 ? "CHANGE RETURNING TO YOU (\(change.count))"
+                                     : "CHANGE RETURNING TO YOU").padding(.top, 32)
+            if change.isEmpty {
+                Text("None. The entire input value leaves as payment and fee, with " +
+                     "nothing returning to this wallet.")
+                    .font(Type.body(13.5))
+                    .lineSpacing(4)
+                    .foregroundStyle(Ink.paperDim)
+                    .padding(.top, 12)
+            } else {
+                ForEach(change.indices, id: \.self) { i in
+                    let out = change[i]
+                    amountLine(out.amount, unit: unit)
+                    Text(out.address ?? "(no readable address)")
+                        .font(Type.mono(12.5))
+                        .kerning(0.4)
+                        .lineSpacing(5)
+                        .foregroundStyle(Ink.paperDim)
+                        .padding(.top, 12)
+                    FieldRow(label: "DERIVED AT", value: out.path ?? "UNKNOWN").padding(.top, 10)
+                    FieldRow(label: "SCRIPT RE-DERIVED HERE", value: "MATCHES", tone: .verified)
+                    if i < change.count - 1 {
+                        Hairline().padding(.vertical, 16)
+                    }
+                }
+                Text("The transaction claims these outputs are yours. The vault ignored that " +
+                     "claim and rebuilt each address from its own key. They agree, so they are yours.")
+                    .font(Type.body(13.5))
+                    .lineSpacing(4)
+                    .foregroundStyle(Ink.paperDim)
+                    .padding(.top, 14)
+            }
         }
     }
 
     private var structureSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Eyebrow("STRUCTURE").padding(.top, 32).padding(.bottom, 8)
-            FieldRow(label: "INPUTS", value: "\(tx.inputs)")
-            FieldRow(label: "OUTPUTS", value: "\(tx.outputs)")
-            FieldRow(label: "TOTAL IN", value: "\(tx.totalIn) \(tx.asset.rawValue)")
-            FieldRow(label: "LOCKTIME", value: "NONE")
-            FieldRow(label: "RBF SIGNALLED", value: tx.rbf ? "YES" : "NO")
+            FieldRow(label: "INPUTS", value: "\(tx.inputs.count)")
+            FieldRow(label: "OUTPUTS", value: "\(tx.outputs.count)")
+            FieldRow(label: "TOTAL IN", value: "\(tx.spending) \(unit)")
+            FieldRow(label: "RETURNING TO YOU", value: "\(tx.returning) \(unit)")
         }
     }
 
     private var checksSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Eyebrow("WHAT THE VAULT CHECKED").padding(.top, 32).padding(.bottom, 8)
-            Attestation(text: "CHANGE OUTPUT IDENTIFIED BY OWN DERIVATION")
+            Attestation(text: "CHANGE OUTPUTS IDENTIFIED BY OWN DERIVATION")
             Attestation(text: "EVERY INPUT VALUE KNOWN")
             Attestation(text: "FEE CALCULATED, NOT ASSERTED")
             Attestation(text: "TRANSACTION DIGEST MATCHED")
@@ -221,20 +280,23 @@ struct ReviewView: View {
 
 /// The human verification zone: heavier top rule, its own surface, the tag
 /// breaking the rule, and the address at inspection size with weighted ends.
+/// One payee per zone; the amount going to it sits under the address.
 struct DestinationZone: View {
-    let tx: TxSummary
+    let payee: TxOutput
+    let unit: String
+    var label: String = "DESTINATION"
     var onInspect: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            AddressText(address: tx.destination)
+            AddressText(address: payee.address ?? "(no readable address)")
                 .foregroundStyle(Ink.paper)
                 .padding(.top, 30)
             Hairline().padding(.top, 22).padding(.bottom, 16)
             HStack {
-                Eyebrow("TYPE")
+                Eyebrow("AMOUNT")
                 Spacer()
-                Text(tx.destinationType)
+                Text("\(payee.amount) \(unit)")
                     .font(Type.mono(12))
                     .foregroundStyle(Ink.paperDim)
             }
@@ -265,7 +327,7 @@ struct DestinationZone: View {
         .background(Ink.surface)
         .overlay(alignment: .top) { Hairline(weight: 2, color: Ink.ruleHeavy) }
         .overlay(alignment: .topLeading) {
-            Eyebrow("DESTINATION", color: Ink.paper)
+            Eyebrow(label, color: Ink.paper)
                 .padding(.trailing, 8)
                 .background(Ink.void)
                 .offset(x: 24, y: -6)
@@ -280,6 +342,12 @@ struct DestinationZone: View {
 struct DestinationView: View {
     @EnvironmentObject private var vault: Vault
     let tx: TxSummary
+    let output: TxOutput
+
+    /// The address being inspected, or an empty string when the output has
+    /// none. A payee with no readable address is fatal upstream; here it just
+    /// means nothing to chunk.
+    private var address: String { output.address ?? "" }
 
     var body: some View {
         Screen {
@@ -325,7 +393,7 @@ struct DestinationView: View {
 
                         VStack(alignment: .leading, spacing: 10) {
                             Eyebrow("FULL STRING")
-                            Text(tx.destination)
+                            Text(address)
                                 .font(Type.mono(12.5))
                                 .lineSpacing(5)
                                 .foregroundStyle(Ink.paper)
@@ -347,10 +415,10 @@ struct DestinationView: View {
     }
 
     private var chunks: [String] {
-        stride(from: 0, to: tx.destination.count, by: 4).map { i in
-            let s = tx.destination.index(tx.destination.startIndex, offsetBy: i)
-            let e = tx.destination.index(s, offsetBy: min(4, tx.destination.count - i))
-            return String(tx.destination[s..<e])
+        stride(from: 0, to: address.count, by: 4).map { i in
+            let s = address.index(address.startIndex, offsetBy: i)
+            let e = address.index(s, offsetBy: min(4, address.count - i))
+            return String(address[s..<e])
         }
     }
 }
@@ -365,6 +433,17 @@ struct ApproveView: View {
     @State private var attested: Set<String> = []
     private let required = ["THE DESTINATION", "THE AMOUNT", "THE FEE", "THE CHANGE"]
 
+    /// A one-line answer to "to whom": the single payee's tail, or a count when
+    /// there is more than one and no single tail can stand for all of them.
+    private var toLine: String {
+        let payees = tx.payees
+        if payees.count == 1, let address = payees[0].address {
+            return "…" + address.suffix(10)
+        }
+        if payees.isEmpty { return "SELF" }
+        return "\(payees.count) RECIPIENTS"
+    }
+
     var body: some View {
         Screen {
             VStack(spacing: 0) {
@@ -378,9 +457,9 @@ struct ApproveView: View {
                             attestRow(line)
                         }
 
-                        FieldRow(label: "AMOUNT", value: "\(tx.sendAmount) \(tx.asset.rawValue)").padding(.top, 22)
-                        FieldRow(label: "TO", value: "…" + tx.destination.suffix(10))
-                        FieldRow(label: "FEE", value: "\(tx.fee) \(tx.asset.rawValue)")
+                        FieldRow(label: "AMOUNT", value: "\(tx.leaving) \(tx.asset.rawValue)").padding(.top, 22)
+                        FieldRow(label: "TO", value: toLine)
+                        FieldRow(label: "FEE", value: "\(tx.fee ?? "0") \(tx.asset.rawValue)")
                         FieldRow(label: "SUMMARY DIGEST", value: reviewedDigest)
 
                         Text("The signature will be taken over these bytes and no others. If " +
