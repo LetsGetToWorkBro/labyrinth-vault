@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { executeMoneroSend } from '../src/core/monerosend';
+import { KeyImageBook } from '../src/core/keyimages';
 import type { SpendableOutput } from '../src/core/monerospend';
 import { signingRandomCount } from '@vault/keys/monerobuild';
 import {
@@ -186,6 +187,36 @@ describe('the cold-signing loop end to end', () => {
       expect(result.stage).toBe('broadcast');
       expect(result.problem).toMatch(/fee is below/);
     }
+  });
+
+  it('locks a spent output so a second send cannot reuse it', { timeout: 30_000 }, async () => {
+    const input = fundSender(2_000_000_000_000n, 1_500_010, 0xf020);
+    const node = fakeNode(input);
+    const book = new KeyImageBook();
+    const params = {
+      transport: node.transport,
+      ownAddress: sender.address,
+      network: 'stagenet' as const,
+      owned: [input],
+      destinations: [{ address: receiver.address, amount: 500_000_000_000n }],
+      feePerByte: 10n,
+      uniform: rng(0x1234),
+      sign: vaultSigner(sender),
+      guard: book,
+    };
+
+    const first = await executeMoneroSend(params);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    /* The spend locked its input; the book now knows it is in flight. */
+    expect(first.spentOutputKeys).toContain(input.key);
+    expect(book.isAvailable(input.key)).toBe(false);
+
+    /* A second send with the same single owned output has nothing to spend,
+     * because the guard removed the in-flight coin before planning. */
+    const second = await executeMoneroSend(params);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.stage).toBe('plan');
   });
 
   it('reports a planning refusal when the coins cannot cover the send', async () => {

@@ -105,6 +105,11 @@ export class KeyImageBook {
   private readonly imported = new Map<string, string>();
   private readonly spentImages = new Set<string>();
   private readonly settled = new Set<string>();
+  /** One-time keys of outputs this wallet has broadcast a spend for, which the
+   *  chain has not yet confirmed. They must not be selected into a second
+   *  spend, or the wallet builds a double spend the network rejects and the
+   *  person cannot tell why. Cleared once the spend is seen on the chain. */
+  private readonly pendingKeys = new Set<string>();
 
   /** Accept a vault reply, keeping only images for outputs in `known`. */
   offerReply(payload: Uint8Array, known: ReadonlySet<string>): ImportOutcome {
@@ -155,6 +160,38 @@ export class KeyImageBook {
   isSpent(oneTimeKey: string): boolean {
     const image = this.imported.get(oneTimeKey);
     return image !== undefined && this.spentImages.has(image);
+  }
+
+  /**
+   * Mark outputs as spent-but-unconfirmed after a broadcast.
+   *
+   * The chain has not seen the spend yet, so these outputs are not `isSpent`,
+   * but they are gone: selecting them again builds a double spend. This is the
+   * guard between broadcasting and the next scan.
+   */
+  markPending(oneTimeKeys: readonly string[]): void {
+    for (const key of oneTimeKeys) this.pendingKeys.add(key.toLowerCase());
+  }
+
+  /** Is this output in flight: broadcast by us, not yet confirmed on chain? */
+  isPending(oneTimeKey: string): boolean {
+    if (this.isSpent(oneTimeKey)) return false;
+    return this.pendingKeys.has(oneTimeKey.toLowerCase());
+  }
+
+  /**
+   * Spendable right now: not confirmed spent, and not in flight from a spend
+   * this wallet already broadcast. What coin selection is allowed to choose.
+   */
+  isAvailable(oneTimeKey: string): boolean {
+    return !this.isSpent(oneTimeKey) && !this.isPending(oneTimeKey);
+  }
+
+  /** Drop pending markers whose spend the chain has now confirmed. */
+  reconcilePending(): void {
+    for (const key of [...this.pendingKeys]) {
+      if (this.isSpent(key)) this.pendingKeys.delete(key);
+    }
   }
 
   /** Does this one-time key have an image yet? */

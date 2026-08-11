@@ -301,6 +301,39 @@ describe('the book', () => {
     expect(empty.ok).toBe(false);
   });
 
+  it('locks an output the moment a spend of it is broadcast', () => {
+    const book = new KeyImageBook();
+    const key = 'a'.repeat(64);
+    expect(book.isAvailable(key)).toBe(true);
+    book.markPending([key]);
+    /* In flight: not confirmed spent, but no longer selectable. */
+    expect(book.isPending(key)).toBe(true);
+    expect(book.isAvailable(key)).toBe(false);
+    expect(book.isSpent(key)).toBe(false);
+  });
+
+  it('clears the lock once the chain confirms the spend', async () => {
+    const found = await foundOutputs();
+    const book = new KeyImageBook();
+    book.offerReply(vaultReplyFor(found), new Set(found.map((r) => r.key)));
+    const output = found[0]!;
+    book.markPending([output.key]);
+    expect(book.isAvailable(output.key)).toBe(false);
+    /* The scan sees the image spending; the pending lock gives way to the
+     * confirmed spend, and reconcile drops the now-redundant marker. */
+    book.markSpent([book.imageFor(output.key)!]);
+    book.reconcilePending();
+    expect(book.isPending(output.key)).toBe(false);
+    expect(book.isSpent(output.key)).toBe(true);
+    expect(book.isAvailable(output.key)).toBe(false);
+  });
+
+  it('is case-insensitive about the keys it locks', () => {
+    const book = new KeyImageBook();
+    book.markPending(['AB'.repeat(32)]);
+    expect(book.isPending('ab'.repeat(32))).toBe(true);
+  });
+
   it('deduplicates outputs found by overlapping scans', async () => {
     const found = await foundOutputs();
     const request = buildOutputsRequest([...found, ...found, ...found]);

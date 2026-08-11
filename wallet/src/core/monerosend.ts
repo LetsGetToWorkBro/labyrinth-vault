@@ -33,6 +33,17 @@ import {
 } from './monerospend';
 import type { Transport } from '../net/http';
 
+/**
+ * What keeps a broadcast spend from being spent again before the chain
+ * confirms it. `KeyImageBook` satisfies this; the loop only needs these two.
+ */
+export interface SpendGuard {
+  /** May this output be selected now? False for confirmed or in-flight spends. */
+  isAvailable(oneTimeKey: string): boolean;
+  /** Lock these outputs after a broadcast, until the next scan confirms them. */
+  markPending(oneTimeKeys: readonly string[]): void;
+}
+
 export interface SendParams {
   transport: Transport;
   /** The account's own address, where change and any padding output go. */
@@ -51,6 +62,13 @@ export interface SendParams {
    * vault; in a dry run it is a direct call to the vault signer.
    */
   sign: (unsignedSet: Uint8Array) => Promise<Uint8Array>;
+  /**
+   * The double-spend guard. When present, its locked outputs are excluded from
+   * selection before planning, and the spent outputs are locked into it after a
+   * successful broadcast, so a second spend cannot pick the same coins before
+   * the next scan.
+   */
+  guard?: SpendGuard;
   ringSize?: number;
   multiplier?: number;
 }
@@ -58,7 +76,7 @@ export interface SendParams {
 export type SendStage = 'gate' | 'plan' | 'sign' | 'broadcast';
 
 export type SendResult =
-  | { ok: true; txid: string; tx: SignedTx }
+  | { ok: true; txid: string; tx: SignedTx; spentOutputKeys: string[] }
   | { ok: false; stage: SendStage; problem: string };
 
 /**
@@ -75,11 +93,18 @@ export async function executeMoneroSend(params: SendParams): Promise<SendResult>
   const gate = moneroBroadcastGate(network);
   if (!gate.allowed) return { ok: false, stage: 'gate', problem: gate.problem };
 
+  /* Outputs already spent, or in flight from a spend this wallet broadcast and
+   * the chain has not yet confirmed, are off the table. Selecting one would
+   * build a double spend that no node relays. */
+  const owned = params.guard
+    ? params.owned.filter((o) => params.guard!.isAvailable(o.key))
+    : params.owned;
+
   const plan = await planMoneroSpend({
     transport,
     ownAddress: params.ownAddress,
     network,
-    owned: params.owned,
+    owned,
     destinations: params.destinations,
     feePerByte: params.feePerByte,
     uniform: params.uniform,
@@ -87,6 +112,10 @@ export async function executeMoneroSend(params: SendParams): Promise<SendResult>
     ...(params.multiplier !== undefined ? { multiplier: params.multiplier } : {}),
   });
   if (!plan.ok) return { ok: false, stage: 'plan', problem: plan.problem };
+
+  /* The one-time keys of the outputs being spent, from the real ring position
+   * of each input. These are what the guard locks after a successful send. */
+  const spentOutputKeys = plan.set.inputs.map((input) => input.ring[input.realPosition]!.key);
 
   let signedBytes: Uint8Array;
   try {
@@ -112,5 +141,9 @@ export async function executeMoneroSend(params: SendParams): Promise<SendResult>
   const relayed = await monerod.broadcast(transport, tx.hex);
   if (!relayed.ok) return { ok: false, stage: 'broadcast', problem: relayed.problem };
 
-  return { ok: true, txid: tx.txid, tx };
+  /* The spend is on the network. Lock its inputs so the next spend, before the
+   * scan has caught up, cannot pick the same coins. */
+  params.guard?.markPending(spentOutputKeys);
+
+  return { ok: true, txid: tx.txid, tx, spentOutputKeys };
 }
