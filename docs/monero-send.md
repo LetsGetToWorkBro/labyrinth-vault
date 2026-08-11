@@ -43,6 +43,13 @@ where the online device never touches a spend key.
   (message, ring key, commitment, pseudo-out, response scalar, key image)
   breaks verification. Its domain constants are transcribed from Monero's
   `rctSigs.cpp`.
+- `bulletproofplus.ts` verifies the range proof, and it is anchored the hard
+  way: against three real Bulletproof+ proofs pulled from mainnet transactions,
+  in `test/fixtures/bulletproof-plus.json`. It accepts every proof the network
+  accepted and rejects the moment any field is disturbed, so it agrees with
+  consensus about what a valid range proof is. That is a stronger check than a
+  round trip against a prover of one's own, and it is what a prover can be built
+  against next.
 
 ## Where a mistake loses money, and where it does not
 
@@ -72,14 +79,22 @@ environment reaches. The one thing it cannot establish is that a real monerod
 accepts the bytes.
 
 A complete broadcastable transaction also needs a **Bulletproof+ range proof**
-over the output commitments. Generating one is a few hundred lines of
+over the output commitments. Verifying one is a few hundred lines of
 inner-product-argument arithmetic whose Fiat-Shamir transcript must match the
-network's exactly, and the only oracle for "exactly" is a live node. A
-from-scratch Bulletproof+ verified only by round-trip against its own prover is
-precisely the "unverifiable thing with no real blobs to check against" that
-this repository refused when it put the chain scan on the JSON path instead of
-an epee decoder. Writing it blind and shipping it behind a sign button would be
-the same mistake wearing a different hat, so it is not written blind.
+network's exactly, and the only honest oracle for "exactly" is the chain
+itself. So the verifier was not written blind: it is checked against real
+mainnet proofs, and the transcription was corrected until it accepted them.
+That work already paid for itself once. The generators are
+`8 * fromfe(keccak(keccak(...)))`, two Keccak rounds because `rct::hash_to_p3`
+hashes the argument that `get_exponent` had already hashed, and a verifier
+written from the algorithm alone would have used one round, produced generators
+that look perfectly valid, and rejected every real proof with no clue why. The
+fixtures are the clue. What is still missing is the **prover**: a from-scratch
+Bulletproof+ verified only by round-trip against its own verifier would be the
+"unverifiable thing with no real blobs to check against" that this repository
+refused when it put the chain scan on the JSON path instead of an epee decoder.
+The consensus-anchored verifier is what a prover gets checked against, so the
+prover is the next step, not a blind one.
 
 ## The gate
 
