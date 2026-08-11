@@ -1,0 +1,74 @@
+# Every claim in this repository that a machine can check, checked on every
+# push. The suites, the typechecks, and the Swift model layer all run by hand
+# in development; this file is what makes them run when nobody remembers to.
+#
+# One job rather than a matrix, deliberately. The vault and the wallet share
+# source through the @vault path alias, so testing them from the same checkout
+# is testing what actually ships, and the whole run is a few minutes, which is
+# under the threshold where splitting buys anything but log-hopping.
+#
+# The Swift toolchain comes from scripts/install-swift.sh, the same script a
+# person runs, with the same two non-optional checks: the Swift project's
+# signature and this repository's pinned digest. The unpacked toolchain is
+# cached keyed on that pin, so the 840 MB download happens when the pin
+# changes and not per push. A cache hit still lands in front of `swift
+# --version`, so a corrupted cache fails loudly rather than skipping quietly.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  everything:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            wallet/package-lock.json
+
+      - name: Swift toolchain (cached against the pin in install-swift.sh)
+        id: swift-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/swift
+          key: swift-${{ hashFiles('scripts/install-swift.sh') }}
+
+      - name: Install Swift (verified, only on a cache miss)
+        if: steps.swift-cache.outputs.cache-hit != 'true'
+        run: ./scripts/install-swift.sh
+
+      - name: The toolchain actually runs
+        run: /opt/swift/usr/bin/swift --version
+
+      - name: Vault suite
+        # npm test is the whole pipeline: the engine bundle is rebuilt and
+        # digested, the icons and fixtures regenerate, vitest runs, and
+        # swift-check compiles the model layer and runs its tests. The
+        # toolchain is found at /opt/swift by swift-check itself.
+        run: |
+          npm ci
+          npm test
+          npx tsc --noEmit
+
+      - name: Wallet suite
+        working-directory: wallet
+        run: |
+          npm ci
+          npx vitest run
+          npx tsc --noEmit
+
+      - name: The tree is what the pipeline produces
+        # A build whose regenerated artifacts differ from what was committed
+        # means somebody edited a generated file by hand or forgot to commit a
+        # rebuild. Either way the repository is lying about what ships, and
+        # that is worth failing a push over.
+        run: git diff --exit-code

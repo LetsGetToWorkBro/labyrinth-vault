@@ -168,10 +168,21 @@ export interface Received {
   /** The transaction public key, kept because the key image round trip needs
    *  it: the vault re-derives ownership from exactly this plus the index. */
   txPublicKey: string;
+  /** The block's timestamp, seconds since the epoch, for the activity list. */
+  at: number;
   /** Piconero, or null when it could not be established. */
   amount: Atoms | null;
   /** One sentence saying why the amount is unknown, when it is. */
   unknownBecause: string | null;
+}
+
+/** A watched key image, seen on an input somewhere in the chain. */
+export interface SpendEvent {
+  image: string;
+  txid: string;
+  height: number;
+  /** Block timestamp, seconds since the epoch. */
+  at: number;
 }
 
 /** Two outputs are the same output when these agree. */
@@ -193,8 +204,10 @@ export interface ScanOutcome {
   state: ScanState;
   /** Outputs found, all of them from blocks that finished. */
   received: Received[];
-  /** Watched key images seen spending, from blocks that finished. */
-  spent: string[];
+  /** Watched key images seen spending, from blocks that finished. Each
+   *  carries where it happened, so the activity list can show the event and
+   *  not merely its consequence. */
+  spent: SpendEvent[];
   /** Blocks walked in this pass. */
   blocks: number;
   /** Requests made, so the screen can say what it cost. */
@@ -282,7 +295,7 @@ export async function scan(
   let height = Math.max(birth, Math.floor(from.height));
 
   const received: Received[] = [];
-  const spent: string[] = [];
+  const spent: SpendEvent[] = [];
   let blocks = 0;
   let requests = 0;
 
@@ -315,15 +328,19 @@ export async function scan(
       : block.value.txHashes;
 
     const inBlock: Received[] = [];
-    const spendsInBlock: string[] = [];
+    const spendsInBlock: SpendEvent[] = [];
     for (let at = 0; at < hashes.length; at += MAX_TXS_PER_REQUEST) {
       requests += 1;
       const batch = await transactions(transport, hashes.slice(at, at + MAX_TXS_PER_REQUEST));
       if (!batch.ok) return done(batch.problem);
       for (const tx of batch.value) {
-        inBlock.push(...scanOne(account, tx, height));
+        inBlock.push(...scanOne(account, tx, height, block.value.timestamp));
         if (options.watch?.size) {
-          for (const image of tx.spends) if (options.watch.has(image)) spendsInBlock.push(image);
+          for (const image of tx.spends) {
+            if (options.watch.has(image)) {
+              spendsInBlock.push({ image, txid: tx.hash, height, at: block.value.timestamp });
+            }
+          }
         }
       }
     }
@@ -345,7 +362,12 @@ export async function scan(
  * the difference between one scalar multiplication and one per output on every
  * transaction in the chain.
  */
-export function scanOne(account: MoneroAccount, tx: ScannableTx, height: number): Received[] {
+export function scanOne(
+  account: MoneroAccount,
+  tx: ScannableTx,
+  height: number,
+  at = 0,
+): Received[] {
   if (!tx.publicKey) return [];
   const derivation = keyDerivation(account.viewSecret, tx.publicKey);
   if (!derivation) return [];
@@ -361,6 +383,7 @@ export function scanOne(account: MoneroAccount, tx: ScannableTx, height: number)
       index: candidate.index,
       key: owned.key,
       txPublicKey: tx.publicKey,
+      at,
       amount: value.amount,
       unknownBecause: value.unknownBecause,
     });

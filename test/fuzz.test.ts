@@ -195,3 +195,86 @@ describe('corruption can fail a scan, never redirect it', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// The key image round trip: parsers on the wallet's wire, arithmetic behind it
+
+describe('the key image parsers survive anything the wire can carry', () => {
+  it('parseKeyImageRequest never throws and never accepts a malformed entry', async () => {
+    const { parseKeyImageRequest, encodeKeyImageRequest, KEYIMAGE_VERSION } = await import('../src/keys/keyimages');
+    const random = rng(0x6b31);
+    const valid = encodeKeyImageRequest({
+      v: KEYIMAGE_VERSION,
+      chain: 'xmr',
+      outputs: [{ tx: 'ab'.repeat(32), index: 3, key: 'cd'.repeat(32) }],
+    });
+    const validText = new TextDecoder().decode(valid);
+
+    for (let round = 0; round < 4000; round++) {
+      const roll = random();
+      const bytes = roll < 0.3
+        ? bytesFrom(random, Math.floor(random() * 300))
+        : new TextEncoder().encode(mangle(validText, random));
+      const parsed = parseKeyImageRequest(bytes);
+      if (parsed.ok) {
+        /* Whatever survived the mangling, every entry it kept is exactly the
+         * shape the arithmetic downstream assumes. */
+        for (const output of parsed.request.outputs) {
+          expect(output.tx).toMatch(/^[0-9a-f]{64}$/);
+          expect(output.key).toMatch(/^[0-9a-f]{64}$/);
+          expect(Number.isInteger(output.index) && output.index >= 0).toBe(true);
+        }
+      } else {
+        expect(typeof parsed.problem).toBe('string');
+      }
+    }
+  });
+
+  it('parseKeyImageReply holds the same line', async () => {
+    const { parseKeyImageReply, encodeKeyImageReply, KEYIMAGE_VERSION } = await import('../src/keys/keyimages');
+    const random = rng(0x6b32);
+    const valid = new TextDecoder().decode(encodeKeyImageReply({
+      v: KEYIMAGE_VERSION,
+      chain: 'xmr',
+      images: [{ key: 'ab'.repeat(32), image: 'cd'.repeat(32) }],
+      refused: ['ef'.repeat(32)],
+    }));
+
+    for (let round = 0; round < 4000; round++) {
+      const roll = random();
+      const bytes = roll < 0.3
+        ? bytesFrom(random, Math.floor(random() * 300))
+        : new TextEncoder().encode(mangle(valid, random));
+      const parsed = parseKeyImageReply(bytes);
+      if (parsed.ok) {
+        for (const entry of parsed.reply.images) {
+          expect(entry.key).toMatch(/^[0-9a-f]{64}$/);
+          expect(entry.image).toMatch(/^[0-9a-f]{64}$/);
+        }
+      }
+    }
+  });
+
+  it('computeKeyImages refuses every output that is not really ours, whatever arrives', async () => {
+    const { computeKeyImages, KEYIMAGE_VERSION } = await import('../src/keys/keyimages');
+    const { walletFromSeed } = await import('../src/keys/monero');
+    const wallet = walletFromSeed(new Uint8Array(32).fill(5));
+    const random = rng(0x6b33);
+    const hex = (n: number) => Array.from(bytesFrom(random, n), (b) => b.toString(16).padStart(2, '0')).join('');
+
+    for (let round = 0; round < 200; round++) {
+      const outputs = Array.from({ length: 1 + Math.floor(random() * 5) }, () => ({
+        tx: hex(32),
+        index: Math.floor(random() * 100),
+        key: hex(32),
+      }));
+      /* Random points essentially never derive from this wallet's keys, so
+       * the invariant is total: nothing throws, every entry is accounted for
+       * exactly once, and nothing gets an answer it did not prove. */
+      const reply = computeKeyImages(wallet, { v: KEYIMAGE_VERSION, chain: 'xmr', outputs });
+      expect(reply.images.length + reply.refused.length).toBe(outputs.length);
+      expect(reply.images).toEqual([]);
+    }
+  });
+
+});

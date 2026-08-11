@@ -521,9 +521,9 @@ describe('walking the chain', () => {
 });
 
 describe('adding it up', () => {
-  const one = { txid: 'a'.repeat(64), height: 1, index: 0, key: 'k1', txPublicKey: 'p1', amount: 100n, unknownBecause: null };
-  const two = { txid: 'a'.repeat(64), height: 1, index: 1, key: 'k2', txPublicKey: 'p1', amount: 250n, unknownBecause: null };
-  const hidden = { txid: 'b'.repeat(64), height: 2, index: 0, key: 'k3', txPublicKey: 'p2', amount: null, unknownBecause: 'no' };
+  const one = { txid: 'a'.repeat(64), height: 1, index: 0, key: 'k1', txPublicKey: 'p1', at: 0, amount: 100n, unknownBecause: null };
+  const two = { txid: 'a'.repeat(64), height: 1, index: 1, key: 'k2', txPublicKey: 'p1', at: 0, amount: 250n, unknownBecause: null };
+  const hidden = { txid: 'b'.repeat(64), height: 2, index: 0, key: 'k3', txPublicKey: 'p2', at: 0, amount: null, unknownBecause: 'no' };
 
   it('sums what it knows', () => {
     expect(totalReceived([one, two])).toEqual({ total: 350n, outputs: 2, counted: 2, unknown: 0 });

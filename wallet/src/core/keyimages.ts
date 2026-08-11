@@ -162,6 +162,11 @@ export class KeyImageBook {
     return this.imported.has(oneTimeKey);
   }
 
+  /** The image for this one-time key, when the vault has answered for it. */
+  imageFor(oneTimeKey: string): string | null {
+    return this.imported.get(oneTimeKey) ?? null;
+  }
+
   /** How many outputs have an image, of the keys given. */
   coverage(known: ReadonlySet<string>): number {
     let covered = 0;

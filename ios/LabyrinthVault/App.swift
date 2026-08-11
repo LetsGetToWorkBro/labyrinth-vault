@@ -51,6 +51,7 @@ struct RootView: View {
         case .approve(let tx, let digest): ApproveView(tx: tx, reviewedDigest: digest)
         case .signed(let tx, let result): SignedView(tx: tx, result: result)
         case .signedQR(let tx, let result): SignedQRView(tx: tx, result: result)
+        case .keyImages(let result): KeyImagesView(result: result)
         case .refused(let refusal): RefusalView(refusal: refusal)
         case .settings: SettingsView()
         case .bitcoin: BitcoinView()
@@ -75,6 +76,7 @@ struct RootView: View {
         case .approve: "approve"
         case .signed: "signed"
         case .signedQR: "signedqr"
+        case .keyImages: "keyimages"
         case .refused(let r): "refused-\(r.headline.joined())"
         case .settings: "settings"
         case .bitcoin: "bitcoin"

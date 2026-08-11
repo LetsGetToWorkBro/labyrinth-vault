@@ -135,6 +135,9 @@ enum Route: Equatable {
     /// the txid come from the engine, not from a fixture.
     case signed(TxSummary, Engine.SignReply)
     case signedQR(TxSummary, Engine.SignReply)
+    /// The answer to a companion's key image request: how many were
+    /// computed, how many refused, and the frames to show back.
+    case keyImages(Engine.KeyImagesReply)
     case refused(Refusal)
     case settings
     case bitcoin
@@ -277,6 +280,25 @@ final class Vault: ObservableObject {
         scanProgress = (reply.have, reply.total)
         guard let payload = reply.payload else { return }
 
+        /* Dispatch on what arrived, not on what was expected. A key image
+         * request is the companion doing Monero bookkeeping, and describing
+         * it as a transaction would refuse a payload the engine understands
+         * perfectly well. */
+        if reply.kind == "XMROUTPUTS" {
+            do {
+                let answer = try engine.moneroKeyImages(payloadHex: payload)
+                Haptic.tick()
+                go(.keyImages(answer))
+            } catch EngineError.refusedAs(let code, _) {
+                Haptic.refuse()
+                go(.refused(Refusal(code: code)))
+            } catch {
+                Haptic.refuse()
+                go(.refused(.unreadable))
+            }
+            return
+        }
+
         pendingPsbtHex = payload
         do {
             let summary = try engine.describe(psbtHex: payload)
@@ -330,6 +352,7 @@ final class Vault: ObservableObject {
         case .approve: .approve
         case .signed: .signed
         case .signedQR: .signedQR
+        case .keyImages: .keyImages
         case .refused: .refused
         case .settings: .settings
         case .bitcoin: .bitcoin

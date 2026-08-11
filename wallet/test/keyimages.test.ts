@@ -34,7 +34,7 @@ import type { Reply, Request, Transport } from '../src/net/http';
 import { isKeyImageSpent, transactions } from '../src/net/monerod';
 import { openAccount, scan, type Received } from '../src/core/moneroscan';
 import { buildOutputsRequest, KeyImageBook, settle } from '../src/core/keyimages';
-import { moneroCaveat, NodeWatcher, type MoneroStatus } from '../src/core/watcher';
+import { moneroCaveat, moneroHistory, NodeWatcher, type MoneroStatus } from '../src/core/watcher';
 
 // ---------------------------------------------------------------------------
 // The wallet under test, and a sender
@@ -212,9 +212,10 @@ describe('the round trip against the chain walk', () => {
     const image = [...book.watch()][0]!;
     const chainB = fakeNode({ blocks: { 11: [spendOf([image], 'e'.repeat(64))] }, tip: 11 });
     const second = await scan(chainB, account, { birth: 10, height: 11 }, 11, { watch: book.watch() });
-    expect(second.spent).toEqual([image]);
+    expect(second.spent.map((event) => event.image)).toEqual([image]);
+    expect(second.spent[0]).toMatchObject({ txid: 'e'.repeat(64), height: 11 });
 
-    book.markSpent(second.spent);
+    book.markSpent(second.spent.map((event) => event.image));
     const settled = settle(first.received, book);
     expect(settled.spentCount).toBe(1);
     /* The balance is exactly the output that was not spent, whichever of the
@@ -449,6 +450,76 @@ describe('the watcher, whole', () => {
     await w.refresh(1_700_000_000_000);
     /* Still asking: unsettled images are retried, not forgotten. */
     expect(node.askedSpent.length).toBeGreaterThan(1);
+  });
+});
+
+describe('the activity list', () => {
+  async function scannedAndImported(amounts: bigint[]) {
+    const paid = payTo(amounts);
+    const node = fakeNode({ blocks: { 10: [paid] }, tip: 10 });
+    const result = await scan(node, account, { birth: 10, height: 10 }, 10);
+    const book = new KeyImageBook();
+    book.offerReply(vaultReplyFor(result.received), new Set(result.received.map((r) => r.key)));
+    return { paid, received: result.received, book };
+  }
+
+  it('lists a receipt, grouped by transaction, at its block time', async () => {
+    const { paid, received, book } = await scannedAndImported([5_000n, 7_000n]);
+    const rows = moneroHistory(received, [], book, 12);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      asset: 'XMR',
+      direction: 'received',
+      amount: 12_000n,
+      txid: paid.hash,
+      blockHeight: 10,
+      confirmations: 3,
+      fiatCents: null,
+    });
+    expect(rows[0]!.at).toBe(1_700_000_000 * 1000);
+  });
+
+  it('shows a spend as what actually left, netting off the change', async () => {
+    /* The wallet2 convention: a transaction that spends your 5000 output and
+     * pays 1000 back to you is a payment of 4000, not a sent-5000 row next to
+     * a received-1000 row about the same coins. */
+    const { received, book } = await scannedAndImported([5_000n]);
+    const image = book.imageFor(received[0]!.key)!;
+    book.markSpent([image]);
+
+    const changeBack = { ...received[0]!, txid: 'f'.repeat(64), key: 'a1'.repeat(32), amount: 1_000n };
+    const spend = { image, txid: 'f'.repeat(64), height: 11, at: 1_700_000_600 };
+    const rows = moneroHistory([...received, changeBack], [spend], book, 11);
+
+    const sent = rows.find((row) => row.direction === 'sent')!;
+    expect(sent.amount).toBe(4_000n);
+    expect(sent.txid).toBe('f'.repeat(64));
+    /* And the change receipt is folded into the payment, not listed twice. */
+    expect(rows.filter((row) => row.txid === 'f'.repeat(64))).toHaveLength(1);
+  });
+
+  it('lists nothing for an output whose amount was never proved', async () => {
+    const paid = payTo([9n]);
+    const node = fakeNode({ blocks: { 3: [paid] }, tip: 3 });
+    const result = await scan(node, account, { birth: 3, height: 3 }, 3);
+    const broken = result.received.map((entry) => ({ ...entry, amount: null, unknownBecause: 'x' }));
+    expect(moneroHistory(broken, [], new KeyImageBook(), 3)).toEqual([]);
+  });
+
+  it('reaches the snapshot: the watcher merges both chains newest first', async () => {
+    const paid = payTo([5_000n]);
+    const node = fakeNode({ blocks: { 10: [paid] }, tip: 10, spentAnswers: {} });
+    const nodes = { btc: null, xmr: { kind: 'monerod' as const, url: 'https://node.example', label: 'x', mine: false } };
+    const w = new NodeWatcher(nodes, null, { btc: null, xmr: node }, 1_700_000_000_000, {
+      account,
+      scan: { birth: 10, height: 10 },
+    });
+    await w.refresh(1_700_000_000_000);
+
+    const listed = w.snapshot().transactions;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ asset: 'XMR', direction: 'received', amount: 5_000n });
   });
 });
 

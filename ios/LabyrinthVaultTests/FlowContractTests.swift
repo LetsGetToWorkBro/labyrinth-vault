@@ -76,6 +76,20 @@ final class FlowContractTests: XCTestCase {
         XCTAssertTrue(Flow.allowed(from: .refused, to: .home))
     }
 
+    func testKeyImagesComesFromTheReaderToo() {
+        /* Same property as review, same reason: a screen full of key image
+         * frames exists because a payload just finished assembling. */
+        let allowed: Set<RouteKind> = [.scanner, .acquiring, .received]
+        for from in RouteKind.allCases where Flow.allowed(from: from, to: .keyImages) {
+            XCTAssertTrue(allowed.contains(from),
+                          "keyImages reachable from \(from), which never read a request")
+        }
+        XCTAssertTrue(Flow.allowed(from: .keyImages, to: .home))
+        XCTAssertTrue(Flow.allowed(from: .keyImages, to: .scanner))
+        XCTAssertFalse(Flow.allowed(from: .keyImages, to: .approve))
+        XCTAssertFalse(Flow.allowed(from: .keyImages, to: .signed))
+    }
+
     func testNothingReturnsToLaunch() {
         for from in RouteKind.allCases {
             XCTAssertFalse(Flow.allowed(from: from, to: .launch), "\(from) can reach the launch gate")

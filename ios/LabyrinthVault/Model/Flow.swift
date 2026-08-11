@@ -30,6 +30,7 @@ import Foundation
 public enum RouteKind: String, CaseIterable, Sendable {
     case launch, setup, home, airgap, export, scanner, acquiring, received
     case review, destination, approve, signed, signedQR, refused
+    case keyImages
     case settings, bitcoin, monero, recovery
 }
 
@@ -69,6 +70,12 @@ public enum Flow {
         case .review:
             return from == .scanner || from == .acquiring || from == .received
                 || from == .destination || from == .review
+        case .keyImages:
+            /* The scan path only, same as review: the screen full of key
+             * image frames exists because a payload just finished assembling,
+             * and walking into it from anywhere else would animate a stale
+             * answer about a request nobody just made. */
+            return from == .scanner || from == .acquiring || from == .received
         case .destination:
             return from == .review
         case .refused:

@@ -57,6 +57,7 @@ import {
   type MoneroAccount,
   type Received,
   type ScanState,
+  type SpendEvent,
 } from './moneroscan';
 import { live, type Transport } from '../net/http';
 import * as esplora from '../net/esplora';
@@ -287,6 +288,118 @@ export function moneroCaveat(status: MoneroStatus, unvalued: number, spends?: Sp
 }
 
 /**
+ * The Monero activity list, from what the scan established.
+ *
+ * Received rows group a transaction's outputs to this account and sum the
+ * amounts it could prove. Spent rows exist only for spends the chain walk
+ * itself saw, because those are the ones with a transaction and a height; a
+ * spend that only `is_key_image_spent` reported moves the balance and cannot
+ * make a row, since the node says "spent" and not where.
+ *
+ * The sent amount uses the same convention every watching wallet uses: what
+ * the spent outputs were worth, minus anything the same transaction paid back
+ * to this account, which is the change returning. The fee cannot be known
+ * without the full transaction arithmetic, so it is zero rather than a guess,
+ * and there is no counterparty because the chain does not publish one; that
+ * silence is Monero working, not data gone missing.
+ *
+ * Outputs whose amount was never proved are left out of the rows: a listed
+ * receipt of zero would be a claim, and the caveat under the balance already
+ * counts them.
+ */
+export function moneroHistory(
+  found: readonly Received[],
+  spends: readonly SpendEvent[],
+  book: KeyImageBook,
+  tip: number,
+): Transaction[] {
+  const byOutput = new Map<string, Received>();
+  for (const entry of found) byOutput.set(outputKey(entry), entry);
+  const outputs = [...byOutput.values()];
+
+  const rows: Transaction[] = [];
+
+  /* Received, grouped by transaction. */
+  const receivedByTx = new Map<string, Received[]>();
+  for (const entry of outputs) {
+    const list = receivedByTx.get(entry.txid) ?? [];
+    list.push(entry);
+    receivedByTx.set(entry.txid, list);
+  }
+  for (const [txid, entries] of receivedByTx) {
+    const amount = entries.reduce((sum, entry) => sum + (entry.amount ?? 0n), 0n);
+    if (amount === 0n && entries.every((entry) => entry.amount === null)) continue;
+    const height = entries[0]!.height;
+    rows.push({
+      id: `xmr-in-${txid}`,
+      asset: 'XMR',
+      direction: 'received',
+      amount,
+      fee: 0n,
+      counterparty: '',
+      stage: 'confirmed',
+      confirmations: Math.max(tip - height + 1, 1),
+      confirmationTarget: 10,
+      txid,
+      blockHeight: height,
+      at: entries[0]!.at * 1000,
+      fiatCents: null,
+    });
+  }
+
+  /* Spent, grouped by the transaction that did the spending. */
+  const spendsByTx = new Map<string, SpendEvent[]>();
+  for (const event of spends) {
+    const list = spendsByTx.get(event.txid) ?? [];
+    list.push(event);
+    spendsByTx.set(event.txid, list);
+  }
+  const outputByImage = new Map<string, Received>();
+  for (const entry of outputs) {
+    const image = book.imageFor(entry.key);
+    if (image) outputByImage.set(image, entry);
+  }
+  for (const [txid, events] of spendsByTx) {
+    let spent = 0n;
+    for (const event of events) {
+      const output = outputByImage.get(event.image);
+      if (output?.amount) spent += output.amount;
+    }
+    /* Change coming back is a receipt in the same transaction; net it off so
+     * the row reads as what actually left, the way wallet2 shows it. */
+    const changeBack = (receivedByTx.get(txid) ?? []).reduce(
+      (sum, entry) => sum + (entry.amount ?? 0n),
+      0n,
+    );
+    const net = spent - changeBack;
+    if (net <= 0n) continue;
+    /* The receipt row for the change is now half of a payment; drop it so the
+     * same coins do not appear as both sent and received. */
+    const changeRow = rows.findIndex((row) => row.id === `xmr-in-${txid}`);
+    if (changeRow >= 0) rows.splice(changeRow, 1);
+    const height = events[0]!.height;
+    rows.push({
+      id: `xmr-out-${txid}`,
+      asset: 'XMR',
+      direction: 'sent',
+      amount: net,
+      fee: 0n,
+      counterparty: '',
+      stage: 'confirmed',
+      confirmations: Math.max(tip - height + 1, 1),
+      confirmationTarget: 10,
+      txid,
+      blockHeight: height,
+      at: events[0]!.at * 1000,
+      fiatCents: null,
+    });
+  }
+
+  rows.sort((a, b) => b.at - a.at);
+  return rows;
+}
+
+/**
  * The watcher the app uses when a node is configured.
  *
  * Built with its transports rather than making them, so the tests drive it
@@ -313,7 +426,13 @@ export class NodeWatcher implements Watcher {
    * networked device. Importing again after a relaunch is one scan of a QR.
    */
   private readonly book = new KeyImageBook();
+  /** Spends the walk has seen, keyed by image, for the activity list. A spend
+   *  the settle query reports has no event: the node says "spent" and not
+   *  where, so it moves the balance and cannot make a history row. */
+  private readonly spendEvents = new Map<string, SpendEvent>();
   private moneroStatus: MoneroStatus | null = null;
+  private xmrHistory: Transaction[] = [];
+  private btcHistory: Transaction[] = [];
 
   constructor(
     private readonly nodes: WatcherNodes,
@@ -351,14 +470,13 @@ export class NodeWatcher implements Watcher {
     let queried = 0;
 
     const assets = { ...this.snap.assets };
-    let transactions = this.snap.transactions;
 
     if (this.transports.btc && this.btcWallet) {
       const result = await this.refreshBitcoin(this.transports.btc, this.btcWallet);
       if (result.problem) problems.push({ asset: 'BTC', problem: result.problem });
       else {
         assets.BTC = result.view;
-        transactions = result.transactions;
+        this.btcHistory = result.transactions;
       }
       queried += result.queried;
     } else if (this.nodes.btc) {
@@ -375,7 +493,10 @@ export class NodeWatcher implements Watcher {
     this.snap = {
       ...this.snap,
       assets,
-      transactions,
+      /* One list, both chains, newest first. Each chain's history is only
+       * replaced by its own successful refresh, so a Bitcoin failure does not
+       * empty the Monero rows or the other way around. */
+      transactions: [...this.btcHistory, ...this.xmrHistory].sort((a, b) => b.at - a.at),
       at: now,
       /* A refresh that partly failed leaves a snapshot that is partly old, and
        * the honest label for that is stale. Anything else invites somebody to
@@ -518,7 +639,8 @@ export class NodeWatcher implements Watcher {
      * skipping, and throwing it away would redo work that succeeded. */
     this.monero = { ...watch, scan: pass.state };
     for (const output of pass.received) this.found.set(outputKey(output), output);
-    this.book.markSpent(pass.spent);
+    for (const event of pass.spent) this.spendEvents.set(event.image, event);
+    this.book.markSpent(pass.spent.map((event) => event.image));
 
     /* Newly imported images need one backward look: the spend may sit in a
      * block the walk passed before the image existed here. One question to the
@@ -541,6 +663,7 @@ export class NodeWatcher implements Watcher {
     const all = [...this.found.values()];
     const total = totalReceived(all);
     const balance = settle(all, this.book);
+    this.xmrHistory = moneroHistory(all, [...this.spendEvents.values()], this.book, tip);
     const status: MoneroStatus = {
       scan: pass.state,
       tip,
