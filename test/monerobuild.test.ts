@@ -40,7 +40,9 @@ import {
   commitmentMask,
   derivationToScalar,
   derivePublicKey,
+  deriveSubaddressPublicKey,
   generateKeyDerivation,
+  subaddressKeys,
   writeVarint,
   RCT_H,
 } from '../src/keys/monerocrypto';
@@ -48,7 +50,9 @@ import {
   addressChecksum,
   base58Encode,
   fromHex,
+  parseAddress,
   publicFromSecret,
+  subaddressFor,
   toHex,
   walletFromSeed,
   type Wallet,
@@ -452,6 +456,192 @@ describe('signing a dummy-padded spend', () => {
   });
 });
 
+/** Parse the fields of a tx_extra: main pubkey, additional pubkeys, enc payment id. */
+function parseExtra(extra: Uint8Array): { main: Uint8Array; additional: Uint8Array[]; encPaymentId: Uint8Array | null } {
+  let at = 0;
+  let main = new Uint8Array(32);
+  const additional: Uint8Array[] = [];
+  let encPaymentId: Uint8Array | null = null;
+  const varint = (): number => {
+    let value = 0, shift = 0;
+    for (;;) { const b = extra[at++]!; value += (b & 0x7f) * 2 ** shift; if ((b & 0x80) === 0) return value; shift += 7; }
+  };
+  while (at < extra.length) {
+    const tag = extra[at++]!;
+    if (tag === 0x01) { main = extra.slice(at, at + 32); at += 32; }
+    else if (tag === 0x04) { const n = varint(); for (let i = 0; i < n; i++) { additional.push(extra.slice(at, at + 32)); at += 32; } }
+    else if (tag === 0x02) { const len = varint(); const nonce = extra.slice(at, at + len); at += len; if (nonce[0] === 0x01) encPaymentId = nonce.slice(1, 9); }
+    else break;
+  }
+  return { main, additional, encPaymentId };
+}
+
+/** A subaddress-aware scan: find an output paid to a specific subaddress D. */
+function scanForSubaddress(wallet: Wallet, tx: ParsedTx, subaddrSpend: Uint8Array): { amount: bigint } | null {
+  const { main, additional } = parseExtra(tx.extra);
+  for (let i = 0; i < tx.outputs.length; i++) {
+    const outKey = fromHex(tx.outputs[i]!.key);
+    for (const R of [main, ...(additional[i] ? [additional[i]!] : [])]) {
+      const derivation = generateKeyDerivation(R, wallet.viewSecret);
+      if (toHex(deriveSubaddressPublicKey(outKey, derivation, i)) !== toHex(subaddrSpend)) continue;
+      const shared = derivationToScalar(derivation, i);
+      const cipher = fromHex(tx.ecdh[i]!);
+      const mask = amountMask(shared);
+      let amount = 0n;
+      for (let b = 7; b >= 0; b--) amount = (amount << 8n) | BigInt((cipher[b]! ^ mask[b]!) & 0xff);
+      expect(toHex(commit(amount, commitmentMask(shared)))).toBe(tx.outPk[i]!);
+      return { amount };
+    }
+  }
+  return null;
+}
+
+describe('signing to a subaddress', () => {
+  it('pays a subaddress: the receiver finds it via the additional tx key', { timeout: 30_000 }, () => {
+    /* A real subaddress of the receiver, account (1, 3). */
+    const sub = subaddressKeys(fromHex(receiver.spendPublic), receiver.viewSecret, 1, 3);
+    const subAddress = subaddressFor(sub.spend, sub.view, 'stagenet');
+    expect(parseAddress(subAddress).kind).toBe('subaddress');
+
+    const payment = 700_000_000_000n;
+    const fee = 720_000_000n;
+    const funded = fundSender(payment + fee + 250_000_000_000n, 1, 0x5b00);
+    const realPosition = 6;
+    const set = unsignedSet({
+      inputs: [{
+        txPublicKey: funded.txPublicKey,
+        indexInTx: funded.indexInTx,
+        globalIndex: 1_000_000 + realPosition * 7,
+        amount: funded.amount.toString(),
+        ring: ringAround(funded, realPosition, 0x5b10),
+        realPosition,
+      }],
+      outputs: [
+        { address: subAddress, amount: payment.toString(), change: false, dummy: false },
+        { address: sender.address, amount: '250000000000', change: true, dummy: false },
+      ],
+      fee: fee.toString(),
+    });
+    const result = signMoneroSpend(sender, set, randomsFor(set, 0x5b20));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tx = readTx(result.tx.hex, set.ringSize);
+
+    /* A mixed standard-plus-subaddress tx carries additional keys, one per
+     * output, and the range proof and balance still hold. */
+    expect(parseExtra(tx.extra).additional).toHaveLength(2);
+    expect(verifyBulletproofPlus(tx.outPk, tx.bpp)).toBe(true);
+
+    /* The subaddress receiver finds the payment for exactly its amount. */
+    const found = scanForSubaddress(receiver, tx, sub.spend);
+    expect(found).not.toBeNull();
+    expect(found!.amount).toBe(payment);
+    /* And the main-address scan does not, because it went to the subaddress. */
+    expect(scanAsWallet(receiver, tx)).toHaveLength(0);
+  });
+
+  it('pays a lone subaddress via the main key, no additional keys', { timeout: 30_000 }, () => {
+    const sub = subaddressKeys(fromHex(receiver.spendPublic), receiver.viewSecret, 2, 0);
+    const subAddress = subaddressFor(sub.spend, sub.view, 'stagenet');
+    /* Exact-amount send to a single subaddress: the wallet would pad it to two
+     * outputs, but the pad is a standard self-output, so this stays the
+     * "single subaddress plus change/pad" shape. Build it explicitly with a
+     * zero pad to exercise the main-key path having exactly one subaddress. */
+    const payment = 800_000_000_000n;
+    const fee = 720_000_000n;
+    const funded = fundSender(payment + fee, 1, 0x5c00);
+    const realPosition = 2;
+    const set = unsignedSet({
+      inputs: [{
+        txPublicKey: funded.txPublicKey,
+        indexInTx: funded.indexInTx,
+        globalIndex: 1_000_000 + realPosition * 7,
+        amount: funded.amount.toString(),
+        ring: ringAround(funded, realPosition, 0x5c10),
+        realPosition,
+      }],
+      outputs: [
+        { address: subAddress, amount: payment.toString(), change: false, dummy: false },
+        { address: sender.address, amount: '0', change: true, dummy: true },
+      ],
+      fee: fee.toString(),
+    });
+    const result = signMoneroSpend(sender, set, randomsFor(set, 0x5c20));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tx = readTx(result.tx.hex, set.ringSize);
+    /* One subaddress and one standard self-output means additional keys are
+     * needed (num_std > 0), so they are present. The receiver still finds it. */
+    const found = scanForSubaddress(receiver, tx, sub.spend);
+    expect(found).not.toBeNull();
+    expect(found!.amount).toBe(payment);
+  });
+});
+
+describe('signing to an integrated address', () => {
+  it('carries the encrypted payment id, and the receiver decrypts it', { timeout: 30_000 }, () => {
+    /* An integrated address: the receiver's standard address plus an eight-byte
+     * payment id. Stagenet integrated prefix is 25. */
+    const paymentId = fromHex('0011223344556677');
+    const body = new Uint8Array(1 + 32 + 32 + 8);
+    body[0] = 25;
+    body.set(fromHex(receiver.spendPublic), 1);
+    body.set(fromHex(receiver.viewPublic), 33);
+    body.set(paymentId, 65);
+    const integrated = base58Encode(new Uint8Array([...body, ...addressChecksum(body)]));
+    expect(parseAddress(integrated).kind).toBe('integrated');
+
+    const payment = 600_000_000_000n;
+    const fee = 720_000_000n;
+    const funded = fundSender(payment + fee + 100_000_000_000n, 1, 0x1d00);
+    const realPosition = 5;
+    const set = unsignedSet({
+      inputs: [{
+        txPublicKey: funded.txPublicKey,
+        indexInTx: funded.indexInTx,
+        globalIndex: 1_000_000 + realPosition * 7,
+        amount: funded.amount.toString(),
+        ring: ringAround(funded, realPosition, 0x1d10),
+        realPosition,
+      }],
+      outputs: [
+        { address: integrated, amount: payment.toString(), change: false, dummy: false },
+        { address: sender.address, amount: '100000000000', change: true, dummy: false },
+      ],
+      fee: fee.toString(),
+    });
+    const result = signMoneroSpend(sender, set, randomsFor(set, 0x1d20));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tx = readTx(result.tx.hex, set.ringSize);
+
+    /* The receiver still finds the payment on their standard address. */
+    const found = scanAsWallet(receiver, tx);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.amount).toBe(payment);
+
+    /* And the encrypted payment id in the extra decrypts to the original: the
+     * receiver derives a·R and XORs the same pad the sender used. */
+    const { main, encPaymentId } = parseExtra(tx.extra);
+    expect(encPaymentId).not.toBeNull();
+    const derivation = generateKeyDerivation(main, receiver.viewSecret);
+    const mask = keccak_256(new Uint8Array([...derivation, 0x8d])).subarray(0, 8);
+    const decrypted = new Uint8Array(8);
+    for (let i = 0; i < 8; i++) decrypted[i] = encPaymentId![i]! ^ mask[i]!;
+    expect(toHex(decrypted)).toBe(toHex(paymentId));
+  });
+
+  it('a standard payment carries a dummy encrypted payment id for uniformity', { timeout: 30_000 }, () => {
+    const set = unsignedSet();
+    const result = signMoneroSpend(sender, set, randomsFor(set));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tx = readTx(result.tx.hex, set.ringSize);
+    /* Present, so a standard payment and an integrated one look the same. */
+    expect(parseExtra(tx.extra).encPaymentId).not.toBeNull();
+  });
+});
+
 describe('the refusals that keep a signature honest', () => {
   it('refuses a set for a different network than the wallet', () => {
     const set = unsignedSet({ network: 'mainnet' });
@@ -484,21 +674,6 @@ describe('the refusals that keep a signature honest', () => {
     const result = signMoneroSpend(sender, set, randomsFor(set));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.problem).toMatch(/recommit|lie/);
-  });
-
-  it('refuses a subaddress destination rather than guessing its math', () => {
-    /* A syntactically valid stagenet subaddress: prefix 36, real keys. */
-    const body = new Uint8Array(65);
-    body[0] = 36;
-    body.set(fromHex(receiver.spendPublic), 1);
-    body.set(fromHex(receiver.viewPublic), 33);
-    const checksum = addressChecksum(body);
-    const address = base58Encode(new Uint8Array([...body, ...checksum]));
-    const set = unsignedSet();
-    set.outputs[0] = { ...set.outputs[0]!, address };
-    const result = signMoneroSpend(sender, set, randomsFor(set));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.problem).toMatch(/subaddress/);
   });
 
   it('refuses the wrong amount of randomness', () => {

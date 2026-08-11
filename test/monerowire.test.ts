@@ -17,6 +17,7 @@ import type { BulletproofPlus } from '../src/keys/bulletproofplus';
 import {
   absoluteToRelative,
   assembleRawTransaction,
+  buildTxExtra,
   preClsagHash,
   serializePrefix,
   serializeRctBase,
@@ -136,6 +137,51 @@ describe('transaction weight against real transactions', () => {
     /* Two or fewer: no surcharge. */
     expect(transactionWeight(1000, 2)).toBe(1000);
     expect(transactionWeight(1000, 1)).toBe(1000);
+  });
+});
+
+describe('building tx_extra', () => {
+  const pub = 'aa'.repeat(32);
+  const add1 = 'bb'.repeat(32);
+  const add2 = 'cc'.repeat(32);
+  const pid = '0011223344556677';
+
+  it('writes just the pubkey for a plain standard spend', () => {
+    const extra = buildTxExtra({ txPublicKey: pub });
+    /* tag 0x01, then the 32-byte key: 66 hex chars, nothing more. */
+    expect(extra).toBe('01' + pub);
+  });
+
+  it('appends additional pubkeys with a count', () => {
+    const extra = buildTxExtra({ txPublicKey: pub, additionalPublicKeys: [add1, add2] });
+    /* 0x01 key, then 0x04, count 2, then the two keys. */
+    expect(extra).toBe('01' + pub + '04' + '02' + add1 + add2);
+  });
+
+  it('appends the encrypted payment id as an 0x02 nonce of length nine', () => {
+    const extra = buildTxExtra({ txPublicKey: pub, encryptedPaymentId: pid });
+    /* 0x02, len 9 (0x09), marker 0x01, then the 8 bytes. */
+    expect(extra).toBe('01' + pub + '02' + '09' + '01' + pid);
+  });
+
+  it('orders pubkey, additional keys, then payment id', () => {
+    const extra = buildTxExtra({ txPublicKey: pub, additionalPublicKeys: [add1], encryptedPaymentId: pid });
+    expect(extra).toBe('01' + pub + '04' + '01' + add1 + '02' + '09' + '01' + pid);
+    /* And it round-trips through the prefix serializer as the extra field. */
+    const prefix: WirePrefix = {
+      version: 2, unlockTime: 0,
+      inputs: [{ keyOffsets: [1], keyImage: 'dd'.repeat(32) }],
+      outputs: [{ key: 'ee'.repeat(32), viewTag: 'f0' }],
+      extra,
+    };
+    const bytes = serializePrefix(prefix);
+    /* The extra length varint precedes the extra bytes, so the whole field is
+     * recoverable; here we just confirm it serialized without throwing. */
+    expect(bytes.length).toBeGreaterThan(fromHex(extra).length);
+  });
+
+  it('refuses a payment id that is not eight bytes', () => {
+    expect(() => buildTxExtra({ txPublicKey: pub, encryptedPaymentId: 'abcd' })).toThrow(/eight bytes/);
   });
 });
 

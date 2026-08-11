@@ -43,11 +43,13 @@ import {
   derivePublicKey,
   deriveSecretKey,
   deriveViewTag,
+  encryptPaymentId,
   generateKeyDerivation,
   generateKeyImage,
   RCT_H,
 } from './monerocrypto';
 import { fromHex, toHex, parseAddress, publicFromSecret, type Wallet } from './monero';
+import { buildTxExtra } from './monerowire';
 import { clsagSign, clsagVerify, type RingMember } from './monerosign';
 import {
   bppRandomCount,
@@ -214,12 +216,14 @@ export function parseUnsignedSet(
 
 /**
  * How many 32-byte random scalars `signMoneroSpend` consumes:
- * the transaction key, a shuffle seed, a pseudo-output mask for every input
- * but the last (the last is arithmetic, not chance), `ringSize + 1` CLSAG
- * nonces per input, and the range proof's blinds.
+ * the transaction key, a shuffle seed, one additional transaction key per
+ * output (used only when a subaddress destination forces additional keys, but
+ * always reserved so the count is the same whatever the addresses are), a
+ * pseudo-output mask for every input but the last (the last is arithmetic, not
+ * chance), `ringSize + 1` CLSAG nonces per input, and the range proof's blinds.
  */
 export function signingRandomCount(nInputs: number, ringSize: number, nOutputs: number): number {
-  return 1 + 1 + (nInputs - 1) + nInputs * (ringSize + 1) + bppRandomCount(nOutputs);
+  return 1 + 1 + nOutputs + (nInputs - 1) + nInputs * (ringSize + 1) + bppRandomCount(nOutputs);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,10 +313,19 @@ export function signMoneroSpend(
     return { ok: false, problem: `That set does not balance: ${inTotal} in, ${outTotal} out, ${fee} fee.` };
   }
 
-  /* Destinations must be standard addresses on this network. Subaddresses and
-   * integrated addresses need different transaction-key math, and a wrong
-   * guess there pays the wrong place, so they are refused, not approximated. */
-  const parsedOutputs: { spendPublic: Uint8Array; viewPublic: Uint8Array }[] = [];
+  /* Each destination is parsed to its keys and kind. Standard, subaddress, and
+   * integrated are all handled; an integrated address is a standard address
+   * carrying an eight-byte payment id, which rides in the extra. A wrong kind
+   * pays the wrong place, so the kind drives the transaction-key math below and
+   * is never guessed. */
+  interface ParsedDest {
+    spendPublic: Uint8Array;
+    viewPublic: Uint8Array;
+    isSubaddress: boolean;
+    isSelf: boolean;
+    paymentId: Uint8Array | null;
+  }
+  const parsedOutputs: ParsedDest[] = [];
   for (const output of set.outputs) {
     const parsed = parseAddress(output.address);
     if (!parsed.valid || !parsed.spendPublic || !parsed.viewPublic) {
@@ -321,11 +334,22 @@ export function signMoneroSpend(
     if (parsed.network !== set.network) {
       return { ok: false, problem: `An output address is for ${parsed.network}, not ${set.network}.` };
     }
-    if (parsed.kind !== 'standard') {
-      return { ok: false, problem: `An output address is a ${parsed.kind} address, which this vault does not yet sign to.` };
-    }
-    parsedOutputs.push({ spendPublic: fromHex(parsed.spendPublic), viewPublic: fromHex(parsed.viewPublic) });
+    parsedOutputs.push({
+      spendPublic: fromHex(parsed.spendPublic),
+      viewPublic: fromHex(parsed.viewPublic),
+      isSubaddress: parsed.kind === 'subaddress',
+      isSelf: output.change || output.dummy === true,
+      paymentId: parsed.kind === 'integrated' && parsed.paymentId ? fromHex(parsed.paymentId) : null,
+    });
   }
+
+  /* Classify, over all destinations, change included: change is a standard
+   * self-address. The rule that follows is Monero's `classify_addresses`. */
+  const numSub = parsedOutputs.filter((d) => d.isSubaddress).length;
+  const numStd = parsedOutputs.length - numSub;
+  /* Additional per-output transaction keys are needed unless every destination
+   * is standard, or there is exactly one destination and it is a subaddress. */
+  const needAdditional = numSub > 0 && (numStd > 0 || numSub > 1);
 
   const secrets: Uint8Array[] = [];
   try {
@@ -333,9 +357,26 @@ export function signMoneroSpend(
     const txSecret = s2b(b2s(draw()));
     if (b2s(txSecret) === 0n) return { ok: false, problem: 'A random scalar reduced to zero. Draw again.' };
     secrets.push(txSecret);
-    const txPublic = publicFromSecret(txSecret);
+
+    /* The main transaction public key. For a lone subaddress destination it is
+     * `r·D`, so the subaddress recipient recovers the shared secret from the
+     * main key; otherwise `r·G`, and subaddresses get their own keys below. */
+    const soleSubaddress = numStd === 0 && numSub === 1 ? parsedOutputs.find((d) => d.isSubaddress) : undefined;
+    const txPublic = soleSubaddress
+      ? Point.fromBytes(soleSubaddress.spendPublic).multiplyUnsafe(b2s(txSecret)).toBytes()
+      : publicFromSecret(txSecret);
 
     const order = shuffledIndices(set.outputs.length, draw());
+
+    /* One additional-key secret per output position, always drawn so the
+     * randomness budget does not depend on the address kinds. They are only
+     * turned into public keys and used when `needAdditional`. */
+    const additionalSecrets: Uint8Array[] = [];
+    for (let position = 0; position < order.length; position++) {
+      const secret = s2b(b2s(draw()));
+      additionalSecrets.push(secret);
+      secrets.push(secret);
+    }
 
     interface BuiltOutput {
       source: VaultUnsignedOutput;
@@ -347,17 +388,34 @@ export function signMoneroSpend(
       amount: bigint;
     }
     const builtOutputs: BuiltOutput[] = [];
+    const additionalPublicKeys: string[] = [];
     for (let position = 0; position < order.length; position++) {
       const sourceIndex = order[position]!;
       const output = set.outputs[sourceIndex]!;
-      const keys = parsedOutputs[sourceIndex]!;
+      const dest = parsedOutputs[sourceIndex]!;
       const amount = BigInt(output.amount);
-      const derivation = generateKeyDerivation(keys.viewPublic, txSecret);
+
+      /* The additional public key for this output: `r·D` for a subaddress,
+       * `r·G` otherwise. Present only when the transaction needs them. */
+      if (needAdditional) {
+        const r = additionalSecrets[position]!;
+        const pub = dest.isSubaddress
+          ? Point.fromBytes(dest.spendPublic).multiplyUnsafe(b2s(r)).toBytes()
+          : publicFromSecret(r);
+        additionalPublicKeys.push(toHex(pub));
+      }
+
+      /* The shared secret. A subaddress destination with additional keys uses
+       * that output's own key against the subaddress view key (`r·C`); every
+       * other destination, change and lone-subaddress included, uses the main
+       * transaction key against the destination view key. */
+      const txPrivate = dest.isSubaddress && needAdditional ? additionalSecrets[position]! : txSecret;
+      const derivation = generateKeyDerivation(dest.viewPublic, txPrivate);
       const shared = derivationToScalar(derivation, position);
       const mask = commitmentMask(shared);
       builtOutputs.push({
         source: output,
-        oneTimeKey: toHex(derivePublicKey(derivation, position, keys.spendPublic)),
+        oneTimeKey: toHex(derivePublicKey(derivation, position, dest.spendPublic)),
         viewTag: toHex(deriveViewTag(derivation, position)),
         ecdhAmount: encryptAmount(amount, shared),
         commitment: toHex(commit(amount, mask)),
@@ -365,6 +423,27 @@ export function signMoneroSpend(
         amount,
       });
     }
+
+    /* The extra field: the main key, the additional keys, and an encrypted
+     * short payment id. The id is the integrated address's when there is one,
+     * and a dummy zero otherwise, so integrated and ordinary payments look
+     * identical on the chain. Both need a single non-change destination to
+     * encrypt against, which a normal one-payment spend has. */
+    const nonChange = parsedOutputs.filter((d) => !d.isSelf);
+    const integrated = nonChange.find((d) => d.paymentId);
+    let encryptedPaymentId: string | undefined;
+    if (integrated && nonChange.length === 1) {
+      encryptedPaymentId = toHex(encryptPaymentId(integrated.paymentId!, integrated.viewPublic, txSecret));
+    } else if (integrated) {
+      return { ok: false, problem: 'An integrated-address payment must be the only destination.' };
+    } else if (set.outputs.length <= 2 && nonChange.length === 1) {
+      encryptedPaymentId = toHex(encryptPaymentId(new Uint8Array(8), nonChange[0]!.viewPublic, txSecret));
+    }
+    const extra = buildTxExtra({
+      txPublicKey: toHex(txPublic),
+      ...(needAdditional ? { additionalPublicKeys } : {}),
+      ...(encryptedPaymentId !== undefined ? { encryptedPaymentId } : {}),
+    });
 
     // --- Prove every input is ours, and its amount is the chain's ---
     interface BuiltInput {
@@ -448,7 +527,7 @@ export function signMoneroSpend(
         keyImage: toHex(input.keyImage),
       })),
       outputs: builtOutputs.map((o) => ({ key: o.oneTimeKey, viewTag: o.viewTag })),
-      extra: '01' + toHex(txPublic),
+      extra,
     };
     const base = {
       fee,

@@ -35,6 +35,51 @@ const TXOUT_TO_TAGGED_KEY = 0x03;
 /** The key input format: a ring of offsets and a key image. */
 const TXIN_TO_KEY = 0x02;
 
+/** tx_extra field tags. */
+const EXTRA_TAG_PUBKEY = 0x01;
+const EXTRA_TAG_NONCE = 0x02;
+const EXTRA_TAG_ADDITIONAL_PUBKEYS = 0x04;
+/** Inside an extra nonce, the marker for an encrypted short payment id. */
+const NONCE_ENCRYPTED_PAYMENT_ID = 0x01;
+
+export interface ExtraFields {
+  /** The main transaction public key, hex. */
+  txPublicKey: string;
+  /** Per-output transaction public keys, hex, for subaddress destinations. */
+  additionalPublicKeys?: readonly string[];
+  /** The eight-byte encrypted short payment id, hex, real or dummy. */
+  encryptedPaymentId?: string;
+}
+
+/**
+ * Build the `tx_extra` field a spend carries.
+ *
+ * The transaction public key first, then the additional per-output keys when
+ * subaddresses need them, then the encrypted payment id nonce. Every standard
+ * spend carries an encrypted payment id, a real one for an integrated address
+ * and a dummy zero otherwise, so that the two are indistinguishable on the
+ * chain; that uniformity is the reason to always pass one. Transcribed from
+ * `add_tx_pub_key_to_extra`, `add_additional_tx_pub_keys_to_extra`, and
+ * `set_encrypted_payment_id_to_tx_extra_nonce`.
+ */
+export function buildTxExtra(fields: ExtraFields): string {
+  const parts: Uint8Array[] = [Uint8Array.of(EXTRA_TAG_PUBKEY), fromHex(fields.txPublicKey)];
+  const additional = fields.additionalPublicKeys ?? [];
+  if (additional.length > 0) {
+    parts.push(Uint8Array.of(EXTRA_TAG_ADDITIONAL_PUBKEYS), varintBytes(additional.length));
+    for (const key of additional) parts.push(fromHex(key));
+  }
+  if (fields.encryptedPaymentId !== undefined) {
+    const id = fromHex(fields.encryptedPaymentId);
+    if (id.length !== 8) throw new Error('An encrypted short payment id is eight bytes.');
+    const nonce = new Uint8Array(1 + 8);
+    nonce[0] = NONCE_ENCRYPTED_PAYMENT_ID;
+    nonce.set(id, 1);
+    parts.push(Uint8Array.of(EXTRA_TAG_NONCE), varintBytes(nonce.length), nonce);
+  }
+  return toHex(cat(...parts));
+}
+
 /** Monero's varint over bigints, since amounts and offsets exceed 2^32. */
 export function varintBytes(value: bigint | number): Uint8Array {
   let n = BigInt(value);

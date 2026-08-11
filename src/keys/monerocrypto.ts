@@ -374,6 +374,103 @@ export function deriveSecretKey(
   return fromBigIntLE(sum, 32);
 }
 
+const SUBADDRESS_DOMAIN = (() => {
+  /* `HASH_KEY_SUBADDRESS` is the C string "SubAddr", and Monero hashes
+   * `sizeof("SubAddr")` bytes, which includes the terminating null. Dropping
+   * the null gives a different scalar and a subaddress nobody can pay. */
+  const s = new TextEncoder().encode('SubAddr');
+  const out = new Uint8Array(s.length + 1);
+  out.set(s, 0);
+  return out; // "SubAddr\0"
+})();
+
+function u32le(value: number): Uint8Array {
+  const out = new Uint8Array(4);
+  out[0] = value & 0xff; out[1] = (value >> 8) & 0xff; out[2] = (value >> 16) & 0xff; out[3] = (value >>> 24) & 0xff;
+  return out;
+}
+
+/**
+ * `get_subaddress_secret_key`: the offset that turns the main spend key into a
+ * subaddress spend key. `m = H_s("SubAddr\0" ‖ a ‖ major_le ‖ minor_le)`, over
+ * the *view* secret `a`. The account index (major, minor) picks which
+ * subaddress; (0, 0) is the main address and has no offset.
+ */
+export function subaddressSecretKey(viewSecret: Uint8Array, major: number, minor: number): Uint8Array {
+  expect32(viewSecret, 'view secret');
+  const buf = new Uint8Array(SUBADDRESS_DOMAIN.length + 32 + 8);
+  buf.set(SUBADDRESS_DOMAIN, 0);
+  buf.set(viewSecret, SUBADDRESS_DOMAIN.length);
+  buf.set(u32le(major), SUBADDRESS_DOMAIN.length + 32);
+  buf.set(u32le(minor), SUBADDRESS_DOMAIN.length + 36);
+  return hashToScalar(buf);
+}
+
+/**
+ * A subaddress's public keys `(D, C)` for account index (major, minor).
+ *
+ * `D = B + m·G` where `m` is the subaddress secret and `B` the main spend
+ * public key; `C = a·D`, the subaddress view key, which is `a·D` and not `a·G`,
+ * the difference that makes subaddresses unlinkable to the main address.
+ */
+export function subaddressKeys(
+  spendPublic: Uint8Array,
+  viewSecret: Uint8Array,
+  major: number,
+  minor: number,
+): { spend: Uint8Array; view: Uint8Array } {
+  expect32(spendPublic, 'spend public key');
+  if (major === 0 && minor === 0) {
+    const B = Point.fromBytes(spendPublic);
+    return { spend: spendPublic, view: B.multiplyUnsafe(toBigIntLE(expect32(viewSecret, 'view secret')) % L).toBytes() };
+  }
+  const m = toBigIntLE(subaddressSecretKey(viewSecret, major, minor));
+  const D = Point.fromBytes(spendPublic).add(Point.BASE.multiply(m));
+  const C = D.multiplyUnsafe(toBigIntLE(viewSecret) % L);
+  return { spend: D.toBytes(), view: C.toBytes() };
+}
+
+/**
+ * `derive_subaddress_public_key`: recover the spend key an output was paid to.
+ *
+ * `P_output - H_s(derivation, i)·G`. For a payment to a subaddress this equals
+ * the subaddress spend key `D`, which a receiver looks up in its table of known
+ * subaddresses. It is the reverse of `derive_public_key`, and it is how the
+ * receiver in the round-trip test proves a subaddress payment reached it.
+ */
+export function deriveSubaddressPublicKey(
+  outputKey: Uint8Array,
+  derivation: Uint8Array,
+  outputIndex: number,
+): Uint8Array {
+  const scalar = toBigIntLE(derivationToScalar(derivation, outputIndex));
+  const point = Point.fromBytes(expect32(outputKey, 'output key'));
+  return point.add(Point.BASE.multiply(scalar).negate()).toBytes();
+}
+
+const ENCRYPTED_PAYMENT_ID_TAIL = 0x8d;
+
+/**
+ * `encrypt_payment_id`: the eight-byte short payment id, masked for the wire.
+ *
+ * `payment_id XOR keccak(derivation ‖ 0x8d)[0..8]`, where the derivation is
+ * `tx_key · A` with `A` the recipient's view public key. It is a symmetric
+ * operation, so the same function decrypts. A wallet with no real payment id
+ * still adds an encrypted zero, so integrated-address payments and ordinary
+ * ones look identical on the chain; that dummy is what `monerobuild` writes.
+ */
+export function encryptPaymentId(paymentId8: Uint8Array, viewPublic: Uint8Array, txSecret: Uint8Array): Uint8Array {
+  if (paymentId8.length !== 8) throw new Error('A short payment id is eight bytes.');
+  const derivation = generateKeyDerivation(viewPublic, txSecret);
+  const buf = new Uint8Array(33);
+  buf.set(derivation, 0);
+  buf[32] = ENCRYPTED_PAYMENT_ID_TAIL;
+  const pad = keccak_256(buf);
+  const out = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) out[i] = paymentId8[i]! ^ pad[i]!;
+  return out;
+}
+
 /**
  * `hash_to_point`: `ge_fromfe_frombytes_vartime` on its own, encoded.
  *

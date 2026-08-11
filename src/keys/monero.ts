@@ -255,6 +255,27 @@ export function addressFor(spendPublic: Uint8Array, viewPublic: Uint8Array, netw
   return base58Encode(full);
 }
 
+/**
+ * A subaddress string from its two public keys `(D, C)`.
+ *
+ * The same layout as a standard address with the subaddress prefix byte, so it
+ * decodes through `parseAddress` and comes back tagged `subaddress`. The sender
+ * treats `(D, C)` exactly like a standard address's spend and view keys plus a
+ * flag, which is the whole of what the subaddress send path needs from it.
+ */
+export function subaddressFor(spendPublic: Uint8Array, viewPublic: Uint8Array, network: Network = 'mainnet'): string {
+  const prefix = PREFIXES.find((p) => p.network === network && p.kind === 'subaddress');
+  if (!prefix) throw new Error('Unknown network.');
+  const body = new Uint8Array(1 + 32 + 32);
+  body[0] = prefix.byte;
+  body.set(spendPublic, 1);
+  body.set(viewPublic, 33);
+  const full = new Uint8Array(body.length + 4);
+  full.set(body);
+  full.set(addressChecksum(body), body.length);
+  return base58Encode(full);
+}
+
 export interface ParsedAddress {
   valid: boolean;
   /** Why it is not valid, in words, when it is not. */

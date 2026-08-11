@@ -13894,6 +13894,24 @@ zoo`.split("\n"));
     const sum = (toBigIntLE2(baseSecret) + scalar) % L2;
     return fromBigIntLE2(sum, 32);
   }
+  var SUBADDRESS_DOMAIN = (() => {
+    const s = new TextEncoder().encode("SubAddr");
+    const out = new Uint8Array(s.length + 1);
+    out.set(s, 0);
+    return out;
+  })();
+  var ENCRYPTED_PAYMENT_ID_TAIL = 141;
+  function encryptPaymentId(paymentId8, viewPublic, txSecret) {
+    if (paymentId8.length !== 8) throw new Error("A short payment id is eight bytes.");
+    const derivation = generateKeyDerivation(viewPublic, txSecret);
+    const buf = new Uint8Array(33);
+    buf.set(derivation, 0);
+    buf[32] = ENCRYPTED_PAYMENT_ID_TAIL;
+    const pad = keccak_256(buf);
+    const out = new Uint8Array(8);
+    for (let i = 0; i < 8; i++) out[i] = paymentId8[i] ^ pad[i];
+    return out;
+  }
   function hashToPoint(bytes) {
     return encodePoint(fromfe(bytes));
   }
@@ -14074,6 +14092,151 @@ zoo`.split("\n"));
   }
   function encodeKeyImageReply(reply) {
     return encoder2.encode(JSON.stringify(reply));
+  }
+
+  // src/keys/monerowire.ts
+  var RCT_TYPE_BPP = 6;
+  var TXOUT_TO_TAGGED_KEY = 3;
+  var TXIN_TO_KEY = 2;
+  var EXTRA_TAG_PUBKEY = 1;
+  var EXTRA_TAG_NONCE = 2;
+  var EXTRA_TAG_ADDITIONAL_PUBKEYS = 4;
+  var NONCE_ENCRYPTED_PAYMENT_ID = 1;
+  function buildTxExtra(fields) {
+    const parts = [Uint8Array.of(EXTRA_TAG_PUBKEY), fromHex(fields.txPublicKey)];
+    const additional = fields.additionalPublicKeys ?? [];
+    if (additional.length > 0) {
+      parts.push(Uint8Array.of(EXTRA_TAG_ADDITIONAL_PUBKEYS), varintBytes(additional.length));
+      for (const key of additional) parts.push(fromHex(key));
+    }
+    if (fields.encryptedPaymentId !== void 0) {
+      const id = fromHex(fields.encryptedPaymentId);
+      if (id.length !== 8) throw new Error("An encrypted short payment id is eight bytes.");
+      const nonce = new Uint8Array(1 + 8);
+      nonce[0] = NONCE_ENCRYPTED_PAYMENT_ID;
+      nonce.set(id, 1);
+      parts.push(Uint8Array.of(EXTRA_TAG_NONCE), varintBytes(nonce.length), nonce);
+    }
+    return toHex(cat(...parts));
+  }
+  function varintBytes(value) {
+    let n = BigInt(value);
+    if (n < 0n) throw new Error("A varint is unsigned.");
+    const out = [];
+    while (n >= 0x80n) {
+      out.push(Number(n & 0x7fn) | 128);
+      n >>= 7n;
+    }
+    out.push(Number(n));
+    return Uint8Array.from(out);
+  }
+  function absoluteToRelative(indices) {
+    const out = [];
+    let prev = 0;
+    for (const index of indices) {
+      if (index < prev) throw new Error("Ring member indices must be sorted ascending.");
+      out.push(index - prev);
+      prev = index;
+    }
+    return out;
+  }
+  function cat(...chunks) {
+    let length = 0;
+    for (const c of chunks) length += c.length;
+    const buf = new Uint8Array(length);
+    let at = 0;
+    for (const c of chunks) {
+      buf.set(c, at);
+      at += c.length;
+    }
+    return buf;
+  }
+  function serializePrefix(prefix2) {
+    const parts = [varintBytes(prefix2.version), varintBytes(prefix2.unlockTime)];
+    parts.push(varintBytes(prefix2.inputs.length));
+    for (const input of prefix2.inputs) {
+      parts.push(Uint8Array.of(TXIN_TO_KEY), varintBytes(0));
+      parts.push(varintBytes(input.keyOffsets.length));
+      for (const offset of input.keyOffsets) parts.push(varintBytes(offset));
+      parts.push(fromHex(input.keyImage));
+    }
+    parts.push(varintBytes(prefix2.outputs.length));
+    for (const output of prefix2.outputs) {
+      parts.push(varintBytes(0), Uint8Array.of(TXOUT_TO_TAGGED_KEY), fromHex(output.key), fromHex(output.viewTag));
+    }
+    const extra = fromHex(prefix2.extra);
+    parts.push(varintBytes(extra.length), extra);
+    return cat(...parts);
+  }
+  function serializeRctBase(base) {
+    if (base.ecdhAmounts.length !== base.outPk.length) throw new Error("One encrypted amount per commitment.");
+    const parts = [Uint8Array.of(RCT_TYPE_BPP), varintBytes(base.fee)];
+    for (const amount of base.ecdhAmounts) {
+      const bytes = fromHex(amount);
+      if (bytes.length !== 8) throw new Error("An encrypted amount is eight bytes.");
+      parts.push(bytes);
+    }
+    for (const commitment of base.outPk) parts.push(fromHex(commitment));
+    return cat(...parts);
+  }
+  function serializeBpp(proof) {
+    const parts = [
+      fromHex(proof.A),
+      fromHex(proof.A1),
+      fromHex(proof.B),
+      fromHex(proof.r1),
+      fromHex(proof.s1),
+      fromHex(proof.d1),
+      varintBytes(proof.L.length)
+    ];
+    for (const l of proof.L) parts.push(fromHex(l));
+    parts.push(varintBytes(proof.R.length));
+    for (const r of proof.R) parts.push(fromHex(r));
+    return cat(...parts);
+  }
+  function serializeRctPrunable(prunable) {
+    if (prunable.clsags.length !== prunable.pseudoOuts.length) throw new Error("One pseudo-out per input.");
+    const parts = [varintBytes(prunable.bpp.length)];
+    for (const proof of prunable.bpp) parts.push(serializeBpp(proof));
+    for (const clsag of prunable.clsags) {
+      for (const s of clsag.s) parts.push(fromHex(s));
+      parts.push(fromHex(clsag.c1), fromHex(clsag.D));
+    }
+    for (const pseudo of prunable.pseudoOuts) parts.push(fromHex(pseudo));
+    return cat(...parts);
+  }
+  function transactionId(prefix2, base, prunable) {
+    return toHex(keccak_256(cat(keccak_256(prefix2), keccak_256(base), keccak_256(prunable))));
+  }
+  function preClsagHash(prefixHash, baseBytes, bpp) {
+    const fields = [];
+    for (const proof of bpp) {
+      fields.push(fromHex(proof.A), fromHex(proof.A1), fromHex(proof.B), fromHex(proof.r1), fromHex(proof.s1), fromHex(proof.d1));
+      for (const l of proof.L) fields.push(fromHex(l));
+      for (const r of proof.R) fields.push(fromHex(r));
+    }
+    return keccak_256(cat(prefixHash, keccak_256(baseBytes), keccak_256(cat(...fields))));
+  }
+  function transactionWeight(sizeBytes, nOutputs) {
+    if (nOutputs <= 2) return sizeBytes;
+    const bpBase = Math.floor(32 * (6 + 7 * 2) / 2);
+    let logPadded = 2;
+    while (1 << logPadded < nOutputs) logPadded++;
+    const nlr = 2 * (6 + logPadded);
+    const bpSize = 32 * (6 + nlr);
+    const clawback = Math.floor((bpBase * (1 << logPadded) - bpSize) * 4 / 5);
+    return sizeBytes + clawback;
+  }
+  function assembleRawTransaction(prefix2, base, prunable) {
+    const prefixBytes = serializePrefix(prefix2);
+    const baseBytes = serializeRctBase(base);
+    const prunableBytes = serializeRctPrunable(prunable);
+    const sizeBytes = prefixBytes.length + baseBytes.length + prunableBytes.length;
+    return {
+      hex: toHex(cat(prefixBytes, baseBytes, prunableBytes)),
+      txid: transactionId(prefixBytes, baseBytes, prunableBytes),
+      weight: transactionWeight(sizeBytes, base.outPk.length)
+    };
   }
 
   // src/keys/monerosign.ts
@@ -14667,130 +14830,6 @@ zoo`.split("\n"));
     };
   }
 
-  // src/keys/monerowire.ts
-  var RCT_TYPE_BPP = 6;
-  var TXOUT_TO_TAGGED_KEY = 3;
-  var TXIN_TO_KEY = 2;
-  function varintBytes(value) {
-    let n = BigInt(value);
-    if (n < 0n) throw new Error("A varint is unsigned.");
-    const out = [];
-    while (n >= 0x80n) {
-      out.push(Number(n & 0x7fn) | 128);
-      n >>= 7n;
-    }
-    out.push(Number(n));
-    return Uint8Array.from(out);
-  }
-  function absoluteToRelative(indices) {
-    const out = [];
-    let prev = 0;
-    for (const index of indices) {
-      if (index < prev) throw new Error("Ring member indices must be sorted ascending.");
-      out.push(index - prev);
-      prev = index;
-    }
-    return out;
-  }
-  function cat(...chunks) {
-    let length = 0;
-    for (const c of chunks) length += c.length;
-    const buf = new Uint8Array(length);
-    let at = 0;
-    for (const c of chunks) {
-      buf.set(c, at);
-      at += c.length;
-    }
-    return buf;
-  }
-  function serializePrefix(prefix2) {
-    const parts = [varintBytes(prefix2.version), varintBytes(prefix2.unlockTime)];
-    parts.push(varintBytes(prefix2.inputs.length));
-    for (const input of prefix2.inputs) {
-      parts.push(Uint8Array.of(TXIN_TO_KEY), varintBytes(0));
-      parts.push(varintBytes(input.keyOffsets.length));
-      for (const offset of input.keyOffsets) parts.push(varintBytes(offset));
-      parts.push(fromHex(input.keyImage));
-    }
-    parts.push(varintBytes(prefix2.outputs.length));
-    for (const output of prefix2.outputs) {
-      parts.push(varintBytes(0), Uint8Array.of(TXOUT_TO_TAGGED_KEY), fromHex(output.key), fromHex(output.viewTag));
-    }
-    const extra = fromHex(prefix2.extra);
-    parts.push(varintBytes(extra.length), extra);
-    return cat(...parts);
-  }
-  function serializeRctBase(base) {
-    if (base.ecdhAmounts.length !== base.outPk.length) throw new Error("One encrypted amount per commitment.");
-    const parts = [Uint8Array.of(RCT_TYPE_BPP), varintBytes(base.fee)];
-    for (const amount of base.ecdhAmounts) {
-      const bytes = fromHex(amount);
-      if (bytes.length !== 8) throw new Error("An encrypted amount is eight bytes.");
-      parts.push(bytes);
-    }
-    for (const commitment of base.outPk) parts.push(fromHex(commitment));
-    return cat(...parts);
-  }
-  function serializeBpp(proof) {
-    const parts = [
-      fromHex(proof.A),
-      fromHex(proof.A1),
-      fromHex(proof.B),
-      fromHex(proof.r1),
-      fromHex(proof.s1),
-      fromHex(proof.d1),
-      varintBytes(proof.L.length)
-    ];
-    for (const l of proof.L) parts.push(fromHex(l));
-    parts.push(varintBytes(proof.R.length));
-    for (const r of proof.R) parts.push(fromHex(r));
-    return cat(...parts);
-  }
-  function serializeRctPrunable(prunable) {
-    if (prunable.clsags.length !== prunable.pseudoOuts.length) throw new Error("One pseudo-out per input.");
-    const parts = [varintBytes(prunable.bpp.length)];
-    for (const proof of prunable.bpp) parts.push(serializeBpp(proof));
-    for (const clsag of prunable.clsags) {
-      for (const s of clsag.s) parts.push(fromHex(s));
-      parts.push(fromHex(clsag.c1), fromHex(clsag.D));
-    }
-    for (const pseudo of prunable.pseudoOuts) parts.push(fromHex(pseudo));
-    return cat(...parts);
-  }
-  function transactionId(prefix2, base, prunable) {
-    return toHex(keccak_256(cat(keccak_256(prefix2), keccak_256(base), keccak_256(prunable))));
-  }
-  function preClsagHash(prefixHash, baseBytes, bpp) {
-    const fields = [];
-    for (const proof of bpp) {
-      fields.push(fromHex(proof.A), fromHex(proof.A1), fromHex(proof.B), fromHex(proof.r1), fromHex(proof.s1), fromHex(proof.d1));
-      for (const l of proof.L) fields.push(fromHex(l));
-      for (const r of proof.R) fields.push(fromHex(r));
-    }
-    return keccak_256(cat(prefixHash, keccak_256(baseBytes), keccak_256(cat(...fields))));
-  }
-  function transactionWeight(sizeBytes, nOutputs) {
-    if (nOutputs <= 2) return sizeBytes;
-    const bpBase = Math.floor(32 * (6 + 7 * 2) / 2);
-    let logPadded = 2;
-    while (1 << logPadded < nOutputs) logPadded++;
-    const nlr = 2 * (6 + logPadded);
-    const bpSize = 32 * (6 + nlr);
-    const clawback = Math.floor((bpBase * (1 << logPadded) - bpSize) * 4 / 5);
-    return sizeBytes + clawback;
-  }
-  function assembleRawTransaction(prefix2, base, prunable) {
-    const prefixBytes = serializePrefix(prefix2);
-    const baseBytes = serializeRctBase(base);
-    const prunableBytes = serializeRctPrunable(prunable);
-    const sizeBytes = prefixBytes.length + baseBytes.length + prunableBytes.length;
-    return {
-      hex: toHex(cat(prefixBytes, baseBytes, prunableBytes)),
-      txid: transactionId(prefixBytes, baseBytes, prunableBytes),
-      weight: transactionWeight(sizeBytes, base.outPk.length)
-    };
-  }
-
   // src/keys/monerobuild.ts
   var Point7 = ed25519.Point;
   var L5 = 2n ** 252n + 27742317777372353535851937790883648493n;
@@ -14886,7 +14925,7 @@ zoo`.split("\n"));
     return { ok: true, set: { v: UNSIGNED_VERSION, chain: "xmr", network, inputs, outputs, fee: fee.toString(), ringSize } };
   }
   function signingRandomCount(nInputs, ringSize, nOutputs) {
-    return 1 + 1 + (nInputs - 1) + nInputs * (ringSize + 1) + bppRandomCount(nOutputs);
+    return 1 + 1 + nOutputs + (nInputs - 1) + nInputs * (ringSize + 1) + bppRandomCount(nOutputs);
   }
   function encryptAmount(amount, sharedSecret) {
     const mask = amountMask(sharedSecret);
@@ -14949,30 +14988,50 @@ zoo`.split("\n"));
       if (parsed.network !== set.network) {
         return { ok: false, problem: `An output address is for ${parsed.network}, not ${set.network}.` };
       }
-      if (parsed.kind !== "standard") {
-        return { ok: false, problem: `An output address is a ${parsed.kind} address, which this vault does not yet sign to.` };
-      }
-      parsedOutputs.push({ spendPublic: fromHex(parsed.spendPublic), viewPublic: fromHex(parsed.viewPublic) });
+      parsedOutputs.push({
+        spendPublic: fromHex(parsed.spendPublic),
+        viewPublic: fromHex(parsed.viewPublic),
+        isSubaddress: parsed.kind === "subaddress",
+        isSelf: output.change || output.dummy === true,
+        paymentId: parsed.kind === "integrated" && parsed.paymentId ? fromHex(parsed.paymentId) : null
+      });
     }
+    const numSub = parsedOutputs.filter((d) => d.isSubaddress).length;
+    const numStd = parsedOutputs.length - numSub;
+    const needAdditional = numSub > 0 && (numStd > 0 || numSub > 1);
     const secrets = [];
     try {
       const txSecret = s2b2(b2s2(draw()));
       if (b2s2(txSecret) === 0n) return { ok: false, problem: "A random scalar reduced to zero. Draw again." };
       secrets.push(txSecret);
-      const txPublic = publicFromSecret(txSecret);
+      const soleSubaddress = numStd === 0 && numSub === 1 ? parsedOutputs.find((d) => d.isSubaddress) : void 0;
+      const txPublic = soleSubaddress ? Point7.fromBytes(soleSubaddress.spendPublic).multiplyUnsafe(b2s2(txSecret)).toBytes() : publicFromSecret(txSecret);
       const order = shuffledIndices(set.outputs.length, draw());
+      const additionalSecrets = [];
+      for (let position = 0; position < order.length; position++) {
+        const secret = s2b2(b2s2(draw()));
+        additionalSecrets.push(secret);
+        secrets.push(secret);
+      }
       const builtOutputs = [];
+      const additionalPublicKeys = [];
       for (let position = 0; position < order.length; position++) {
         const sourceIndex = order[position];
         const output = set.outputs[sourceIndex];
-        const keys = parsedOutputs[sourceIndex];
+        const dest = parsedOutputs[sourceIndex];
         const amount = BigInt(output.amount);
-        const derivation = generateKeyDerivation(keys.viewPublic, txSecret);
+        if (needAdditional) {
+          const r = additionalSecrets[position];
+          const pub = dest.isSubaddress ? Point7.fromBytes(dest.spendPublic).multiplyUnsafe(b2s2(r)).toBytes() : publicFromSecret(r);
+          additionalPublicKeys.push(toHex(pub));
+        }
+        const txPrivate = dest.isSubaddress && needAdditional ? additionalSecrets[position] : txSecret;
+        const derivation = generateKeyDerivation(dest.viewPublic, txPrivate);
         const shared = derivationToScalar(derivation, position);
         const mask = commitmentMask(shared);
         builtOutputs.push({
           source: output,
-          oneTimeKey: toHex(derivePublicKey(derivation, position, keys.spendPublic)),
+          oneTimeKey: toHex(derivePublicKey(derivation, position, dest.spendPublic)),
           viewTag: toHex(deriveViewTag(derivation, position)),
           ecdhAmount: encryptAmount(amount, shared),
           commitment: toHex(commit(amount, mask)),
@@ -14980,6 +15039,21 @@ zoo`.split("\n"));
           amount
         });
       }
+      const nonChange = parsedOutputs.filter((d) => !d.isSelf);
+      const integrated = nonChange.find((d) => d.paymentId);
+      let encryptedPaymentId;
+      if (integrated && nonChange.length === 1) {
+        encryptedPaymentId = toHex(encryptPaymentId(integrated.paymentId, integrated.viewPublic, txSecret));
+      } else if (integrated) {
+        return { ok: false, problem: "An integrated-address payment must be the only destination." };
+      } else if (set.outputs.length <= 2 && nonChange.length === 1) {
+        encryptedPaymentId = toHex(encryptPaymentId(new Uint8Array(8), nonChange[0].viewPublic, txSecret));
+      }
+      const extra = buildTxExtra({
+        txPublicKey: toHex(txPublic),
+        ...needAdditional ? { additionalPublicKeys } : {},
+        ...encryptedPaymentId !== void 0 ? { encryptedPaymentId } : {}
+      });
       const builtInputs = [];
       for (const input of set.inputs) {
         const derivation = generateKeyDerivation(fromHex(input.txPublicKey), wallet.viewSecret);
@@ -15042,7 +15116,7 @@ zoo`.split("\n"));
           keyImage: toHex(input.keyImage)
         })),
         outputs: builtOutputs.map((o) => ({ key: o.oneTimeKey, viewTag: o.viewTag })),
-        extra: "01" + toHex(txPublic)
+        extra
       };
       const base = {
         fee,

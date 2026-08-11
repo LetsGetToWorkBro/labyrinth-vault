@@ -25,10 +25,13 @@ import {
   derivationToScalar,
   derivePublicKey,
   deriveSecretKey,
+  deriveSubaddressPublicKey,
   deriveViewTag,
+  encryptPaymentId,
   generateKeyDerivation,
   generateKeyImage,
   hashToPoint,
+  subaddressKeys,
   hashToScalar,
   selfTest,
   writeVarint,
@@ -58,6 +61,13 @@ const bytes = (text: string): Uint8Array => {
 
 const hex = (value: Uint8Array): string =>
   Array.from(value, (b) => b.toString(16).padStart(2, '0')).join('');
+
+/** A 32-byte scalar as a little-endian bigint, for point-multiply checks. */
+const toBig = (value: Uint8Array): bigint => {
+  let n = 0n;
+  for (let i = value.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(value[i]!);
+  return n;
+};
 
 /** Read a vector list, refusing to pass by finding nothing to check. */
 function vectors(name: string, arity: number): string[][] {
@@ -214,6 +224,62 @@ describe('derive_view_tag', () => {
     /* Two indices under the same derivation give (almost surely) different
      * tags; the published vectors 0 and 1 differ, so assert that pair. */
     expect(hex(deriveViewTag(derivation, 0))).not.toBe(hex(deriveViewTag(derivation, 1)));
+  });
+});
+
+describe('subaddresses', () => {
+  /* No published vectors for these, so they are checked by their defining
+   * relations: (0,0) is the main address, the view key is a·D not a·G, and the
+   * spend key round-trips through derive_subaddress_public_key. */
+  const viewSecret = reduceScalar(new Uint8Array(32).map((_, i) => (i * 3 + 7) & 0xff));
+  const spendSecret = reduceScalar(new Uint8Array(32).map((_, i) => (i * 5 + 11) & 0xff));
+  const spendPublic = publicFromSecret(spendSecret);
+
+  it('returns the main address at index (0, 0)', () => {
+    const sub = subaddressKeys(spendPublic, viewSecret, 0, 0);
+    expect(hex(sub.spend)).toBe(hex(spendPublic));
+    /* Main view key is a·B = a·(main spend). */
+    const mainView = Point.fromHex(hex(spendPublic)).multiply(toBig(viewSecret)).toBytes();
+    expect(hex(sub.view)).toBe(hex(mainView));
+  });
+
+  it('builds a subaddress whose view key is a·D', () => {
+    const sub = subaddressKeys(spendPublic, viewSecret, 1, 3);
+    expect(hex(sub.spend)).not.toBe(hex(spendPublic));
+    const expectedView = Point.fromHex(hex(sub.spend)).multiply(toBig(viewSecret)).toBytes();
+    expect(hex(sub.view)).toBe(hex(expectedView));
+  });
+
+  it('recovers the subaddress spend key through a derivation round trip', () => {
+    /* A sender using tx secret r derives to D; derive_subaddress_public_key
+     * inverts that to D again, which is how a receiver recognises it. */
+    const sub = subaddressKeys(spendPublic, viewSecret, 2, 5);
+    const txSecret = reduceScalar(new Uint8Array(32).fill(9));
+    const derivation = generateKeyDerivation(sub.view, txSecret); // r·C
+    const outputKey = derivePublicKey(derivation, 0, sub.spend);
+    expect(hex(deriveSubaddressPublicKey(outputKey, derivation, 0))).toBe(hex(sub.spend));
+  });
+});
+
+describe('encrypt_payment_id', () => {
+  it('is symmetric: encrypting twice returns the original', () => {
+    const viewSecret = reduceScalar(new Uint8Array(32).map((_, i) => (i + 1) & 0xff));
+    const viewPublic = publicFromSecret(viewSecret);
+    const txSecret = reduceScalar(new Uint8Array(32).fill(3));
+    const paymentId = bytes('0123456789abcdef');
+    /* The recipient's shared secret is a·R = txSecret·A, so encrypting under
+     * the view public with the tx secret, then under the tx public with the
+     * view secret, uses the same pad. Here we just check XOR is its own
+     * inverse under a fixed pad. */
+    const once = encryptPaymentId(paymentId, viewPublic, txSecret);
+    const twice = encryptPaymentId(once, viewPublic, txSecret);
+    expect(hex(twice)).toBe(hex(paymentId));
+    expect(hex(once)).not.toBe(hex(paymentId));
+  });
+
+  it('refuses anything that is not eight bytes', () => {
+    const viewPublic = publicFromSecret(reduceScalar(new Uint8Array(32).fill(1)));
+    expect(() => encryptPaymentId(new Uint8Array(32), viewPublic, reduceScalar(new Uint8Array(32).fill(2)))).toThrow();
   });
 });
 
