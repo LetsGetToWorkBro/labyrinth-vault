@@ -93,28 +93,55 @@ array in monero-project's `rctTypes.h`. Both halves are load-bearing. Computing
 it shows the constant is what the definition produces; comparing it shows this
 code agrees with the network about which point that is.
 
-## What it cannot do
+## Spends, and the round trip that makes them visible
 
-**A view-only wallet cannot tell which of its outputs have been spent.**
+**A view key alone cannot tell which of its outputs have been spent.** That is
+not a gap more code on the wallet closes; spending an output publishes a key
+image, and computing the key image of your own output needs the spend secret,
+which by design never leaves the vault.
 
-This is not a gap that more code in this repository closes. Spending an output
-publishes a key image, and computing the key image of your own output needs the
-spend secret, which by design is not on the phone. So the wallet can list every
-payment it ever received and cannot subtract the ones that have since gone.
+So the computation goes to the key. The wallet lists the outputs its scan
+found and animates them as `XMROUTPUTS` frames; the vault re-derives every one
+from its own keys, refuses any that are not really its own, computes the
+images with `derive_secret_key` and `generate_key_image` (both pinned to the
+Monero project's vectors), and animates back `XMRKEYIMAGES`. From then on the
+wallet can see spends two ways: the chain walk carries the key image of every
+input it passes and matches them against the imported set for free, and one
+`is_key_image_spent` question to the node settles the history from before the
+import existed.
 
-Every wallet in this position solves it the same way: the spending wallet
-exports its key images and the watching wallet imports them. The vault already
-recognizes that file, `Monero key image export`, as one of the six wallet2
-containers in `src/keys/monerotx.ts`. Wiring that round trip is the next piece
-of work on this side of the product.
+That question has a price, and it is the one place the Monero side tells the
+node anything about you: a key image handed over in a question is one the
+operator can recognize later, on the chain, as yours. From then on they can
+tell *when* you spend, though still not what or to whom. The alternative is
+rescanning the whole chain after every import, which is hours. The screens say
+which number came from what.
 
-Until then the number is **received**, it is labeled received on every screen
-that shows it, and it is never called a balance. A received total under the
-word BALANCE would tell somebody who has spent money that they still have it.
+Three honest limits stay in place:
 
-`spendable` on the Monero view is zero, and not because the scan is behind.
-Building a Monero spend needs key images and ring members, and this half of the
-product has neither.
+- The wallet cannot verify an image is *correct* for its key; that takes the
+  spend secret or the ring-signature proof wallet2 bundles in its export
+  file. The images cross the same one-way optical wire as everything else,
+  from the device this product treats as the root of trust, and the caveat
+  under the balance says where they came from. A wrong image from a genuine
+  vault means a spend goes undetected and the number reads high.
+- An image is accepted only for an output the scan actually found, so a
+  corrupted or hostile reply can at worst fail to mark a spend, never invent
+  one and never shrink the balance.
+- Outputs with no image yet count as unspent, which is the received-total
+  assumption on a smaller set, and the sentence under the number counts them.
+
+With images covering everything found, the figure is a balance in the ordinary
+sense: received minus spent. Without any, it is received and says so.
+`monero-wallet-cli`'s own `Monero key image export` file remains recognized by
+name in `src/keys/monerotx.ts` and refused honestly; the vault-to-wallet trip
+uses the wire's own kinds instead, because those can be built and tested
+whole, on both ends, in this repository.
+
+`spendable` on the Monero view stays zero even with a settled balance, and not
+because the scan is behind. Building a Monero *spend* needs ring members and a
+signed transaction set, and that half is not built. A non-zero spendable would
+put a send button in front of somebody it cannot serve.
 
 ## What it costs, in practice
 

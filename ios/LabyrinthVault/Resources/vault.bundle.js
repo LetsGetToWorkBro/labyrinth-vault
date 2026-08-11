@@ -778,7 +778,15 @@
 
   // src/airgap/envelope.ts
   var WIRE_VERSION = 1;
-  var KINDS = ["ACCOUNT", "PSBT", "XMRUNSIGNED", "XMRSIGNED", "TXSIGNED"];
+  var KINDS = [
+    "ACCOUNT",
+    "PSBT",
+    "XMRUNSIGNED",
+    "XMRSIGNED",
+    "XMROUTPUTS",
+    "XMRKEYIMAGES",
+    "TXSIGNED"
+  ];
   var DEFAULT_PART_BYTES = 400;
   var MAX_PARTS = 2048;
   var B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -3928,8 +3936,8 @@
   }
   var asciiDecoder = /* @__PURE__ */ (() => {
     try {
-      const decoder2 = new TextDecoder();
-      return decoder2.decode(Uint8Array.of(65, 48, 43, 127)) === "A0+\x7F" ? decoder2 : void 0;
+      const decoder3 = new TextDecoder();
+      return decoder3.decode(Uint8Array.of(65, 48, 43, 127)) === "A0+\x7F" ? decoder3 : void 0;
     } catch (e) {
       return void 0;
     }
@@ -13740,6 +13748,304 @@ zoo`.split("\n"));
     return encoder.encode(JSON.stringify(account));
   }
 
+  // src/keys/monerocrypto.ts
+  var Point4 = ed25519.Point;
+  var P = 2n ** 255n - 19n;
+  var L2 = 2n ** 252n + 27742317777372353535851937790883648493n;
+  var mod2 = (n) => (n % P + P) % P;
+  function toBigIntLE2(bytes) {
+    let n = 0n;
+    for (let i = bytes.length - 1; i >= 0; i--) n = n << 8n | BigInt(bytes[i]);
+    return n;
+  }
+  function fromBigIntLE2(value, length) {
+    const out = new Uint8Array(length);
+    let n = value;
+    for (let i = 0; i < length; i++) {
+      out[i] = Number(n & 0xffn);
+      n >>= 8n;
+    }
+    return out;
+  }
+  function invert2(n) {
+    if (mod2(n) === 0n) throw new Error("That value has no inverse in the field.");
+    return pow3(n, P - 2n);
+  }
+  function pow3(base, exponent) {
+    let result = 1n;
+    let b = mod2(base);
+    let e = exponent;
+    while (e > 0n) {
+      if (e & 1n) result = mod2(result * b);
+      b = mod2(b * b);
+      e >>= 1n;
+    }
+    return result;
+  }
+  function expect32(bytes, what) {
+    if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
+      throw new Error(`A ${what} is 32 bytes.`);
+    }
+    return bytes;
+  }
+  var SQRT_M1 = 19681161376707505956807079304988542015446066515923890162744021073123829784752n;
+  var MA = mod2(-486662n);
+  var MA2 = mod2(-486662n * 486662n);
+  var FFFB1 = 703233174040119856926594035342289954908528790615891058923819529064776187391n;
+  var FFFB2 = 23057146872909699840411355416938605094565363926207269214935344372714976797965n;
+  var FFFB3 = 46719087769223307720043111813545796356806574765024592941723029582131464514662n;
+  var FFFB4 = 46015854595183187863116517778203506401898045974408701882799210053066688327271n;
+  function divpowm1(w, x) {
+    return pow3(mod2(w * invert2(x)), (P + 3n) / 8n);
+  }
+  function fromfe(bytes) {
+    const u = toBigIntLE2(expect32(bytes, "hash")) % P;
+    const v = mod2(2n * u * u);
+    const w = mod2(v + 1n);
+    let x = mod2(w * w + MA2 * v);
+    let rX = divpowm1(w, x);
+    let y = mod2(rX * rX);
+    x = mod2(y * x);
+    y = mod2(w - x);
+    let z = MA;
+    let sign;
+    if (y !== 0n) {
+      y = mod2(w + x);
+      if (y !== 0n) {
+        x = mod2(x * SQRT_M1);
+        y = mod2(w - x);
+        rX = mod2(rX * (y !== 0n ? FFFB3 : FFFB4));
+        sign = 1n;
+      } else {
+        rX = mod2(rX * FFFB1);
+        rX = mod2(rX * u);
+        z = mod2(z * v);
+        sign = 0n;
+      }
+    } else {
+      rX = mod2(rX * FFFB2);
+      rX = mod2(rX * u);
+      z = mod2(z * v);
+      sign = 0n;
+    }
+    if ((rX & 1n) !== sign) rX = mod2(-rX);
+    const Z = mod2(z + w);
+    const Y = mod2(z - w);
+    const X = mod2(rX * Z);
+    return { X, Y, Z };
+  }
+  function encodePoint(point) {
+    const iz = invert2(point.Z);
+    const x = mod2(point.X * iz);
+    const y = mod2(point.Y * iz);
+    const out = fromBigIntLE2(y, 32);
+    out[31] = out[31] | Number(x & 1n) << 7;
+    return out;
+  }
+  function hashToScalar(data) {
+    return reduceScalar(keccak_256(data));
+  }
+  function generateKeyDerivation(publicKey, secret) {
+    const point = Point4.fromBytes(expect32(publicKey, "public key"));
+    const scalar = toBigIntLE2(expect32(secret, "secret key")) % L2;
+    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
+    return point.multiply(scalar).multiplyUnsafe(8n).toBytes();
+  }
+  function writeVarint(value) {
+    if (!Number.isInteger(value) || value < 0 || !Number.isSafeInteger(value)) {
+      throw new Error("An output index is a non-negative whole number.");
+    }
+    const out = [];
+    let n = value;
+    while (n >= 128) {
+      out.push(n & 127 | 128);
+      n = Math.floor(n / 128);
+    }
+    out.push(n);
+    return Uint8Array.from(out);
+  }
+  function derivationToScalar(derivation, outputIndex) {
+    expect32(derivation, "derivation");
+    const index = writeVarint(outputIndex);
+    const buffer = new Uint8Array(32 + index.length);
+    buffer.set(derivation, 0);
+    buffer.set(index, 32);
+    return hashToScalar(buffer);
+  }
+  function derivePublicKey(derivation, outputIndex, base) {
+    const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
+    if (scalar === 0n) throw new Error("That derivation produced a zero scalar.");
+    const basePoint = Point4.fromBytes(expect32(base, "public key"));
+    return basePoint.add(Point4.BASE.multiply(scalar)).toBytes();
+  }
+  function deriveSecretKey(derivation, outputIndex, baseSecret) {
+    expect32(baseSecret, "secret key");
+    const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
+    const sum = (toBigIntLE2(baseSecret) + scalar) % L2;
+    return fromBigIntLE2(sum, 32);
+  }
+  function hashToPoint(bytes) {
+    return encodePoint(fromfe(bytes));
+  }
+  function hashToEc(publicKey) {
+    const mapped = fromfe(keccak_256(expect32(publicKey, "public key")));
+    const iz = invert2(mapped.Z);
+    const point = Point4.fromAffine({ x: mod2(mapped.X * iz), y: mod2(mapped.Y * iz) });
+    return point.multiplyUnsafe(8n);
+  }
+  function generateKeyImage(publicKey, secret) {
+    const scalar = toBigIntLE2(expect32(secret, "secret key")) % L2;
+    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
+    return hashToEc(publicKey).multiply(scalar).toBytes();
+  }
+  var RCT_H = (() => {
+    const hashed = keccak_256(Point4.BASE.toBytes());
+    return Point4.fromBytes(hashed).multiplyUnsafe(8n).toBytes();
+  })();
+  var RCT_H_HEX = "8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94";
+  function hex2(bytes) {
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  function unhex(text) {
+    const out = new Uint8Array(text.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(text.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+  function selfTest3() {
+    const checks = [];
+    const add2 = (name, proves, run) => {
+      try {
+        const [ok, detail] = run();
+        checks.push({ name, proves, ok, detail });
+      } catch (error) {
+        checks.push({ name, proves, ok: false, detail: error.message });
+      }
+    };
+    add2("Monero hash-to-scalar against the project vector", "Every derived scalar starts here, and an unreduced one disagrees with every other wallet.", () => {
+      const got = hex2(hashToScalar(unhex("14b5ff33")));
+      const want = "709162ee2552c852ba62d406efd369d65851777152c9df4b61a2c4e19190c408";
+      return [got === want, got];
+    });
+    add2("The output-scanning shared secret", "The Diffie-Hellman step that finds your own outputs matches the reference implementation.", () => {
+      const got = hex2(generateKeyDerivation(
+        unhex("fdfd97d2ea9f1c25df773ff2c973d885653a3ee643157eb0ae2b6dd98f0b6984"),
+        unhex("eb2bd1cf0c5e074f9dbf38ebbc99c316f54e21803048c687a3bb359f7a713b02")
+      ));
+      const want = "4e0bd2c41325a1b89a9f7413d4d05e0a5a4936f241dccc3c7d0c539ffe00ef67";
+      return [got === want, got];
+    });
+    add2("A one-time output key", "The address an output was really paid to is computed the same way the network computes it.", () => {
+      const got = hex2(derivePublicKey(
+        unhex("ca780b065e48091d910de90bcab2411db3d1a845e6d95cfd556af4138504c737"),
+        217407,
+        unhex("6d9dd2068b9d6d643b407e360dfc5eb7a1f628fe2de8112a9e5731e8b3680c39")
+      ));
+      const want = "d48008aff5f27d8fcdc2a3bf814ed3505530f598075f3bf7e868fea696b109f6";
+      return [got === want, got];
+    });
+    add2("Its matching private key", "The spend half agrees with the watch half, or the output is unspendable.", () => {
+      const got = hex2(deriveSecretKey(
+        unhex("0fc47054f355ced4d67de73bfa12e4c78ff19089548fffa7d07a674741860f97"),
+        66,
+        unhex("5619c62aa4ad787274b1071598b6ecacf4f9dacca2fd11b0c80741b744400500")
+      ));
+      const want = "55297d64b0c0556d5583ce0e30c2024ccce90c93d16bdeb4e40fce7afff87803";
+      return [got === want, got];
+    });
+    add2("Bytes onto the curve, Monero's way", "The transcribed Elligator map, the one piece of curve arithmetic written here rather than borrowed.", () => {
+      const got = hex2(hashToPoint(unhex("83efb774657700e37291f4b8dd10c839d1c739fd135c07a2fd7382334dafdd6a")));
+      const want = "2789ecbaf36e4fcb41c6157228001538b40ca379464b718d830c58caae7ea4ca";
+      return [got === want, got];
+    });
+    add2("A key image", "The value that stops a double spend, and that links two spends if it is wrong.", () => {
+      const got = hex2(generateKeyImage(
+        unhex("e46b60ebfe610b8ba761032018471e5719bb77ea1cd945475c4a4abe7224bfd0"),
+        unhex("981d477fb18897fa1f784c89721a9d600bf283f06b89cb018a077f41dcefef0f")
+      ));
+      const want = "a637203ec41eab772532d30420eac80612fce8e44f1758bc7e2cb1bdda815887";
+      return [got === want, got];
+    });
+    add2("The RingCT second generator", "Every amount this wallet reads is proved against a commitment built on this point.", () => {
+      const got = hex2(RCT_H);
+      return [got === RCT_H_HEX, got];
+    });
+    return checks;
+  }
+
+  // src/keys/keyimages.ts
+  var KEYIMAGE_VERSION = 1;
+  var encoder2 = new TextEncoder();
+  var decoder2 = new TextDecoder();
+  var MAX_OUTPUTS = 2e3;
+  var HEX64 = /^[0-9a-f]{64}$/;
+  function parseKeyImageRequest(bytes) {
+    let value;
+    try {
+      value = JSON.parse(decoder2.decode(bytes));
+    } catch {
+      return { ok: false, problem: "That is not a key image request." };
+    }
+    if (!value || typeof value !== "object") {
+      return { ok: false, problem: "That is not a key image request." };
+    }
+    const raw = value;
+    if (raw["chain"] !== "xmr") return { ok: false, problem: "That request is not about Monero." };
+    if (typeof raw["v"] !== "number" || raw["v"] < 1 || raw["v"] > KEYIMAGE_VERSION) {
+      return { ok: false, problem: "That request is from a different version of the wallet." };
+    }
+    if (!Array.isArray(raw["outputs"]) || raw["outputs"].length === 0) {
+      return { ok: false, problem: "That request lists no outputs." };
+    }
+    if (raw["outputs"].length > MAX_OUTPUTS) {
+      return { ok: false, problem: `One request carries at most ${MAX_OUTPUTS} outputs.` };
+    }
+    const outputs = [];
+    for (const entry of raw["outputs"]) {
+      const output = entry;
+      const tx = typeof output["tx"] === "string" ? output["tx"].toLowerCase() : "";
+      const key = typeof output["key"] === "string" ? output["key"].toLowerCase() : "";
+      const index = output["index"];
+      if (!HEX64.test(tx) || !HEX64.test(key)) {
+        return { ok: false, problem: "An output in that request does not carry two 32-byte keys." };
+      }
+      if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1e4) {
+        return { ok: false, problem: "An output in that request has an index that is not one." };
+      }
+      outputs.push({ tx, index, key });
+    }
+    return { ok: true, request: { v: raw["v"], chain: "xmr", outputs } };
+  }
+  function computeKeyImages(wallet, request) {
+    const images = [];
+    const refused = [];
+    for (const output of request.outputs) {
+      let oneTimeSecret = null;
+      try {
+        const derivation = generateKeyDerivation(fromHex(output.tx), wallet.viewSecret);
+        const derived = toHex(
+          derivePublicKey(derivation, output.index, fromHex(wallet.spendPublic))
+        );
+        if (derived !== output.key) {
+          refused.push(output.key);
+          continue;
+        }
+        oneTimeSecret = deriveSecretKey(derivation, output.index, wallet.spendSecret);
+        images.push({
+          key: output.key,
+          image: toHex(generateKeyImage(fromHex(output.key), oneTimeSecret))
+        });
+      } catch {
+        refused.push(output.key);
+      } finally {
+        if (oneTimeSecret) wipe(oneTimeSecret);
+      }
+    }
+    return { v: KEYIMAGE_VERSION, chain: "xmr", images, refused };
+  }
+  function encodeKeyImageReply(reply) {
+    return encoder2.encode(JSON.stringify(reply));
+  }
+
   // src/keys/monerotx.ts
   var MAGICS = [
     {
@@ -13822,14 +14128,14 @@ zoo`.split("\n"));
   var DEFAULT_SCAN_DEPTH = 200;
   var HIGH_FEE_RATIO = 0.1;
   var HIGH_FEE_RATE = 500;
-  function hex2(bytes) {
+  function hex3(bytes) {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
   function psbtDigest(psbt) {
-    return hex2(sha256(psbt));
+    return hex3(sha256(psbt));
   }
   function walletIdOf(wallet) {
-    return hex2(sha256(new TextEncoder().encode(wallet.zpub))).slice(0, 16);
+    return hex3(sha256(new TextEncoder().encode(wallet.zpub))).slice(0, 16);
   }
   function failed(digest, walletId, problem) {
     return {
@@ -13862,7 +14168,7 @@ zoo`.split("\n"));
       for (const change of [0, 1]) {
         for (let index = this.depth; index < depth; index++) {
           try {
-            this.map.set(hex2(addressAt(wallet, change, index).script), { change, index });
+            this.map.set(hex3(addressAt(wallet, change, index).script), { change, index });
           } catch {
             break;
           }
@@ -13880,7 +14186,7 @@ zoo`.split("\n"));
      * option that does not mean what it says is worse than no option.
      */
     find(script, limit) {
-      const spot = this.map.get(hex2(script));
+      const spot = this.map.get(hex3(script));
       return spot && spot.index < limit ? spot : null;
     }
   };
@@ -13954,7 +14260,7 @@ zoo`.split("\n"));
           message: `Input ${i + 1} asks to be signed with sighash flag 0x${input.sighashType.toString(16)}, not SIGHASH_ALL. A signature like that does not commit to where the money goes, so whoever holds it could redirect the payment after you approved it. Do not sign it.`
         });
       }
-      const coin = `${input.txid ? hex2(input.txid) : ""}:${vout}`;
+      const coin = `${input.txid ? hex3(input.txid) : ""}:${vout}`;
       if (seenCoins.has(coin)) {
         warnings.push({
           code: "duplicate-input",
@@ -13967,7 +14273,7 @@ zoo`.split("\n"));
       if (spot) spending += value ?? 0n;
       else foreignInputs++;
       inputs.push({
-        txid: input.txid ? hex2(input.txid) : "",
+        txid: input.txid ? hex3(input.txid) : "",
         vout,
         value,
         address: script ? addressFromScript(script) : null,
@@ -14017,7 +14323,7 @@ zoo`.split("\n"));
       else leaving += value;
       outputs.push({
         address,
-        script: hex2(script),
+        script: hex3(script),
         value,
         mine: spot !== null,
         path: spot ? pathOf(spot) : null
@@ -14821,7 +15127,7 @@ zoo`.split("\n"));
     A2_BUF[2 * c] = Cl, A2_BUF[2 * c + 1] = Ch;
     A2_BUF[2 * d] = Dl, A2_BUF[2 * d + 1] = Dh;
   }
-  function P(v00, v01, v02, v03, v04, v05, v06, v07, v08, v09, v10, v11, v12, v13, v14, v15) {
+  function P2(v00, v01, v02, v03, v04, v05, v06, v07, v08, v09, v10, v11, v12, v13, v14, v15) {
     G(v00, v04, v08, v12);
     G(v01, v05, v09, v13);
     G(v02, v06, v10, v14);
@@ -14835,10 +15141,10 @@ zoo`.split("\n"));
     for (let i = 0; i < 256; i++)
       A2_BUF[i] = x[xPos + i] ^ x[yPos + i];
     for (let i = 0; i < 128; i += 16) {
-      P(i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7, i + 8, i + 9, i + 10, i + 11, i + 12, i + 13, i + 14, i + 15);
+      P2(i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7, i + 8, i + 9, i + 10, i + 11, i + 12, i + 13, i + 14, i + 15);
     }
     for (let i = 0; i < 16; i += 2) {
-      P(i, i + 1, i + 16, i + 17, i + 32, i + 33, i + 48, i + 49, i + 64, i + 65, i + 80, i + 81, i + 96, i + 97, i + 112, i + 113);
+      P2(i, i + 1, i + 16, i + 17, i + 32, i + 33, i + 48, i + 49, i + 64, i + 65, i + 80, i + 81, i + 96, i + 97, i + 112, i + 113);
     }
     if (needXor)
       for (let i = 0; i < 256; i++)
@@ -15877,230 +16183,6 @@ zoo`.split("\n"));
     }
   }
 
-  // src/keys/monerocrypto.ts
-  var Point4 = ed25519.Point;
-  var P2 = 2n ** 255n - 19n;
-  var L2 = 2n ** 252n + 27742317777372353535851937790883648493n;
-  var mod2 = (n) => (n % P2 + P2) % P2;
-  function toBigIntLE2(bytes) {
-    let n = 0n;
-    for (let i = bytes.length - 1; i >= 0; i--) n = n << 8n | BigInt(bytes[i]);
-    return n;
-  }
-  function fromBigIntLE2(value, length) {
-    const out = new Uint8Array(length);
-    let n = value;
-    for (let i = 0; i < length; i++) {
-      out[i] = Number(n & 0xffn);
-      n >>= 8n;
-    }
-    return out;
-  }
-  function invert2(n) {
-    if (mod2(n) === 0n) throw new Error("That value has no inverse in the field.");
-    return pow3(n, P2 - 2n);
-  }
-  function pow3(base, exponent) {
-    let result = 1n;
-    let b = mod2(base);
-    let e = exponent;
-    while (e > 0n) {
-      if (e & 1n) result = mod2(result * b);
-      b = mod2(b * b);
-      e >>= 1n;
-    }
-    return result;
-  }
-  function expect32(bytes, what) {
-    if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
-      throw new Error(`A ${what} is 32 bytes.`);
-    }
-    return bytes;
-  }
-  var SQRT_M1 = 19681161376707505956807079304988542015446066515923890162744021073123829784752n;
-  var MA = mod2(-486662n);
-  var MA2 = mod2(-486662n * 486662n);
-  var FFFB1 = 703233174040119856926594035342289954908528790615891058923819529064776187391n;
-  var FFFB2 = 23057146872909699840411355416938605094565363926207269214935344372714976797965n;
-  var FFFB3 = 46719087769223307720043111813545796356806574765024592941723029582131464514662n;
-  var FFFB4 = 46015854595183187863116517778203506401898045974408701882799210053066688327271n;
-  function divpowm1(w, x) {
-    return pow3(mod2(w * invert2(x)), (P2 + 3n) / 8n);
-  }
-  function fromfe(bytes) {
-    const u = toBigIntLE2(expect32(bytes, "hash")) % P2;
-    const v = mod2(2n * u * u);
-    const w = mod2(v + 1n);
-    let x = mod2(w * w + MA2 * v);
-    let rX = divpowm1(w, x);
-    let y = mod2(rX * rX);
-    x = mod2(y * x);
-    y = mod2(w - x);
-    let z = MA;
-    let sign;
-    if (y !== 0n) {
-      y = mod2(w + x);
-      if (y !== 0n) {
-        x = mod2(x * SQRT_M1);
-        y = mod2(w - x);
-        rX = mod2(rX * (y !== 0n ? FFFB3 : FFFB4));
-        sign = 1n;
-      } else {
-        rX = mod2(rX * FFFB1);
-        rX = mod2(rX * u);
-        z = mod2(z * v);
-        sign = 0n;
-      }
-    } else {
-      rX = mod2(rX * FFFB2);
-      rX = mod2(rX * u);
-      z = mod2(z * v);
-      sign = 0n;
-    }
-    if ((rX & 1n) !== sign) rX = mod2(-rX);
-    const Z = mod2(z + w);
-    const Y = mod2(z - w);
-    const X = mod2(rX * Z);
-    return { X, Y, Z };
-  }
-  function encodePoint(point) {
-    const iz = invert2(point.Z);
-    const x = mod2(point.X * iz);
-    const y = mod2(point.Y * iz);
-    const out = fromBigIntLE2(y, 32);
-    out[31] = out[31] | Number(x & 1n) << 7;
-    return out;
-  }
-  function hashToScalar(data) {
-    return reduceScalar(keccak_256(data));
-  }
-  function generateKeyDerivation(publicKey, secret) {
-    const point = Point4.fromBytes(expect32(publicKey, "public key"));
-    const scalar = toBigIntLE2(expect32(secret, "secret key")) % L2;
-    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
-    return point.multiply(scalar).multiplyUnsafe(8n).toBytes();
-  }
-  function writeVarint(value) {
-    if (!Number.isInteger(value) || value < 0 || !Number.isSafeInteger(value)) {
-      throw new Error("An output index is a non-negative whole number.");
-    }
-    const out = [];
-    let n = value;
-    while (n >= 128) {
-      out.push(n & 127 | 128);
-      n = Math.floor(n / 128);
-    }
-    out.push(n);
-    return Uint8Array.from(out);
-  }
-  function derivationToScalar(derivation, outputIndex) {
-    expect32(derivation, "derivation");
-    const index = writeVarint(outputIndex);
-    const buffer = new Uint8Array(32 + index.length);
-    buffer.set(derivation, 0);
-    buffer.set(index, 32);
-    return hashToScalar(buffer);
-  }
-  function derivePublicKey(derivation, outputIndex, base) {
-    const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
-    if (scalar === 0n) throw new Error("That derivation produced a zero scalar.");
-    const basePoint = Point4.fromBytes(expect32(base, "public key"));
-    return basePoint.add(Point4.BASE.multiply(scalar)).toBytes();
-  }
-  function deriveSecretKey(derivation, outputIndex, baseSecret) {
-    expect32(baseSecret, "secret key");
-    const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
-    const sum = (toBigIntLE2(baseSecret) + scalar) % L2;
-    return fromBigIntLE2(sum, 32);
-  }
-  function hashToPoint(bytes) {
-    return encodePoint(fromfe(bytes));
-  }
-  function hashToEc(publicKey) {
-    const mapped = fromfe(keccak_256(expect32(publicKey, "public key")));
-    const iz = invert2(mapped.Z);
-    const point = Point4.fromAffine({ x: mod2(mapped.X * iz), y: mod2(mapped.Y * iz) });
-    return point.multiplyUnsafe(8n);
-  }
-  function generateKeyImage(publicKey, secret) {
-    const scalar = toBigIntLE2(expect32(secret, "secret key")) % L2;
-    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
-    return hashToEc(publicKey).multiply(scalar).toBytes();
-  }
-  var RCT_H = (() => {
-    const hashed = keccak_256(Point4.BASE.toBytes());
-    return Point4.fromBytes(hashed).multiplyUnsafe(8n).toBytes();
-  })();
-  var RCT_H_HEX = "8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94";
-  function hex3(bytes) {
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  function unhex(text) {
-    const out = new Uint8Array(text.length / 2);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(text.slice(i * 2, i * 2 + 2), 16);
-    return out;
-  }
-  function selfTest3() {
-    const checks = [];
-    const add2 = (name, proves, run) => {
-      try {
-        const [ok, detail] = run();
-        checks.push({ name, proves, ok, detail });
-      } catch (error) {
-        checks.push({ name, proves, ok: false, detail: error.message });
-      }
-    };
-    add2("Monero hash-to-scalar against the project vector", "Every derived scalar starts here, and an unreduced one disagrees with every other wallet.", () => {
-      const got = hex3(hashToScalar(unhex("14b5ff33")));
-      const want = "709162ee2552c852ba62d406efd369d65851777152c9df4b61a2c4e19190c408";
-      return [got === want, got];
-    });
-    add2("The output-scanning shared secret", "The Diffie-Hellman step that finds your own outputs matches the reference implementation.", () => {
-      const got = hex3(generateKeyDerivation(
-        unhex("fdfd97d2ea9f1c25df773ff2c973d885653a3ee643157eb0ae2b6dd98f0b6984"),
-        unhex("eb2bd1cf0c5e074f9dbf38ebbc99c316f54e21803048c687a3bb359f7a713b02")
-      ));
-      const want = "4e0bd2c41325a1b89a9f7413d4d05e0a5a4936f241dccc3c7d0c539ffe00ef67";
-      return [got === want, got];
-    });
-    add2("A one-time output key", "The address an output was really paid to is computed the same way the network computes it.", () => {
-      const got = hex3(derivePublicKey(
-        unhex("ca780b065e48091d910de90bcab2411db3d1a845e6d95cfd556af4138504c737"),
-        217407,
-        unhex("6d9dd2068b9d6d643b407e360dfc5eb7a1f628fe2de8112a9e5731e8b3680c39")
-      ));
-      const want = "d48008aff5f27d8fcdc2a3bf814ed3505530f598075f3bf7e868fea696b109f6";
-      return [got === want, got];
-    });
-    add2("Its matching private key", "The spend half agrees with the watch half, or the output is unspendable.", () => {
-      const got = hex3(deriveSecretKey(
-        unhex("0fc47054f355ced4d67de73bfa12e4c78ff19089548fffa7d07a674741860f97"),
-        66,
-        unhex("5619c62aa4ad787274b1071598b6ecacf4f9dacca2fd11b0c80741b744400500")
-      ));
-      const want = "55297d64b0c0556d5583ce0e30c2024ccce90c93d16bdeb4e40fce7afff87803";
-      return [got === want, got];
-    });
-    add2("Bytes onto the curve, Monero's way", "The transcribed Elligator map, the one piece of curve arithmetic written here rather than borrowed.", () => {
-      const got = hex3(hashToPoint(unhex("83efb774657700e37291f4b8dd10c839d1c739fd135c07a2fd7382334dafdd6a")));
-      const want = "2789ecbaf36e4fcb41c6157228001538b40ca379464b718d830c58caae7ea4ca";
-      return [got === want, got];
-    });
-    add2("A key image", "The value that stops a double spend, and that links two spends if it is wrong.", () => {
-      const got = hex3(generateKeyImage(
-        unhex("e46b60ebfe610b8ba761032018471e5719bb77ea1cd945475c4a4abe7224bfd0"),
-        unhex("981d477fb18897fa1f784c89721a9d600bf283f06b89cb018a077f41dcefef0f")
-      ));
-      const want = "a637203ec41eab772532d30420eac80612fce8e44f1758bc7e2cb1bdda815887";
-      return [got === want, got];
-    });
-    add2("The RingCT second generator", "Every amount this wallet reads is proved against a commitment built on this point.", () => {
-      const got = hex3(RCT_H);
-      return [got === RCT_H_HEX, got];
-    });
-    return checks;
-  }
-
   // src/selftest.ts
   function sameBytes(a, b) {
     if (a.length !== b.length) return false;
@@ -16286,7 +16368,7 @@ zoo`.split("\n"));
     if (!session) throw new Error("The vault is locked.");
     return session;
   }
-  var HOST_VERSION = 2;
+  var HOST_VERSION = 3;
   var api = {
     version: guarded("version", () => done({ version: HOST_VERSION })),
     /** The launch gate. Nothing else should be called until this passes. */
@@ -16427,6 +16509,31 @@ zoo`.split("\n"));
         hex: result.hex ?? null,
         txid: result.txid ?? null,
         frames: result.hex ? encodeParts("TXSIGNED", fromHex2(result.hex)) : null
+      });
+    }),
+    /**
+     * Key images for outputs the companion found, as frames to animate back.
+     *
+     * The one function on this bridge that touches the spend secret outside of
+     * signing, and it is shaped the same way: parse and refuse first, then
+     * derive, then wipe. Ownership of every output is re-proved from this
+     * device's own keys before anything is computed; the reasoning lives with
+     * the arithmetic in `keys/keyimages.ts`.
+     *
+     * The reply says how many were answered and how many refused, so the screen
+     * can put a number in front of the person whose money this is about.
+     */
+    moneroKeyImages: guarded("moneroKeyImages", (payloadHex) => {
+      const open = requireSession();
+      const payload = fromHex2(payloadHex);
+      if (!payload) return fail("That is not a key image request.");
+      const parsed = parseKeyImageRequest(payload);
+      if (!parsed.ok) return fail(parsed.problem);
+      const reply = computeKeyImages(open.xmr, parsed.request);
+      return done({
+        answered: reply.images.length,
+        refused: reply.refused.length,
+        frames: encodeParts("XMRKEYIMAGES", encodeKeyImageReply(reply))
       });
     }),
     /** Field validation, so the screen and the signer agree about what is valid. */

@@ -28,12 +28,17 @@ import { reduce, START, type SessionEvent, type SessionState } from '../core/ses
 import type { OwnAddresses, SwapOrder, SwapTransport } from '../core/swap';
 import type { NodeConfig, NodeKind } from '../core/nodes';
 import { openAccount, type ScanState } from '../core/moneroscan';
+import { acceptAccount, type Pairing } from '../core/pairing';
 import { NodeWatcher, type MoneroStatus, type RefreshResult, type WatcherNodes } from '../core/watcher';
 import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../core/demo';
+import { DEMO, standInAccountExport, standInKeyImages } from '../demo/standin';
 import { restoreHeight, revealSecretHex } from '@vault/keys/monero';
+import { digestOf } from '@vault/airgap/envelope';
 import { EMPTY, load, save, type Persisted } from './persist';
 import { fileStore } from './fileStore';
-import { transmit } from '../core/wire';
+import { keychainStore } from './keychainStore';
+import { clearPairing, loadPairing, savePairing } from './persistKeys';
+import { transmit, Transmission } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
 
 const demoWatcher = new DemoWatcher();
@@ -50,19 +55,18 @@ const demoWatcher = new DemoWatcher();
 const NO_NODES: WatcherNodes = { btc: null, xmr: null };
 
 /**
- * What is remembered between launches, and what is deliberately not.
+ * What is remembered between launches, and where.
  *
- * Which nodes to talk to, and where the Monero scan got to. That is all, and
- * `state/persist.ts` is where the reasoning lives, including why everything
- * read back from the file is put through the same validation as something
- * somebody typed.
+ * Two stores, split by sensitivity. Node addresses and the scan height go in
+ * a plain JSON file (`state/persist.ts`): they are configuration, readable by
+ * the person auditing what this app keeps. The paired watch-only keys go in
+ * the device keychain (`state/persistKeys.ts`): they cannot spend, and they
+ * are still the watching half of somebody's finances.
  *
- * Not remembered: the account keys, which arrive from the vault and live in
- * memory for the session; and the Monero outputs a scan found, which are a
- * list of somebody's incoming payments and are exactly what the view key was
- * protecting. The scan *height* is written down because it is a number about
- * the chain rather than about the person, and it is the expensive thing to
- * recompute.
+ * Not remembered anywhere: the Monero outputs a scan found and the key images
+ * the vault computed. Both are lists about the person rather than the chain,
+ * both are cheap to recover (resume the scan; rescan one QR), and neither
+ * belongs on the networked device's disk.
  */
 
 export interface Store {
@@ -126,6 +130,30 @@ export interface Store {
    */
   depositForSwap(order: SwapOrder, from: Asset): void;
 
+  /** What the vault handed over, or null before any pairing. */
+  pairing: Pairing | null;
+  /** The Bitcoin account key in use, for the one screen that shows it. */
+  accountKey: string | null;
+  /**
+   * Accept a payload that arrived over the camera, dispatched by its kind.
+   *
+   * The scan screen assembles and verifies; this decides. ACCOUNT pairs,
+   * XMRKEYIMAGES lands in the watcher's book, TXSIGNED goes through the same
+   * `verifySigned` gate as everything else. The note is a sentence for the
+   * screen, in either direction.
+   */
+  acceptWirePayload(kind: string, payload: Uint8Array): { ok: boolean; note: string };
+  /**
+   * The XMROUTPUTS frames to show a vault, or why there are none.
+   *
+   * Null until a scan has found outputs, because a request listing nothing is
+   * a trip across the room for nothing.
+   */
+  keyImageFrames(): Transmission | null;
+  /** The demo round trip: outputs to the stand-in, images back. DEMO only. */
+  syncStandInKeyImages(): { ok: boolean; note: string };
+
+  /** Pair with the stand-in vault. DEMO only; the real path is the camera. */
   pairVault(label: string): void;
   unpairVault(): void;
   /** Stop claiming a handoff is in progress. See `endSession`. */
@@ -144,13 +172,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(() => Date.now());
   const [asset, setAsset] = useState<Asset>('BTC');
   const [session, dispatch] = useReducer(reduce, START);
-  const [vault, setVault] = useState<VaultLink>({
-    state: 'ready',
-    pairedAt: Date.now() - 1000 * 60 * 60 * 26,
-    lastSession: Date.now() - 1000 * 60 * 74,
-    lastVerified: Date.now() - 1000 * 60 * 74,
-    label: 'VAULT · iPhone 11',
-  });
+  /* In a dev build the vault link starts as the fixture, because the screens
+   * after pairing are the ones being designed. A release build starts
+   * unpaired and stays that way until a real ACCOUNT payload is scanned or a
+   * stored pairing loads. */
+  const [vault, setVault] = useState<VaultLink>(() =>
+    DEMO
+      ? {
+          state: 'ready',
+          pairedAt: Date.now() - 1000 * 60 * 60 * 26,
+          lastSession: Date.now() - 1000 * 60 * 74,
+          lastVerified: Date.now() - 1000 * 60 * 74,
+          label: 'VAULT · iPhone 11',
+        }
+      : { state: 'unpaired' },
+  );
+  const [pairing, setPairing] = useState<Pairing | null>(null);
+  /* Mirrors `pairing` for reads inside the same tick. Scanning the Bitcoin
+   * export right after the Monero one lands two accepts before React commits
+   * the first, and merging against the committed state would drop a chain. */
+  const pairingRef = useRef<Pairing | null>(null);
   const changeIndex = useRef(24);
 
   /* Twenty seconds is slow enough to cost nothing and fast enough that "Just
@@ -188,17 +229,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * scan, forever, on every refresh. */
   const scanStart = useRef<ScanState | null>(null);
 
+  const keysStorage = useMemo(() => keychainStore(), []);
+
   useEffect(() => {
     let current = true;
-    void load(storage).then((stored) => {
+    void Promise.all([load(storage), loadPairing(keysStorage)]).then(([stored, paired]) => {
       if (!current) return;
       scanStart.current = stored.moneroScan;
       setMoneroScan(stored.moneroScan);
       setNodes(stored.nodes);
+      if (paired) {
+        pairingRef.current = paired;
+        setPairing(paired);
+        setVault({
+          state: 'ready',
+          pairedAt: paired.pairedAt,
+          lastSession: null,
+          lastVerified: null,
+          label: paired.label,
+        });
+      }
       setRestored(true);
     });
     return () => { current = false; };
-  }, [storage]);
+  }, [storage, keysStorage]);
 
   useEffect(() => {
     if (!restored) return;
@@ -206,26 +260,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [restored, storage, nodes, moneroScan]);
 
   /**
-   * The account the Monero scan is for.
+   * The Bitcoin account key in effect: the paired one, else the published
+   * demo key in a dev build, else nothing. Nothing means the send flow
+   * refuses to prepare and the vault screen says to pair, which are the
+   * right two consequences of that state.
+   */
+  const accountKey = pairing?.btc?.zpub ?? (DEMO ? DEMO_ZPUB : null);
+
+  /**
+   * The account the Monero scan is for: the paired one, else the demo one.
    *
-   * The fixture wallet, standing in for a pairing that does not exist yet, in
-   * the same way `DEMO_ZPUB` stands in on the Bitcoin side. It is a real
-   * account with a real view key, so what the scanner does against a real node
-   * is the real thing rather than a rehearsal. It is also empty, so a correct
-   * scan of it finds nothing, which is why `openAccount` checks that the view
-   * key belongs to the address: without that check, finding nothing would be
-   * indistinguishable from being pointed at the wrong keys.
+   * The demo fallback is a real account with a real view key, so what the
+   * scanner does against a real node is the real thing rather than a
+   * rehearsal. It is also empty, so a correct scan of it finds nothing,
+   * which is why `openAccount` checks the view key belongs to the address:
+   * without that, finding nothing would be indistinguishable from being
+   * pointed at the wrong keys.
    */
   const moneroWatch = useMemo(() => {
-    const opened = openAccount(DEMO_XMR_ADDRESS, revealSecretHex(DEMO_XMR_VIEW_SECRET));
+    const source = pairing?.xmr
+      ? { address: pairing.xmr.address, view: pairing.xmr.view, birth: pairing.xmr.birth }
+      : DEMO
+        ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }
+        : null;
+    if (!source) return null;
+    const opened = openAccount(source.address, source.view);
     if (!opened.ok) return null;
-    /* A wallet with no stored progress starts a week back rather than at the
+    /* A wallet with no stored progress starts at its birth height, and a
+     * demo wallet with no stated birth starts a week back rather than at the
      * tip. Starting late means silently never seeing payments that arrived
      * first, which reads as money that did not turn up. */
-    const birth = restoreHeight();
-    return { account: opened.account, scan: scanStart.current ?? { birth, height: birth } };
+    const birth = source.birth ?? restoreHeight();
+    const stored = scanStart.current;
+    /* A stored scan from a different (earlier) pairing must not skip this
+     * account's early blocks: resume only from at or after this birth. */
+    const scanFrom = stored && stored.birth >= birth ? stored : { birth, height: birth };
+    return { account: opened.account, scan: scanFrom };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restored]);
+  }, [restored, pairing]);
 
   /**
    * The watcher, which is the fixture until a node is set and the node after.
@@ -237,8 +309,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const watcher = useMemo(() => {
     if (!nodes.btc && !nodes.xmr) return demoWatcher;
-    return new NodeWatcher(nodes, DEMO_ZPUB, undefined, Date.now(), moneroWatch);
-  }, [nodes, moneroWatch]);
+    return new NodeWatcher(nodes, accountKey, undefined, Date.now(), moneroWatch);
+  }, [nodes, accountKey, moneroWatch]);
 
   const snapshot = useMemo(
     () => watcher.snapshot(now),
@@ -293,7 +365,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rate: feeOption(session.compose.feeKey).rate,
       utxos: view.utxos,
       balance: view.spendable,
-      zpub: DEMO_ZPUB,
+      zpub: accountKey ?? '',
       change: { index: changeIndex.current },
       now: Date.now(),
     });
@@ -306,7 +378,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     changeIndex.current += 1;
     dispatch({ type: 'prepared', draft: result.draft, at: Date.now() });
     return null;
-  }, [session.compose, asset, snapshot, feeOption]);
+  }, [session.compose, asset, snapshot, feeOption, accountKey]);
 
   const beginTransmit = useCallback(() => {
     const draft: Draft | null = session.draft;
@@ -412,6 +484,97 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [snapshot],
   );
 
+  /**
+   * A pairing, wherever the payload came from.
+   *
+   * Merging rather than replacing: the vault exports one chain at a time, and
+   * scanning the Bitcoin key after the Monero one is completing a pairing,
+   * not starting over.
+   */
+  const acceptPairing = useCallback(
+    (payload: Uint8Array, label: string): { ok: boolean; note: string } => {
+      const accepted = acceptAccount(payload);
+      if (!accepted.ok) return { ok: false, note: accepted.problem };
+
+      const current = pairingRef.current;
+      const merged: Pairing = {
+        btc: accepted.chain === 'btc' ? accepted.btc : current?.btc ?? null,
+        xmr: accepted.chain === 'xmr' ? accepted.xmr : current?.xmr ?? null,
+        label: current?.label ?? label,
+        pairedAt: current?.pairedAt ?? Date.now(),
+      };
+      pairingRef.current = merged;
+      setPairing(merged);
+      void savePairing(keysStorage, merged);
+      setVault((current) =>
+        current.state === 'unpaired'
+          ? { state: 'ready', pairedAt: merged.pairedAt, lastSession: null, lastVerified: null, label: merged.label }
+          : current,
+      );
+      return {
+        ok: true,
+        note:
+          accepted.chain === 'btc'
+            ? 'Bitcoin account key accepted. The first address matches what this wallet derives.'
+            : 'Monero view key accepted. It belongs to the address beside it.',
+      };
+    },
+    [keysStorage],
+  );
+
+  const acceptWirePayload = useCallback(
+    (kind: string, payload: Uint8Array): { ok: boolean; note: string } => {
+      if (kind === 'ACCOUNT') return acceptPairing(payload, 'Labyrinth Vault');
+
+      if (kind === 'XMRKEYIMAGES') {
+        if (!(watcher instanceof NodeWatcher)) {
+          return { ok: false, note: 'Key images need a Monero node set first, so there is a scan to apply them to.' };
+        }
+        const outcome = watcher.importKeyImages(payload);
+        if (!outcome.ok) return { ok: false, note: outcome.problem ?? 'That reply could not be read.' };
+        void refresh();
+        const parts = [`${outcome.added} key image${outcome.added === 1 ? '' : 's'} imported.`];
+        if (outcome.unknown > 0) parts.push(`${outcome.unknown} named outputs this wallet has not seen and were dropped.`);
+        if (outcome.refusedByVault > 0) parts.push(`The vault refused ${outcome.refusedByVault}.`);
+        return { ok: true, note: parts.join(' ') };
+      }
+
+      if (kind === 'TXSIGNED') {
+        offerSignature(payload);
+        return { ok: true, note: 'Signature received. It goes through the same verification as everything else.' };
+      }
+
+      if (kind === 'PSBT' || kind === 'XMRUNSIGNED' || kind === 'XMROUTPUTS') {
+        return {
+          ok: false,
+          note: 'That is a payload this wallet sends, not one it reads. Point the vault at this phone, not the other way around.',
+        };
+      }
+      return { ok: false, note: 'This wallet does not know what to do with that payload.' };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [acceptPairing, watcher, refresh],
+  );
+
+  const keyImageFrames = useCallback((): Transmission | null => {
+    if (!(watcher instanceof NodeWatcher)) return null;
+    const request = watcher.keyImageRequest();
+    if (!request.ok) return null;
+    return new Transmission(request.payload, 'XMROUTPUTS', 'labyrinth', digestOf(request.payload));
+  }, [watcher]);
+
+  const syncStandInKeyImages = useCallback((): { ok: boolean; note: string } => {
+    if (!DEMO) return { ok: false, note: 'The stand-in exists only in a development build.' };
+    if (!(watcher instanceof NodeWatcher)) {
+      return { ok: false, note: 'Set a Monero node first, so there is a scan to sync.' };
+    }
+    const request = watcher.keyImageRequest();
+    if (!request.ok) return { ok: false, note: request.problem };
+    const reply = standInKeyImages(request.payload);
+    if (!reply) return { ok: false, note: 'The stand-in could not answer that request.' };
+    return acceptWirePayload('XMRKEYIMAGES', reply);
+  }, [watcher, acceptWirePayload]);
+
   const depositForSwap = useCallback(
     (order: SwapOrder, from: Asset) => {
       setAsset(from);
@@ -454,15 +617,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setNodes(NO_NODES);
       void storage.clear();
     },
-    pairVault: (label: string) =>
-      setVault({
-        state: 'ready',
-        pairedAt: Date.now(),
-        lastSession: Date.now(),
-        lastVerified: null,
-        label,
-      }),
-    unpairVault: () => setVault({ state: 'unpaired' }),
+    pairing,
+    accountKey,
+    acceptWirePayload,
+    keyImageFrames,
+    syncStandInKeyImages,
+    /* The demo pairing runs the stand-in's export through the same
+     * acceptance path a scanned one takes, so the button exercises the real
+     * checks rather than flipping a flag. */
+    pairVault: (label: string) => {
+      const btc = standInAccountExport('btc');
+      const xmr = standInAccountExport('xmr');
+      if (btc) acceptPairing(btc, label);
+      if (xmr) acceptPairing(xmr, label);
+      if (!btc && !xmr) {
+        /* Release build: the stand-in refused, and pairing is the camera. */
+        return;
+      }
+      setVault((current) =>
+        current.state === 'unpaired'
+          ? current
+          : { ...current, label, lastSession: current.lastSession ?? Date.now() },
+      );
+    },
+    unpairVault: () => {
+      pairingRef.current = null;
+      setPairing(null);
+      void clearPairing(keysStorage);
+      setVault({ state: 'unpaired' });
+    },
     endSession,
   };
 

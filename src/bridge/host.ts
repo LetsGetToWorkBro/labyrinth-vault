@@ -47,6 +47,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { encodeParts, type PayloadKind } from '../airgap/envelope';
 import { Scanner } from '../airgap/scanner';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
+import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
 import {
   checkBtcAddress,
   checkExtendedKey,
@@ -280,8 +281,13 @@ function requireSession(): Session {
  * send a string, this side would refuse it, and every unlock would fail with a
  * message about the contract — which is the right failure, but the version
  * check catches it at launch instead of at the worst moment.
+ *
+ * 3: `moneroKeyImages` exists. An app built against 3 would call a function a
+ * bundle built at 2 does not have, and the failure would be "undefined is not
+ * a function" surfacing mid-flow on the key image screen; the version check
+ * turns that into a sentence at launch.
  */
-export const HOST_VERSION = 2;
+export const HOST_VERSION = 3;
 
 export const api = {
   version: guarded('version', () => done({ version: HOST_VERSION })),
@@ -438,6 +444,32 @@ export const api = {
       hex: result.hex ?? null,
       txid: result.txid ?? null,
       frames: result.hex ? encodeParts('TXSIGNED' satisfies PayloadKind, fromHex(result.hex)!) : null,
+    });
+  }),
+
+  /**
+   * Key images for outputs the companion found, as frames to animate back.
+   *
+   * The one function on this bridge that touches the spend secret outside of
+   * signing, and it is shaped the same way: parse and refuse first, then
+   * derive, then wipe. Ownership of every output is re-proved from this
+   * device's own keys before anything is computed; the reasoning lives with
+   * the arithmetic in `keys/keyimages.ts`.
+   *
+   * The reply says how many were answered and how many refused, so the screen
+   * can put a number in front of the person whose money this is about.
+   */
+  moneroKeyImages: guarded('moneroKeyImages', (payloadHex: string) => {
+    const open = requireSession();
+    const payload = fromHex(payloadHex);
+    if (!payload) return fail('That is not a key image request.');
+    const parsed = parseKeyImageRequest(payload);
+    if (!parsed.ok) return fail(parsed.problem);
+    const reply = computeKeyImages(open.xmr, parsed.request);
+    return done({
+      answered: reply.images.length,
+      refused: reply.refused.length,
+      frames: encodeParts('XMRKEYIMAGES' satisfies PayloadKind, encodeKeyImageReply(reply)),
     });
   }),
 

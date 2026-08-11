@@ -86,12 +86,16 @@ a wrong amount looks exactly like a right one on a screen.
 The scan runs two hundred blocks per refresh, writes down where it got to, and
 carries on from there next time. The percentage is on the nodes screen.
 
-**What it cannot do:** a view key finds payments coming in and cannot tell which
-of them you have already spent, because that needs key images and key images
-need the spend key, which is in the vault. So the Monero figure is what
-arrived, it says so under every screen that shows it, and it is never called a
-balance. [../docs/monero-sync.md](../docs/monero-sync.md) has the whole
-argument, including why `rct::H` is not derived the way you would guess.
+**Spends** take one trip across the room. A view key finds payments coming in
+and cannot see them leave; that needs key images, and key images need the
+spend key, which is in the vault. So the wallet shows the vault the outputs it
+found (`XMROUTPUTS`), the vault proves each one is its own and answers with
+the images (`XMRKEYIMAGES`), and from then on the chain walk spots spends for
+free and the balance is received minus spent. Until that trip happens the
+figure is what arrived, and the sentence under it says so.
+[../docs/monero-sync.md](../docs/monero-sync.md) has the whole argument,
+including what asking a node `is_key_image_spent` costs and why `rct::H` is
+not derived the way you would guess.
 
 ## Swapping, and the address nothing can check
 
@@ -228,23 +232,19 @@ pairing, the security center, and the error states, including the one that
 matters, which is a returned transaction that does not match.
 
 Also real: the watcher behind `Watcher` in `src/core/chain.ts`, for both
-chains, and the node addresses and Monero scan height are remembered between
-launches in one readable JSON file. No keys are in it.
+chains; pairing, which reads the vault's `ACCOUNT` export off the camera,
+proves the first address derives and the view key belongs to its address, and
+keeps the result in the device keychain; and the key image round trip above.
+Node addresses and the scan height live in one readable JSON file, and there
+are no keys in it, because the keys have a keychain.
 
-What does not exist yet, in order:
+What does not exist yet:
 
-1. **Key image import.** The vault already recognizes `Monero key image export`
-   as one of the six wallet2 containers. Until that round trip is built, the
-   Monero figure is what was received rather than what is left, and every
-   screen showing it says so.
-2. **Monero sending.** The transport is finished: `XMRUNSIGNED` frames, and
+1. **Monero sending.** The transport is finished: `XMRUNSIGNED` frames, and
    BC-UR the way Cupcake animates it. What is missing is `wallet2`'s
    unsigned-set format, which is not written on either side yet. Until it is, a Monero draft is tagged
    `provisional`, the interface says so on screen, and `verifySigned` refuses it
    outright rather than waving a stub through.
-3. **Real pairing.** Reading an `ACCOUNT` payload off a vault, rather than the
-   published test vectors that stand in for one today. The storage it needs now
-   exists; what is missing is the screen.
 
 See [SECURITY.md](../SECURITY.md) for the threat model of the system, and
 [docs/airgap-protocol.md](../docs/airgap-protocol.md) for what crosses between

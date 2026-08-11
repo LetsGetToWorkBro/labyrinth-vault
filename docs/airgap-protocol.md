@@ -22,7 +22,7 @@ hardware wallet has.
 
 ## What crosses
 
-Five payload kinds, named on the wire so a device can refuse what it does not
+Seven payload kinds, named on the wire so a device can refuse what it does not
 understand rather than guess:
 
 | Kind | Direction | What it is |
@@ -32,6 +32,17 @@ understand rather than guess:
 | `TXSIGNED` | vault to companion | A finished, broadcastable transaction |
 | `XMRUNSIGNED` | companion to vault | An unsigned Monero transaction set |
 | `XMRSIGNED` | vault to companion | A signed Monero transaction set |
+| `XMROUTPUTS` | companion to vault | The Monero outputs the wallet's scan found, asking for key images |
+| `XMRKEYIMAGES` | vault to companion | One key image per output, so the wallet can see its own spends |
+
+The last two are the Monero bookkeeping loop. A view key finds money arriving
+and cannot see it leave; spends are named on the chain by key images, and
+computing one takes the spend secret, which never leaves the vault. So the
+wallet sends the outputs it found, the vault re-proves each one is really its
+own before touching the spend key, and the images come back over the same
+one-way light. The wallet accepts an image only for an output it actually
+found, so a corrupted reply can at worst fail to mark a spend, never invent
+one.
 
 ## The frame
 

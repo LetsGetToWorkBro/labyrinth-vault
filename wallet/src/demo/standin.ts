@@ -38,6 +38,14 @@
 import * as btc from '@scure/btc-signer';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
+import { bitcoinAccount, encodeAccount, moneroAccount } from '@vault/keys/account';
+import { openWatch } from '@vault/keys/bitcoin';
+import {
+  computeKeyImages,
+  encodeKeyImageReply,
+  parseKeyImageRequest,
+} from '@vault/keys/keyimages';
+import { walletFromSeed } from '@vault/keys/monero';
 import type { Draft } from '../core/model';
 
 /**
@@ -133,3 +141,43 @@ export function standInVault(draft: Draft, words: string, behavior: StandinBehav
     return null;
   }
 }
+
+/** The demo Monero seed, same one `core/demo.ts` derives its address from. */
+const DEMO_XMR_SEED = new Uint8Array(32).map((_, i) => (i * 7 + 11) & 0xff);
+
+/**
+ * The vault's key image answer, from the stand-in.
+ *
+ * The real vault runs `computeKeyImages` behind its bridge; this runs the
+ * same function on the same published demo seed, so the round trip the
+ * screens walk in a dev build is the real round trip with a shorter wire.
+ * Same gate, same failure mode as `standInVault`: a release build returns
+ * null and the caller treats it as a vault that is not here.
+ */
+export function standInKeyImages(request: Uint8Array): Uint8Array | null {
+  if (!DEMO) return null;
+  const parsed = parseKeyImageRequest(request);
+  if (!parsed.ok) return null;
+  return encodeKeyImageReply(computeKeyImages(walletFromSeed(DEMO_XMR_SEED), parsed.request));
+}
+
+/**
+ * The vault's watch-only export, from the stand-in.
+ *
+ * What the `PAIR WITH A STAND-IN` button feeds through the real
+ * `acceptAccount` path, so a demo pairing exercises every check a scanned one
+ * does. Both halves are the published demo keys and both are empty.
+ */
+export function standInAccountExport(chain: 'btc' | 'xmr'): Uint8Array | null {
+  if (!DEMO) return null;
+  if (chain === 'btc') {
+    const opened = openWatch(PUBLISHED_ZPUB);
+    if (!opened.ok || !opened.wallet) return null;
+    return encodeAccount(bitcoinAccount(opened.wallet));
+  }
+  return encodeAccount(moneroAccount(walletFromSeed(DEMO_XMR_SEED)));
+}
+
+/** BIP84's account key for the published words above. */
+const PUBLISHED_ZPUB =
+  'zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs';

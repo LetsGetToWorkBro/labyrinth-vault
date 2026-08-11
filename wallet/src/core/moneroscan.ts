@@ -165,6 +165,9 @@ export interface Received {
   index: number;
   /** The one-time public key on the chain, which is this output's identity. */
   key: string;
+  /** The transaction public key, kept because the key image round trip needs
+   *  it: the vault re-derives ownership from exactly this plus the index. */
+  txPublicKey: string;
   /** Piconero, or null when it could not be established. */
   amount: Atoms | null;
   /** One sentence saying why the amount is unknown, when it is. */
@@ -190,6 +193,8 @@ export interface ScanOutcome {
   state: ScanState;
   /** Outputs found, all of them from blocks that finished. */
   received: Received[];
+  /** Watched key images seen spending, from blocks that finished. */
+  spent: string[];
   /** Blocks walked in this pass. */
   blocks: number;
   /** Requests made, so the screen can say what it cost. */
@@ -207,6 +212,15 @@ export interface ScanOptions {
   stop?: () => boolean;
   /** Called after each block completes, for a progress bar. */
   onBlock?: (height: number) => void;
+  /**
+   * Key images to watch the chain for, from `core/keyimages.ts`.
+   *
+   * Every transaction the walk fetches carries the key images of what it
+   * spends, so matching them here costs nothing extra on the wire. A match
+   * lands in `ScanOutcome.spent`, and it is the moment this wallet learns
+   * that one of its own outputs is gone.
+   */
+  watch?: ReadonlySet<string>;
 }
 
 /**
@@ -268,6 +282,7 @@ export async function scan(
   let height = Math.max(birth, Math.floor(from.height));
 
   const received: Received[] = [];
+  const spent: string[] = [];
   let blocks = 0;
   let requests = 0;
 
@@ -276,6 +291,7 @@ export async function scan(
     problem,
     state: { birth, height },
     received,
+    spent,
     blocks,
     requests,
     /* Caught up means there is nothing left below the tip. A pass that stopped
@@ -299,14 +315,21 @@ export async function scan(
       : block.value.txHashes;
 
     const inBlock: Received[] = [];
+    const spendsInBlock: string[] = [];
     for (let at = 0; at < hashes.length; at += MAX_TXS_PER_REQUEST) {
       requests += 1;
       const batch = await transactions(transport, hashes.slice(at, at + MAX_TXS_PER_REQUEST));
       if (!batch.ok) return done(batch.problem);
-      for (const tx of batch.value) inBlock.push(...scanOne(account, tx, height));
+      for (const tx of batch.value) {
+        inBlock.push(...scanOne(account, tx, height));
+        if (options.watch?.size) {
+          for (const image of tx.spends) if (options.watch.has(image)) spendsInBlock.push(image);
+        }
+      }
     }
 
     received.push(...inBlock);
+    spent.push(...spendsInBlock);
     blocks += 1;
     height += 1;
     options.onBlock?.(height - 1);
@@ -337,6 +360,7 @@ export function scanOne(account: MoneroAccount, tx: ScannableTx, height: number)
       height,
       index: candidate.index,
       key: owned.key,
+      txPublicKey: tx.publicKey,
       amount: value.amount,
       unknownBecause: value.unknownBecause,
     });

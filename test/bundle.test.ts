@@ -133,8 +133,11 @@ describe('the built bundle', () => {
   });
 
   it('needs nothing from Node to run', () => {
-    // It loaded in a bare context in beforeAll; this asserts the consequence.
-    expect(call(api, 'version')).toEqual({ ok: true, version: 2 });
+    /* It loaded in a bare context in beforeAll; this asserts the consequence.
+     * The version is a literal on purpose: bumping HOST_VERSION should touch
+     * this test, because a bump is a claim that the Swift side moved with it.
+     * 3 is the contract with moneroKeyImages in it. */
+    expect(call(api, 'version')).toEqual({ ok: true, version: 3 });
   });
 
   it('passes its own self-test inside the bundle', () => {

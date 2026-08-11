@@ -417,10 +417,21 @@ export interface ScannableTx {
   ecdh: string[];
   /** The Pedersen commitment for each output, hex, in output order. */
   commitments: string[];
+  /**
+   * The key image on each input, which is how the chain names a spend.
+   *
+   * To anyone without the matching list, these are unlinkable points and
+   * carrying them is free. To a wallet that has imported its own key images
+   * from the vault, one of these matching is the moment it learns an output
+   * it received has been spent, which is the entire mechanism behind showing
+   * a balance rather than a received total.
+   */
+  spends: string[];
 }
 
 interface RawJsonTx {
   vout?: { amount?: number; target?: { key?: string; tagged_key?: { key?: string } } }[];
+  vin?: { key?: { k_image?: string } }[];
   extra?: number[];
   rct_signatures?: {
     type?: number;
@@ -513,6 +524,12 @@ export async function transactions(
       hexOrNull(typeof entry === 'string' ? entry : entry?.mask, 32) ?? '',
     );
 
+    /* A coinbase input has no key image and arrives as a different shape
+     * (`gen` rather than `key`); it simply produces nothing here. */
+    const spends = (body.vin ?? [])
+      .map((vin) => hexOrNull(vin?.key?.k_image, 32))
+      .filter((image): image is string => image !== null);
+
     out.push({
       hash,
       outputs,
@@ -520,8 +537,66 @@ export async function transactions(
       rctType: typeof rct?.type === 'number' ? rct.type : 0,
       ecdh: (rct?.ecdhInfo ?? []).map((entry) => hexOrNull(entry?.amount) ?? ''),
       commitments,
+      spends,
     });
   }
 
   return { ok: true, value: out };
+}
+
+/**
+ * Ask the node whether these key images have been spent.
+ *
+ * `/is_key_image_spent` answers a number per image: 0 not spent, 1 spent in a
+ * block, 2 spent in the transaction pool. Pool counts as spent here, for the
+ * same reason an unconfirmed payment counts as used on the Bitcoin side:
+ * money that is leaving has left, as far as a person deciding what they can
+ * spend is concerned.
+ *
+ * ## What asking costs, stated where the call is
+ *
+ * This is the one Monero call in this app that tells the node something about
+ * *you*. The scan never does: blocks are fetched whole and tested locally.
+ * But a key image handed to a node in a question is a key image the node can
+ * recognize later, on the chain, as yours; from then on that operator can tell
+ * when you spend, though still not what or to whom. The alternative is
+ * rescanning the whole chain after every key image import, which is hours.
+ * The caller chooses; this function just says the price. `docs/monero-sync.md`
+ * carries the longer version.
+ */
+export async function isKeyImageSpent(
+  transport: Transport,
+  images: readonly string[],
+): Promise<Parsed<{ image: string; spent: boolean }[]>> {
+  if (images.length === 0) return { ok: true, value: [] };
+  for (const image of images) {
+    if (!/^[0-9a-f]{64}$/i.test(image)) {
+      return { ok: false, problem: 'That is not a key image.' };
+    }
+  }
+
+  const reply = parseJson<{ spent_status?: unknown; status?: string }>(
+    await transport.send({
+      method: 'POST',
+      path: '/is_key_image_spent',
+      body: { key_images: [...images] },
+    }),
+  );
+  if (!reply.ok) return reply;
+
+  const statuses = reply.value.spent_status;
+  if (!Array.isArray(statuses) || statuses.length !== images.length) {
+    /* An answer that does not line up one-to-one with the question cannot be
+     * matched to it, and guessing at the alignment would mark the wrong
+     * output spent. */
+    return { ok: false, problem: 'That node did not answer once per key image.' };
+  }
+
+  return {
+    ok: true,
+    value: images.map((image, at) => ({
+      image: image.toLowerCase(),
+      spent: statuses[at] === 1 || statuses[at] === 2,
+    })),
+  };
 }

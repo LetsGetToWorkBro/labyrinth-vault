@@ -1,0 +1,260 @@
+/**
+ * Key images: the one computation a watching wallet cannot do, done here.
+ *
+ * ## Why this file exists
+ *
+ * The companion wallet scans the chain with the view key and finds every
+ * output this account was ever paid. What it cannot do is tell which of those
+ * outputs have since been spent, because a Monero spend is identified on the
+ * chain by a *key image*, and computing the key image of an output takes the
+ * spend secret. That key lives here, on the device with no network, and it is
+ * not going anywhere.
+ *
+ * So the computation comes to the key instead of the key going to the
+ * computation. The wallet sends the outputs it found across the airgap, this
+ * file computes one key image per output, and the wallet takes the images back
+ * and watches the chain for them. Every Monero wallet pair in existence does
+ * this dance; monero-wallet-cli calls it `export_key_images` and the vault
+ * already recognizes that file's magic in `monerotx.ts`.
+ *
+ * ## What a key image reveals, stated before any code
+ *
+ * A key image is designed to be unlinkable: the network sees `x·H(P)` and can
+ * tell two spends of the same output apart from two spends of different
+ * outputs, while learning nothing about which output either was. Handing the
+ * *set* of your key images to your own wallet costs you nothing against the
+ * network. It does mean the wallet, and anything that compromises the wallet,
+ * can recognize your spends on sight, which is exactly the power the wallet
+ * needs to show a balance and exactly why the view key was already the price
+ * of being the online half. Nothing new is conceded here that the ACCOUNT
+ * export did not already concede.
+ *
+ * What is genuinely irreversible: a key image, once computed, links to its
+ * output for anyone who has both and knows they go together. That is why the
+ * reply lists images beside the one-time keys they belong to and travels only
+ * over the same one-way optical wire as everything else.
+ *
+ * ## The check before the arithmetic
+ *
+ * Every requested output is re-derived before anything is computed: the vault
+ * runs the same ownership test the wallet ran, from its own keys, and refuses
+ * any output that does not derive to the claimed one-time key. Without that
+ * check, a compromised wallet could ask for the key image of an arbitrary
+ * point, and while no attack via that is known against these parameters, the
+ * request would be answered blind. This device does not do arithmetic on
+ * numbers somebody else chose without proving what they are first.
+ */
+
+import {
+  deriveSecretKey,
+  derivePublicKey,
+  generateKeyDerivation,
+  generateKeyImage,
+} from './monerocrypto';
+import { fromHex, toHex, type Wallet as MoneroWallet } from './monero';
+import { wipe } from './wipe';
+
+/** Bumped only if the shape changes in a way an old reader would misread. */
+export const KEYIMAGE_VERSION = 1;
+
+/** One output the wallet found and wants the key image for. */
+export interface OutputRef {
+  /** The transaction public key, from the transaction's `extra`. Hex. */
+  tx: string;
+  /** The output's position in its transaction, part of the derivation. */
+  index: number;
+  /** The one-time public key on the output. The claim to be verified. */
+  key: string;
+}
+
+export interface KeyImageRequest {
+  v: number;
+  chain: 'xmr';
+  outputs: OutputRef[];
+}
+
+/** One answer: the output's one-time key and the image that spends it. */
+export interface KeyImageEntry {
+  key: string;
+  image: string;
+}
+
+export interface KeyImageReply {
+  v: number;
+  chain: 'xmr';
+  images: KeyImageEntry[];
+  /** Outputs that did not verify as this wallet's, echoed so the far side can
+   *  say so rather than silently having fewer images than outputs. */
+  refused: string[];
+}
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/**
+ * The most outputs one request may carry.
+ *
+ * The wire itself caps a payload at ~800 KB, which would be tens of thousands
+ * of outputs; this cap is much lower because every entry below costs this
+ * device four curve operations, and a hostile payload should not be able to
+ * buy minutes of computation on a battery with one scan. A real wallet's
+ * output count is in the hundreds; anyone with more batches.
+ */
+export const MAX_OUTPUTS = 2000;
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * Read a request, or say what is wrong with it.
+ *
+ * Strict for the usual reason: everything arriving over the wire is untrusted,
+ * and a malformed entry refused here is a sentence on a screen, while one
+ * refused deeper down is an exception inside arithmetic.
+ */
+export function parseKeyImageRequest(
+  bytes: Uint8Array,
+): { ok: true; request: KeyImageRequest } | { ok: false; problem: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(decoder.decode(bytes));
+  } catch {
+    return { ok: false, problem: 'That is not a key image request.' };
+  }
+  if (!value || typeof value !== 'object') {
+    return { ok: false, problem: 'That is not a key image request.' };
+  }
+  const raw = value as Record<string, unknown>;
+  if (raw['chain'] !== 'xmr') return { ok: false, problem: 'That request is not about Monero.' };
+  if (typeof raw['v'] !== 'number' || raw['v'] < 1 || raw['v'] > KEYIMAGE_VERSION) {
+    return { ok: false, problem: 'That request is from a different version of the wallet.' };
+  }
+  if (!Array.isArray(raw['outputs']) || raw['outputs'].length === 0) {
+    return { ok: false, problem: 'That request lists no outputs.' };
+  }
+  if (raw['outputs'].length > MAX_OUTPUTS) {
+    return { ok: false, problem: `One request carries at most ${MAX_OUTPUTS} outputs.` };
+  }
+
+  const outputs: OutputRef[] = [];
+  for (const entry of raw['outputs']) {
+    const output = entry as Record<string, unknown>;
+    const tx = typeof output['tx'] === 'string' ? output['tx'].toLowerCase() : '';
+    const key = typeof output['key'] === 'string' ? output['key'].toLowerCase() : '';
+    const index = output['index'];
+    if (!HEX64.test(tx) || !HEX64.test(key)) {
+      return { ok: false, problem: 'An output in that request does not carry two 32-byte keys.' };
+    }
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > 10_000) {
+      return { ok: false, problem: 'An output in that request has an index that is not one.' };
+    }
+    outputs.push({ tx, index, key });
+  }
+  return { ok: true, request: { v: raw['v'], chain: 'xmr', outputs } };
+}
+
+/**
+ * Compute the key images, proving ownership of each output first.
+ *
+ * The chain of operations per output, all from `monerocrypto.ts` and all
+ * pinned to the Monero project's own vectors:
+ *
+ *   1. `generate_key_derivation` of the tx public key and our view secret,
+ *      the same shared secret the sender computed;
+ *   2. `derive_public_key` with the output index and our spend public: this
+ *      must equal the one-time key the request claims, or the output is not
+ *      ours and the entry is refused;
+ *   3. `derive_secret_key` with the spend secret: the private key of that
+ *      one-time address, which exists for the duration of this loop and is
+ *      wiped before the function returns;
+ *   4. `generate_key_image` of the pair.
+ *
+ * An entry that fails is refused individually rather than failing the batch:
+ * one stray output in a request of three hundred should cost one line in the
+ * reply, not the whole trip across the airgap.
+ */
+export function computeKeyImages(wallet: MoneroWallet, request: KeyImageRequest): KeyImageReply {
+  const images: KeyImageEntry[] = [];
+  const refused: string[] = [];
+
+  for (const output of request.outputs) {
+    let oneTimeSecret: Uint8Array | null = null;
+    try {
+      const derivation = generateKeyDerivation(fromHex(output.tx), wallet.viewSecret);
+      const derived = toHex(
+        derivePublicKey(derivation, output.index, fromHex(wallet.spendPublic)),
+      );
+      if (derived !== output.key) {
+        /* The claimed one-time key does not derive from this wallet's keys at
+         * that position. Either the wallet scanned with different keys than
+         * this vault holds, or the request was tampered with. Both deserve a
+         * refusal, not arithmetic. */
+        refused.push(output.key);
+        continue;
+      }
+      oneTimeSecret = deriveSecretKey(derivation, output.index, wallet.spendSecret);
+      images.push({
+        key: output.key,
+        image: toHex(generateKeyImage(fromHex(output.key), oneTimeSecret)),
+      });
+    } catch {
+      refused.push(output.key);
+    } finally {
+      if (oneTimeSecret) wipe(oneTimeSecret);
+    }
+  }
+
+  return { v: KEYIMAGE_VERSION, chain: 'xmr', images, refused };
+}
+
+/** The bytes to put on the wire, as an XMRKEYIMAGES payload. */
+export function encodeKeyImageReply(reply: KeyImageReply): Uint8Array {
+  return encoder.encode(JSON.stringify(reply));
+}
+
+/** The bytes to put on the wire, as an XMROUTPUTS payload. The wallet calls
+ *  this; it lives here so both directions of the format are one file. */
+export function encodeKeyImageRequest(request: KeyImageRequest): Uint8Array {
+  return encoder.encode(JSON.stringify(request));
+}
+
+/**
+ * Read a reply, on the wallet side.
+ *
+ * The important check is the last one: every image must be beside a one-time
+ * key, both 32 bytes of hex, and the caller then matches keys against outputs
+ * it actually found. An image for a key the wallet never saw is dropped by the
+ * caller, so a corrupted or hostile reply can at worst fail to mark a spend,
+ * never invent one.
+ */
+export function parseKeyImageReply(
+  bytes: Uint8Array,
+): { ok: true; reply: KeyImageReply } | { ok: false; problem: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(decoder.decode(bytes));
+  } catch {
+    return { ok: false, problem: 'That is not a key image reply.' };
+  }
+  if (!value || typeof value !== 'object') return { ok: false, problem: 'That is not a key image reply.' };
+  const raw = value as Record<string, unknown>;
+  if (raw['chain'] !== 'xmr') return { ok: false, problem: 'That reply is not about Monero.' };
+  if (typeof raw['v'] !== 'number' || raw['v'] < 1 || raw['v'] > KEYIMAGE_VERSION) {
+    return { ok: false, problem: 'That reply is from a different version of the vault.' };
+  }
+  if (!Array.isArray(raw['images'])) return { ok: false, problem: 'That reply lists no images.' };
+
+  const images: KeyImageEntry[] = [];
+  for (const entry of raw['images']) {
+    const image = entry as Record<string, unknown>;
+    const key = typeof image['key'] === 'string' ? image['key'].toLowerCase() : '';
+    const value = typeof image['image'] === 'string' ? image['image'].toLowerCase() : '';
+    if (!HEX64.test(key) || !HEX64.test(value)) {
+      return { ok: false, problem: 'An entry in that reply is not a key and an image.' };
+    }
+    images.push({ key, image: value });
+  }
+  const refused = Array.isArray(raw['refused'])
+    ? raw['refused'].filter((entry): entry is string => typeof entry === 'string' && HEX64.test(entry))
+    : [];
+  return { ok: true, reply: { v: raw['v'], chain: 'xmr', images, refused } };
+}

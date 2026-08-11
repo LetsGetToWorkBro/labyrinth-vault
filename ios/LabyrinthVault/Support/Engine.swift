@@ -71,7 +71,7 @@ enum EngineError: LocalizedError {
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 2
+    static let expectedVersion = 3
 
     private let context: JSContext
     private let api: JSValue
@@ -213,6 +213,11 @@ final class Engine {
         struct Params: Decodable { let t: Int; let m: Int; let p: Int }
     }
     struct CheckReply: Decodable { let state: String; let note: String? }
+    struct KeyImagesReply: Decodable {
+        let answered: Int
+        let refused: Int
+        let frames: [String]
+    }
 
     // MARK: - The API
     //
@@ -266,6 +271,16 @@ final class Engine {
     /// description it produced.
     func sign(psbtHex: String, approvedDigest: String) throws -> SignReply {
         try call("sign", [psbtHex, approvedDigest])
+    }
+
+    /// Key images for outputs the companion's scan found.
+    ///
+    /// The engine re-proves ownership of every output from this device's own
+    /// keys before deriving anything, and the reply separates answered from
+    /// refused so the screen can show both numbers rather than a total that
+    /// quietly shrank.
+    func moneroKeyImages(payloadHex: String) throws -> KeyImagesReply {
+        try call("moneroKeyImages", [payloadHex])
     }
 
     func checkAddress(_ text: String, chain: String) throws -> CheckReply {

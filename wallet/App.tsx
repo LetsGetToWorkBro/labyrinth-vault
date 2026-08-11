@@ -29,6 +29,7 @@ import { AssetScreen } from './src/screens/Asset';
 import { ReceiveScreen } from './src/screens/Receive';
 import { SwapScreen } from './src/screens/Swap';
 import { NodesScreen } from './src/screens/Nodes';
+import { KeyImagesScreen } from './src/screens/KeyImages';
 import { SendScreen } from './src/screens/Send';
 import { ScanScreen } from './src/screens/Scan';
 import { PairScreen, SecurityScreen, VaultScreen } from './src/screens/Vault';
@@ -86,6 +87,7 @@ export default function App() {
                 <Stack.Screen name="Send" component={SendScreen} />
                 <Stack.Screen name="Swap" component={SwapScreen} />
               <Stack.Screen name="Nodes" component={NodesScreen} />
+              <Stack.Screen name="KeyImages" component={KeyImagesScreen} />
                 <Stack.Screen name="Scan" component={ScanScreen} />
                 <Stack.Screen name="Pair" component={PairScreen} />
               </Stack.Group>

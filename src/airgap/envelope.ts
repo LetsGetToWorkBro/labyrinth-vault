@@ -59,10 +59,35 @@ export type PayloadKind =
   | 'XMRUNSIGNED'
   /** A signed Monero transaction set, ready to broadcast. */
   | 'XMRSIGNED'
+  /**
+   * Monero outputs the watching wallet found, going *to* the vault.
+   *
+   * The request half of the key image round trip: a view key finds money
+   * arriving and cannot see it leave, because spends are identified by key
+   * images and computing one needs the spend secret. So the wallet lists what
+   * it found, the vault answers with `XMRKEYIMAGES`, and only then can the
+   * wallet subtract what has been spent from what arrived.
+   */
+  | 'XMROUTPUTS'
+  /** The vault's answer: one key image per output. See `XMROUTPUTS`. */
+  | 'XMRKEYIMAGES'
   /** A finished, signed, broadcastable raw transaction. */
   | 'TXSIGNED';
 
-const KINDS: PayloadKind[] = ['ACCOUNT', 'PSBT', 'XMRUNSIGNED', 'XMRSIGNED', 'TXSIGNED'];
+/* Order is presentation only; a reader accepts any of these in any position.
+ * A device built before the two XMR key image kinds existed reads a frame of
+ * one as "not a Labyrinth code", which is the honest failure for a payload it
+ * genuinely cannot handle, and the fix is the same update that adds the
+ * feature on both halves. */
+const KINDS: PayloadKind[] = [
+  'ACCOUNT',
+  'PSBT',
+  'XMRUNSIGNED',
+  'XMRSIGNED',
+  'XMROUTPUTS',
+  'XMRKEYIMAGES',
+  'TXSIGNED',
+];
 
 /**
  * How many payload bytes travel in one code.

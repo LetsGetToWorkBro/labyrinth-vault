@@ -49,6 +49,7 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
   });
   const [problem, setProblem] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<{ ok: boolean; note: string } | null>(null);
 
   const onFrame = useCallback(
     ({ data }: { data: string }) => {
@@ -80,8 +81,17 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
       else setProblem(null);
 
       if (status.payload) {
-        confirmed();
-        setDone(String(status.kind ?? 'payload'));
+        /* The payload goes somewhere, always. Assembling and verifying a
+         * message and then dropping it on the floor was this screen's state
+         * for exactly one commit, and it read as success while doing
+         * nothing. The store dispatches on the kind and answers in a
+         * sentence either way. */
+        const kind = String(status.kind ?? '');
+        const result = store.acceptWirePayload(kind, status.payload);
+        if (result.ok) confirmed();
+        else refused();
+        setOutcome(result);
+        setDone(kind || 'payload');
       }
     },
     [done, purpose, store, navigation],
@@ -134,14 +144,31 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
         <Gap size={space.gap} />
         {done ? (
           <>
-            <LabelWide tone={color.good}>{`${done.toUpperCase()} · CHECKSUM VERIFIED`}</LabelWide>
+            <LabelWide tone={outcome?.ok === false ? color.warn : color.good}>
+              {`${done.toUpperCase()} · CHECKSUM VERIFIED`}
+            </LabelWide>
             <Gap size={space.step} />
             <Body>
-              Every frame arrived and the payload matches its own digest. Nothing was assembled from parts
-              of two different scans. The collector refuses that outright.
+              {outcome?.note ??
+                'Every frame arrived and the payload matches its own digest. Nothing was assembled from parts of two different scans.'}
             </Body>
             <Gap size={space.section} />
             <Action label="CONTINUE" onPress={() => navigation.goBack()} />
+            {outcome?.ok === false ? (
+              <>
+                <Gap size={space.snug} />
+                <Action
+                  label="SCAN AGAIN"
+                  quiet
+                  onPress={() => {
+                    scanner.current.reset();
+                    setOutcome(null);
+                    setDone(null);
+                    setProgress({ have: 0, total: 0, kind: null });
+                  }}
+                />
+              </>
+            ) : null}
           </>
         ) : (
           <>

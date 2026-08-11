@@ -279,6 +279,6 @@ describe('the store wiring', () => {
      * refresh, forever. The stored progress is handed over through a ref for
      * exactly this reason. */
     expect(store).toMatch(/scanStart = useRef/);
-    expect(store).toMatch(/\[nodes, moneroWatch\]/);
+    expect(store).toMatch(/\[nodes, accountKey, moneroWatch\]/);
   });
 });

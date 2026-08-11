@@ -34,8 +34,8 @@ import { Body, Label, LabelWide, Mono, Small, Title } from '../design/text';
 import { Header, SectionHead } from '../components/chrome';
 import { Link, Mark } from '../labyrinth/glyphs';
 import { color, space } from '../design/tokens';
+import { useState } from 'react';
 import { elide, sessionTime } from '../core/units';
-import { DEMO_ZPUB } from '../core/demo';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
@@ -43,6 +43,7 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
   const store = useStore();
   const { vault, now, snapshot } = store;
   const paired = vault.state !== 'unpaired';
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   return (
     <Screen>
@@ -83,7 +84,7 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
                 {vault.lastSession ? sessionTime(vault.lastSession, now) : 'never'}
               </FactRow>
               <FactRow label="ACCOUNT KEY" last>
-                <Mono size={13}>{elide(DEMO_ZPUB, 10, 8)}</Mono>
+                <Mono size={13}>{store.accountKey ? elide(store.accountKey, 10, 8) : 'NOT PAIRED'}</Mono>
               </FactRow>
 
               <Gap size={space.gap} />
@@ -94,6 +95,42 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
               </Notice>
 
               <Gap size={space.section} />
+              <SectionHead>MONERO SPENDS</SectionHead>
+              <Gap size={8} />
+              <Small>
+                The vault computes one key image per payment this wallet found, and with them the wallet
+                can subtract what you have spent from what arrived. Without them the Monero figure is
+                what arrived, and says so.
+              </Small>
+              <Gap size={8} />
+              {store.moneroStatus ? (
+                <Small tone={color.slate}>
+                  {`${store.moneroStatus.images} of ${store.moneroStatus.outputs} payments have a key image · ${store.moneroStatus.spentOutputs} known spent`}
+                </Small>
+              ) : (
+                <Small tone={color.slate}>Nothing scanned yet. Set a Monero node first.</Small>
+              )}
+              <Gap size={8} />
+              {snapshot.demo ? null : (
+                <>
+                  <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
+                  <Gap size={space.snug} />
+                  <Action
+                    label="SYNC WITH THE STAND-IN (DEMO)"
+                    quiet
+                    onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
+                  />
+                  <Gap size={space.snug} />
+                </>
+              )}
+              {syncNote ? (
+                <>
+                  <Small tone={color.slate}>{syncNote}</Small>
+                  <Gap size={space.snug} />
+                </>
+              ) : null}
+
+              <Gap size={space.gap} />
               <Action label="START A SESSION" onPress={() => navigation.navigate('Pair')} />
               <Gap size={space.snug} />
               <Action label="SECURITY" quiet onPress={() => navigation.navigate('Security')} />

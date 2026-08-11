@@ -47,6 +47,7 @@ import type { Asset, Atoms, Transaction } from './model';
 import type { AssetView, BroadcastResult, ChainSnapshot, FeeOption, Watcher } from './chain';
 import { discover, type Discovery } from './discover';
 import type { NodeConfig } from './nodes';
+import { KeyImageBook, buildOutputsRequest, settle, type ImportOutcome } from './keyimages';
 import {
   outputKey,
   progressFraction,
@@ -83,6 +84,10 @@ export interface MoneroStatus {
   outputs: number;
   /** Outputs found whose amount could not be proved. */
   unvalued: number;
+  /** Key images imported from the vault. Zero until the round trip runs. */
+  images: number;
+  /** Outputs known spent, subtracted from the balance. */
+  spentOutputs: number;
 }
 
 export interface RefreshResult {
@@ -216,15 +221,35 @@ const EMPTY_VIEW = (asset: Asset): AssetView => ({
   caveat: null,
 });
 
+/** What the key image book contributed, for the sentence under the number. */
+export interface SpendCoverage {
+  /** Images imported from the vault. */
+  images: number;
+  /** Found outputs with no image yet, counted as unspent by default. */
+  uncovered: number;
+  /** Outputs known spent and subtracted. */
+  spentCount: number;
+  /** Outputs known spent whose amount was never proved: the number reads
+   *  high by whatever they were worth, and the sentence has to say so. */
+  spentUnknown: number;
+}
+
 /**
  * The sentence under a Monero balance, which is never absent.
  *
- * Three things can be true at once and each of them changes what the number
- * means, so they are said in order of how badly somebody would be misled by
- * not knowing: a scan that has not finished, then amounts that could not be
- * proved, then the permanent one about spends.
+ * Several things can be true at once and each changes what the number means,
+ * so they are said in order of how badly somebody would be misled by not
+ * knowing: a scan that has not finished, then amounts that could not be
+ * proved, then what is known about spends.
+ *
+ * The last part is the one that changed shape when the key image round trip
+ * landed. With no images, the permanent warning stands: this is what arrived.
+ * With images covering everything, spends are subtracted and the sentence
+ * says where the images came from, because their correctness rests on the
+ * vault rather than on anything this device can prove. In between, both are
+ * true at once and both get said.
  */
-export function moneroCaveat(status: MoneroStatus, unvalued: number): string {
+export function moneroCaveat(status: MoneroStatus, unvalued: number, spends?: SpendCoverage): string {
   const parts: string[] = [];
   if (!status.caughtUp) {
     parts.push(
@@ -236,7 +261,28 @@ export function moneroCaveat(status: MoneroStatus, unvalued: number): string {
       `${unvalued} ${unvalued === 1 ? 'output was' : 'outputs were'} found whose amount could not be proved against the chain, so ${unvalued === 1 ? 'it is' : 'they are'} not in this total.`,
     );
   }
-  parts.push(SPEND_BLINDNESS);
+
+  if (!spends || spends.images === 0) {
+    parts.push(SPEND_BLINDNESS);
+  } else {
+    if (spends.spentCount > 0) {
+      parts.push(
+        `${spends.spentCount} spent ${spends.spentCount === 1 ? 'output is' : 'outputs are'} subtracted, using key images your vault computed.`,
+      );
+    } else {
+      parts.push('No spends found so far, checked using key images your vault computed.');
+    }
+    if (spends.spentUnknown > 0) {
+      parts.push(
+        `${spends.spentUnknown} spent ${spends.spentUnknown === 1 ? 'output has' : 'outputs have'} an unproved amount, so this number reads high by whatever ${spends.spentUnknown === 1 ? 'it was' : 'they were'} worth.`,
+      );
+    }
+    if (spends.uncovered > 0) {
+      parts.push(
+        `${spends.uncovered} ${spends.uncovered === 1 ? 'output has' : 'outputs have'} no key image yet and ${spends.uncovered === 1 ? 'counts' : 'count'} as unspent until the vault answers for ${spends.uncovered === 1 ? 'it' : 'them'}.`,
+      );
+    }
+  }
   return parts.join(' ');
 }
 
@@ -259,6 +305,14 @@ export class NodeWatcher implements Watcher {
    * The height is persisted; the findings are not.
    */
   private readonly found = new Map<string, Received>();
+  /**
+   * The key image book, empty until the vault answers a round trip.
+   *
+   * In memory for the same reason `found` is: a list of key images on disk is
+   * a list that names every future spend of this account, sitting on the
+   * networked device. Importing again after a relaunch is one scan of a QR.
+   */
+  private readonly book = new KeyImageBook();
   private moneroStatus: MoneroStatus | null = null;
 
   constructor(
@@ -391,6 +445,30 @@ export class NodeWatcher implements Watcher {
     return this.moneroStatus;
   }
 
+  /** The outputs the scan has found, for building an XMROUTPUTS payload. */
+  moneroOutputs(): Received[] {
+    return [...this.found.values()];
+  }
+
+  /** The XMROUTPUTS payload listing everything found, or why not. */
+  keyImageRequest(): ReturnType<typeof buildOutputsRequest> {
+    return buildOutputsRequest(this.moneroOutputs());
+  }
+
+  /**
+   * Accept a vault's XMRKEYIMAGES reply.
+   *
+   * Images are kept only for outputs the scan really found; the next refresh
+   * settles their history against the node and watches the chain from there.
+   * The book changes immediately, but the *balance* changes on the next
+   * refresh, because subtracting spends takes a look at the chain and this
+   * method is called from a screen that should not block on a node.
+   */
+  importKeyImages(payload: Uint8Array): ImportOutcome {
+    const known = new Set([...this.found.values()].map((entry) => entry.key));
+    return this.book.offerReply(payload, known);
+  }
+
   /**
    * Monero: the node's numbers, then one bounded pass of the chain scan.
    *
@@ -432,14 +510,37 @@ export class NodeWatcher implements Watcher {
       };
     }
 
-    const pass = await scan(transport, watch.account, watch.scan, tip);
+    const pass = await scan(transport, watch.account, watch.scan, tip, {
+      watch: this.book.watch(),
+    });
     /* The height advances even when the pass failed part way. `scan` leaves it
      * on the block it did not finish, so keeping it is resuming rather than
      * skipping, and throwing it away would redo work that succeeded. */
     this.monero = { ...watch, scan: pass.state };
     for (const output of pass.received) this.found.set(outputKey(output), output);
+    this.book.markSpent(pass.spent);
 
-    const total = totalReceived([...this.found.values()]);
+    /* Newly imported images need one backward look: the spend may sit in a
+     * block the walk passed before the image existed here. One question to the
+     * node settles it; everything after is caught live by the walk. The
+     * privacy cost of asking is real and is written up beside the call in
+     * net/monerod.ts and in docs/monero-sync.md. */
+    const unsettled = this.book.unsettled();
+    if (unsettled.length > 0) {
+      const answer = await monerod.isKeyImageSpent(transport, unsettled);
+      if (answer.ok) {
+        this.book.markSpent(answer.value.filter((entry) => entry.spent).map((entry) => entry.image));
+        this.book.markSettled(unsettled);
+      }
+      /* A failed settle is not a failed refresh: the images stay unsettled and
+       * the next refresh asks again. Until then those outputs count as
+       * unspent, which is the same received-total assumption as before the
+       * import, said by the caveat. */
+    }
+
+    const all = [...this.found.values()];
+    const total = totalReceived(all);
+    const balance = settle(all, this.book);
     const status: MoneroStatus = {
       scan: pass.state,
       tip,
@@ -447,6 +548,8 @@ export class NodeWatcher implements Watcher {
       caughtUp: pass.caughtUp,
       outputs: total.outputs,
       unvalued: total.unknown,
+      images: this.book.size(),
+      spentOutputs: balance.spentCount + balance.spentUnknown,
     };
     this.moneroStatus = status;
 
@@ -454,7 +557,7 @@ export class NodeWatcher implements Watcher {
       problem: pass.problem,
       view: {
         ...this.snap.assets.XMR,
-        balance: total.total,
+        balance: balance.balance,
         /* Zero, and not because the scan is incomplete. Building a Monero
          * spend needs key images and ring members, neither of which this half
          * of the product has. A non-zero spendable here would put a send
@@ -462,7 +565,12 @@ export class NodeWatcher implements Watcher {
         spendable: 0n,
         addresses: [{ address: watch.account.address, path: null, used: true }],
         height: tip,
-        caveat: moneroCaveat(status, total.unknown),
+        caveat: moneroCaveat(status, total.unknown, {
+          images: this.book.size(),
+          uncovered: balance.uncovered,
+          spentCount: balance.spentCount,
+          spentUnknown: balance.spentUnknown,
+        }),
       },
     };
   }

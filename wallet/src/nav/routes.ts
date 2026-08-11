@@ -57,6 +57,14 @@ export type Routes = {
    * every other wallet ends up making the choice for its users.
    */
   Nodes: undefined;
+  /**
+   * The key image round trip: outputs to the vault, images back.
+   *
+   * Its own route because it is a physical procedure with a screen full of
+   * codes, like the send flow's transmit step, and unlike that step it is not
+   * part of any payment: it is bookkeeping about payments already received.
+   */
+  KeyImages: undefined;
   Vault: undefined;
   Pair: undefined;
   Security: undefined;
