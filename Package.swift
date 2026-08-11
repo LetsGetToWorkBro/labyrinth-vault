@@ -72,6 +72,8 @@ let package = Package(
             sources: [
                 "Model/TxSummary.swift",
                 "Model/Refusal.swift",
+                "Model/Flow.swift",
+                "Model/Identity.swift",
                 "Support/Passphrase.swift",
                 "Support/BundleDigest.swift",
             ]

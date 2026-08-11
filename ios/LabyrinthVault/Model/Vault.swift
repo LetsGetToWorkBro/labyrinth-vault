@@ -220,16 +220,11 @@ final class Vault: ObservableObject {
             let opened = try Passphrase.withBytes(of: passphrase) { bytes in
                 try engine.unlock(sealedHex: sealedHex, passphrase: bytes)
             }
-            // Identity from the account key, so it means something.
-            let tail = String(opened.btcAccount.zpub.suffix(12)).uppercased()
-            vaultID = stride(from: 0, to: tail.count, by: 4)
-                .map { i -> String in
-                    let s = tail.index(tail.startIndex, offsetBy: i)
-                    let e = tail.index(s, offsetBy: min(4, tail.count - i))
-                    return String(tail[s..<e])
-                }
-                .joined(separator: " ")
-            fingerprint = String(opened.btcAccount.first.suffix(8)).uppercased()
+            // Identity from the account key, so it means something. The
+            // formatting lives in Model/Identity.swift, where it is compiled
+            // and tested off-device.
+            vaultID = Identity.vaultID(fromAccountKey: opened.btcAccount.zpub)
+            fingerprint = Identity.fingerprint(fromFirstAddress: opened.btcAccount.first)
             return nil
         } catch {
             return error.localizedDescription
@@ -304,9 +299,42 @@ final class Vault: ObservableObject {
     // MARK: - Signing
 
     /// Every transition is animated the same way: slow, mechanical, settled.
+    ///
+    /// And checked. The legality of a move lives in `Flow.allowed`, which is
+    /// compiled and tested off-device; this method maps the routes to their
+    /// kinds and asks. An illegal transition is a programming error, so debug
+    /// builds stop on it, and a release build refuses to move, which leaves
+    /// the person on a coherent screen rather than an impossible one.
     func go(_ to: Route) {
+        guard Flow.allowed(from: kind(of: route), to: kind(of: to)) else {
+            assertionFailure("illegal route transition: \(kind(of: route)) -> \(kind(of: to))")
+            return
+        }
         withAnimation(.timingCurve(0.16, 0.84, 0.24, 1, duration: 0.42)) {
             route = to
+        }
+    }
+
+    private func kind(of route: Route) -> RouteKind {
+        switch route {
+        case .launch: .launch
+        case .setup: .setup
+        case .home: .home
+        case .airgap: .airgap
+        case .export: .export
+        case .scanner: .scanner
+        case .acquiring: .acquiring
+        case .received: .received
+        case .review: .review
+        case .destination: .destination
+        case .approve: .approve
+        case .signed: .signed
+        case .signedQR: .signedQR
+        case .refused: .refused
+        case .settings: .settings
+        case .bitcoin: .bitcoin
+        case .monero: .monero
+        case .recovery: .recovery
         }
     }
 
