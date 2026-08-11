@@ -32,7 +32,7 @@
 import { Transaction as BtcTransaction } from '@scure/btc-signer';
 import { addressAt, openWatch, type BtcWallet } from '@vault/keys/bitcoin';
 import { walletFromSeed } from '@vault/keys/monero';
-import type { AssetView, BroadcastResult, ChainSnapshot, FeeOption, Utxo, Watcher } from './chain';
+import type { AssetView, BroadcastOptions, BroadcastResult, ChainSnapshot, FeeOption, Utxo, Watcher } from './chain';
 import type { Asset, Stage, Transaction } from './model';
 
 /** BIP84's own test vector. Published, empty, and self-tested against. */
@@ -319,11 +319,16 @@ export class DemoWatcher implements Watcher {
    * arrives at a block explorer and finds nothing is a fixture that has
    * started lying, so the app labels this one too.
    */
-  async broadcast(asset: Asset, raw: Uint8Array): Promise<BroadcastResult> {
+  async broadcast(asset: Asset, raw: Uint8Array, options?: BroadcastOptions): Promise<BroadcastResult> {
     await new Promise((resolve) => setTimeout(resolve, 1400));
     if (raw.length === 0) return { ok: false, txid: null, problem: 'There was nothing to publish.' };
-    if (asset !== 'BTC') {
-      return { ok: false, txid: null, problem: 'Monero broadcasting is not finished in this build.' };
+    if (asset === 'XMR') {
+      /* The fixture cannot relay to a real node, but the send flow needs a
+       * resolved id to animate. The vault computes the id at signing and passes
+       * it through; the demo echoes it so the confirmation screen can be built
+       * against a realistic success. */
+      if (!options?.txid) return { ok: false, txid: null, problem: 'This demo has no signed Monero transaction to publish.' };
+      return { ok: true, txid: options.txid, problem: null };
     }
     try {
       return { ok: true, txid: BtcTransaction.fromRaw(raw, { allowUnknownOutputs: true }).id, problem: null };

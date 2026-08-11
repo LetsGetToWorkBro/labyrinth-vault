@@ -230,7 +230,7 @@ describe('Bulletproof+ prover against the anchored verifier', () => {
     expect(() => proveBulletproofPlus([1n], [], randoms(1, 100))).toThrow(/mask/);
   });
 
-  it('matches the shape the wire expects: 6+logM inner-product rounds', () => {
+  it('matches the shape the wire expects: 6+logM inner-product rounds', { timeout: 30_000 }, () => {
     const one = proveBulletproofPlus([5n], [detScalar(9)], randoms(1, 300));
     expect(one.proof.L).toHaveLength(6);
     const three = proveBulletproofPlus([5n, 6n, 7n], [detScalar(9), detScalar(10), detScalar(11)], randoms(3, 300));

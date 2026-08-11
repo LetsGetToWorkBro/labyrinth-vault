@@ -22,10 +22,11 @@ import {
   serializeRctBase,
   serializeRctPrunable,
   transactionId,
+  transactionWeight,
   varintBytes,
   type WirePrefix,
 } from '../src/keys/monerowire';
-import { toHex } from '../src/keys/monero';
+import { fromHex, toHex } from '../src/keys/monero';
 
 interface RawFixture {
   txid: string;
@@ -107,6 +108,34 @@ describe('serialization against real transaction ids', () => {
     if (prunable.pseudoOuts.length > 1) {
       expect(assembleRawTransaction(prefix, base, swappedPseudo).txid).not.toBe(tx.txid);
     }
+  });
+});
+
+describe('transaction weight against real transactions', () => {
+  for (const tx of fixtures.txs) {
+    it(`weighs ${tx.txid.slice(0, 12)} (${tx.vout.length} out) as bytes plus the exact clawback`, () => {
+      const { prefix, base, prunable } = partsOf(tx);
+      const assembled = assembleRawTransaction(prefix, base, prunable);
+      const bytes = fromHex(assembled.hex).length;
+      /* Two outputs: weight is exactly the byte size. Three: the byte size plus
+       * a positive clawback, and never less than the raw size. */
+      if (tx.vout.length <= 2) {
+        expect(assembled.weight).toBe(bytes);
+      } else {
+        expect(assembled.weight).toBeGreaterThan(bytes);
+      }
+      expect(assembled.weight).toBe(transactionWeight(bytes, tx.vout.length));
+    });
+  }
+
+  it('computes the clawback the way the source does', () => {
+    /* Three outputs (padded to four): (320*4 - 704)*4/5 = 460 over the bytes. */
+    expect(transactionWeight(1000, 3)).toBe(1000 + 460);
+    /* Four outputs sit in the same padded proof, same clawback. */
+    expect(transactionWeight(1000, 4)).toBe(1000 + 460);
+    /* Two or fewer: no surcharge. */
+    expect(transactionWeight(1000, 2)).toBe(1000);
+    expect(transactionWeight(1000, 1)).toBe(1000);
   });
 });
 

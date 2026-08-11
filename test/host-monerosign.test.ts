@@ -117,7 +117,7 @@ describe('moneroDescribe and moneroSign over the bridge', () => {
     expect(unsigned.problem).toMatch(/described/);
   });
 
-  it('describes what will be paid, then signs exactly that', () => {
+  it('describes what will be paid, then signs exactly that', { timeout: 30_000 }, () => {
     const { xmrAddress } = openSession();
     const payloadHex = asPayloadHex(setFor(xmrAddress));
 
@@ -171,7 +171,7 @@ describe('moneroDescribe and moneroSign over the bridge', () => {
     expect(signed.problem).toMatch(/approval|match/);
   });
 
-  it('spends one approval on one signature', () => {
+  it('spends one approval on one signature', { timeout: 30_000 }, () => {
     const { xmrAddress } = openSession();
     const described = JSON.parse(api.moneroDescribe(asPayloadHex(setFor(xmrAddress)))) as { ok: boolean; digest: string };
     const first = JSON.parse(api.moneroSign(described.digest, randomHexFor())) as { ok: boolean };

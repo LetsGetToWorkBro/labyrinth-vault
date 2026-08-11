@@ -42,9 +42,9 @@ import {
   derivationToScalar,
   derivePublicKey,
   deriveSecretKey,
+  deriveViewTag,
   generateKeyDerivation,
   generateKeyImage,
-  writeVarint,
   RCT_H,
 } from './monerocrypto';
 import { fromHex, toHex, parseAddress, publicFromSecret, type Wallet } from './monero';
@@ -100,7 +100,7 @@ export interface VaultUnsignedInput {
   realPosition: number;
 }
 
-export interface VaultUnsignedOutput { address: string; amount: string; change: boolean }
+export interface VaultUnsignedOutput { address: string; amount: string; change: boolean; dummy?: boolean }
 
 export interface VaultUnsignedSet {
   v: number;
@@ -196,7 +196,14 @@ export function parseUnsignedSet(
     const output = entry as Record<string, unknown>;
     const amt = amount(output['amount']);
     if (typeof output['address'] !== 'string' || amt === null) return { ok: false, problem: 'An output is malformed.' };
-    outputs.push({ address: output['address'], amount: amt.toString(), change: output['change'] === true });
+    outputs.push({ address: output['address'], amount: amt.toString(), change: output['change'] === true, dummy: output['dummy'] === true });
+  }
+  if (outputs.length < 2) {
+    /* Consensus requires at least two outputs. The wallet pads a one-output
+     * spend with a zero-amount self-output; a set that reaches the vault with
+     * one output would only ever be rejected by the network, so it is refused
+     * here with a sentence instead of signed into a dead transaction. */
+    return { ok: false, problem: 'That set has fewer than two outputs, which the network will not accept.' };
   }
 
   return { ok: true, set: { v: UNSIGNED_VERSION, chain: 'xmr', network, inputs, outputs, fee: fee.toString(), ringSize } };
@@ -224,6 +231,8 @@ export interface SignedMoneroTx {
   txid: string;
   network: 'mainnet' | 'stagenet' | 'testnet';
   fee: string;
+  /** The consensus weight the fee prices, so a caller can check the rate. */
+  weight: number;
   /** One per input, for the wallet's spent-detection book. */
   keyImages: string[];
   /** What was paid where, for the confirmation screen and the record. */
@@ -231,17 +240,6 @@ export interface SignedMoneroTx {
 }
 
 export type SignResult = { ok: true; tx: SignedMoneroTx } | { ok: false; problem: string };
-
-/** `derive_view_tag`: one byte of `keccak("view_tag" ‖ derivation ‖ varint(i))`. */
-function viewTagFor(derivation: Uint8Array, outputIndex: number): string {
-  const salt = new TextEncoder().encode('view_tag');
-  const index = writeVarint(outputIndex);
-  const buf = new Uint8Array(salt.length + 32 + index.length);
-  buf.set(salt, 0);
-  buf.set(derivation, salt.length);
-  buf.set(index, salt.length + 32);
-  return toHex(keccak_256(buf).subarray(0, 1));
-}
 
 /** The eight ecdh bytes: the little-endian amount XORed with the shared mask. */
 function encryptAmount(amount: bigint, sharedSecret: Uint8Array): string {
@@ -360,7 +358,7 @@ export function signMoneroSpend(
       builtOutputs.push({
         source: output,
         oneTimeKey: toHex(derivePublicKey(derivation, position, keys.spendPublic)),
-        viewTag: viewTagFor(derivation, position),
+        viewTag: toHex(deriveViewTag(derivation, position)),
         ecdhAmount: encryptAmount(amount, shared),
         commitment: toHex(commit(amount, mask)),
         mask: b2s(mask),
@@ -498,6 +496,7 @@ export function signMoneroSpend(
         txid: raw.txid,
         network: set.network,
         fee: set.fee,
+        weight: raw.weight,
         keyImages: builtInputs.map((input) => toHex(input.keyImage)),
         outputs: builtOutputs.map((o) => ({ address: o.source.address, amount: o.amount.toString(), change: o.source.change })),
       },

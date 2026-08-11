@@ -193,19 +193,45 @@ export function preClsagHash(prefixHash: Uint8Array, baseBytes: Uint8Array, bpp:
   return keccak_256(cat(prefixHash, keccak_256(baseBytes), keccak_256(cat(...fields))));
 }
 
+/**
+ * The transaction's weight, which is what the network prices, not its raw size.
+ *
+ * Weight is the serialized byte length plus the Bulletproof+ clawback: a
+ * surcharge on range proofs padded past their output count, so that a
+ * many-output transaction pays for the verification a padded proof forces on
+ * every node. The formula is `(bp_base * padded - bp_size) * 4/5` from
+ * `get_transaction_weight_clawback`, exact rather than estimated, because this
+ * is the number a fee has to cover to relay. `nOutputs` is the real output
+ * count; the clawback is zero at two or fewer.
+ */
+export function transactionWeight(sizeBytes: number, nOutputs: number): number {
+  if (nOutputs <= 2) return sizeBytes;
+  const bpBase = Math.floor((32 * (6 + 7 * 2)) / 2); // 320: a normalized 2-output BP+ proof
+  let logPadded = 2;
+  while ((1 << logPadded) < nOutputs) logPadded++;
+  const nlr = 2 * (6 + logPadded);
+  const bpSize = 32 * (6 + nlr);
+  const clawback = Math.floor(((bpBase * (1 << logPadded) - bpSize) * 4) / 5);
+  return sizeBytes + clawback;
+}
+
 export interface RawTransaction {
   /** The broadcastable bytes, hex: what /send_raw_transaction takes. */
   hex: string;
   txid: string;
+  /** The consensus weight (bytes plus Bulletproof+ clawback) the fee prices. */
+  weight: number;
 }
 
-/** The whole transaction: prefix ‖ base ‖ prunable, plus its id. */
+/** The whole transaction: prefix ‖ base ‖ prunable, plus its id and weight. */
 export function assembleRawTransaction(prefix: WirePrefix, base: WireRctBase, prunable: WireRctPrunable): RawTransaction {
   const prefixBytes = serializePrefix(prefix);
   const baseBytes = serializeRctBase(base);
   const prunableBytes = serializeRctPrunable(prunable);
+  const sizeBytes = prefixBytes.length + baseBytes.length + prunableBytes.length;
   return {
     hex: toHex(cat(prefixBytes, baseBytes, prunableBytes)),
     txid: transactionId(prefixBytes, baseBytes, prunableBytes),
+    weight: transactionWeight(sizeBytes, base.outPk.length),
   };
 }

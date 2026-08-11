@@ -62,6 +62,33 @@ describe('the fee grows with the transaction', () => {
     expect(estimateWeight(1, 3)).toBeGreaterThan(estimateWeight(1, 2));
   });
 
+  it('matches wallet2 estimate_rct_tx_size to the byte for a 1-in 2-out spend', () => {
+    /* Hand-totalled from the transcribed reference: prefix 7, vin 71, vout 76,
+     * extra 44, rct type 1, BP+ 643, CLSAG 576, view tags 2, pseudoOuts 32,
+     * ecdh 16, outPk 64, fee 4. No clawback at two outputs. */
+    expect(estimateWeight(1, 2, 16, 44)).toBe(1536);
+    /* The default extra is the standard size, so the default agrees. */
+    expect(estimateWeight(1, 2)).toBe(1536);
+  });
+
+  it('adds the exact Bulletproof+ clawback past two outputs', () => {
+    /* Three outputs: subtotal 1679, clawback (320*4 - 704)*4/5 = 460. */
+    expect(estimateWeight(1, 3, 16, 44)).toBe(2139);
+    /* Two outputs carry no clawback; three do, and it is a real jump. */
+    expect(estimateWeight(1, 3) - estimateWeight(1, 2)).toBeGreaterThan(500);
+  });
+
+  it('grows by one Bulletproof+ round each time the output count crosses a power of two', () => {
+    /* 2->3 crosses into a bigger padded proof; 3->4 stays in it. */
+    const two = estimateWeight(1, 2);
+    const three = estimateWeight(1, 3);
+    const four = estimateWeight(1, 4);
+    const five = estimateWeight(1, 5);
+    expect(three).toBeGreaterThan(two);
+    expect(four).toBeGreaterThan(three);
+    expect(five - four).toBeGreaterThan(four - three); // 5 crosses into the next proof size
+  });
+
   it('scales linearly in the per-byte rate', () => {
     expect(feeFor(1, 2, 2n)).toBe(feeFor(1, 2, 1n) * 2n);
   });
@@ -170,7 +197,7 @@ describe('assembling the unsigned set', () => {
     if (!set.ok) expect(set.problem).toMatch(/real output/);
   });
 
-  it('produces no change output when the inputs match exactly', () => {
+  it('produces no real change output when the inputs match exactly', () => {
     const perByte = 1n;
     const sending = 5_000_000n;
     const fee = feeFor(1, 2, perByte);
@@ -187,7 +214,60 @@ describe('assembling the unsigned set', () => {
       network: 'mainnet',
     });
     expect(set.ok).toBe(true);
-    if (set.ok) expect(set.set.outputs.filter((o) => o.change)).toHaveLength(0);
+    if (!set.ok) return;
+    /* No change carrying value: the balance closed on the destination. */
+    expect(set.set.outputs.filter((o) => o.change && !o.dummy)).toHaveLength(0);
+    expect(set.set.outputs.filter((o) => BigInt(o.amount) > 0n)).toHaveLength(1);
+  });
+
+  it('pads a single-output spend with a zero-amount dummy to the sender', () => {
+    /* An exact-amount send would be one output, which consensus rejects. The
+     * set must reach two, with the pad paying the sender nothing. */
+    const perByte = 1n;
+    const sending = 5_000_000n;
+    const fee = feeFor(1, 2, perByte);
+    const input = owned(sending + fee);
+    const selected = selectInputs([input], sending, perByte);
+    const set = assembleUnsigned({
+      inputs: selected.inputs,
+      rings: selected.inputs.map((i) => ringFor(i)),
+      destinations: [{ address: THEM, amount: sending }],
+      change: selected.change,
+      ownAddress: OWN,
+      fee: selected.fee,
+      network: 'mainnet',
+    });
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(set.set.outputs.length).toBeGreaterThanOrEqual(2);
+    const dummy = set.set.outputs.filter((o) => o.dummy);
+    expect(dummy).toHaveLength(1);
+    expect(dummy[0]!.address).toBe(OWN);
+    expect(dummy[0]!.amount).toBe('0');
+    /* And the balance still closes: inputs equal outputs plus fee. */
+    const inTotal = set.set.inputs.reduce((s, i) => s + BigInt(i.amount), 0n);
+    const outTotal = set.set.outputs.reduce((s, o) => s + BigInt(o.amount), 0n);
+    expect(inTotal).toBe(outTotal + BigInt(set.set.fee));
+  });
+
+  it('does not pad when a real change output already makes two', () => {
+    const { selected, rings } = (() => {
+      const inputs = [owned(3_000_000_000_000n)];
+      const s = selectInputs(inputs, 1_000_000_000_000n, 10n);
+      if (!s.ok) throw new Error('setup');
+      return { selected: s, rings: s.inputs.map((i) => ringFor(i)) };
+    })();
+    const set = assembleUnsigned({
+      inputs: selected.inputs,
+      rings,
+      destinations: [{ address: THEM, amount: 1_000_000_000_000n }],
+      change: selected.change,
+      ownAddress: OWN,
+      fee: selected.fee,
+      network: 'mainnet',
+    });
+    expect(set.ok).toBe(true);
+    if (set.ok) expect(set.set.outputs.filter((o) => o.dummy)).toHaveLength(0);
   });
 });
 

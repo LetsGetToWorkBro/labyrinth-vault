@@ -317,6 +317,29 @@ export function derivationToScalar(derivation: Uint8Array, outputIndex: number):
   return hashToScalar(buffer);
 }
 
+const VIEW_TAG_DOMAIN = new TextEncoder().encode('view_tag');
+
+/**
+ * `derive_view_tag`: one byte that lets a wallet skip most outputs cheaply.
+ *
+ * The first byte of `keccak("view_tag" ‖ derivation ‖ varint(index))`. A
+ * scanning wallet computes it and, if it does not match the byte on the output,
+ * skips the full ownership check. Getting it wrong on the sending side is the
+ * quiet, expensive failure: a receiving wallet that view-tag-filters would skip
+ * a payment that is genuinely theirs and never see the money. So it is pinned
+ * to the Monero project's 70 published `derive_view_tag` vectors in
+ * `test/monerocrypto.test.ts`, not merely round-tripped against the scan.
+ */
+export function deriveViewTag(derivation: Uint8Array, outputIndex: number): Uint8Array {
+  expect32(derivation, 'derivation');
+  const index = writeVarint(outputIndex);
+  const buffer = new Uint8Array(VIEW_TAG_DOMAIN.length + 32 + index.length);
+  buffer.set(VIEW_TAG_DOMAIN, 0);
+  buffer.set(derivation, VIEW_TAG_DOMAIN.length);
+  buffer.set(index, VIEW_TAG_DOMAIN.length + 32);
+  return keccak_256(buffer).subarray(0, 1);
+}
+
 /**
  * `derive_public_key`: the one-time address an output was actually paid to.
  *

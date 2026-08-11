@@ -25,6 +25,7 @@ import {
   derivationToScalar,
   derivePublicKey,
   deriveSecretKey,
+  deriveViewTag,
   generateKeyDerivation,
   generateKeyImage,
   hashToPoint,
@@ -191,6 +192,28 @@ describe('derive_public_key', () => {
       .find((v) => /[2-9]/.test(v[1]!) && v[1]!.length > 2)!;
     expect(hex(derivePublicKey(bytes(derivation!), parseInt(index!, 10), bytes(base!)))).toBe(want);
     expect(hex(derivePublicKey(bytes(derivation!), parseInt(index!, 16), bytes(base!)))).not.toBe(want);
+  });
+});
+
+describe('derive_view_tag', () => {
+  interface ViewTagVector { derivation: string; outputIndex: number; viewTag: string }
+  const viewTags: { vectors: ViewTagVector[] } = JSON.parse(
+    readFileSync('test/fixtures/view-tag.json', 'utf8'),
+  );
+
+  it('matches all 70 published vectors', () => {
+    expect(viewTags.vectors.length).toBe(70);
+    for (const v of viewTags.vectors) {
+      expect(hex(deriveViewTag(bytes(v.derivation), v.outputIndex))).toBe(v.viewTag);
+    }
+  });
+
+  it('is one byte and depends on the output index', () => {
+    const derivation = bytes(viewTags.vectors[0]!.derivation);
+    expect(deriveViewTag(derivation, 0)).toHaveLength(1);
+    /* Two indices under the same derivation give (almost surely) different
+     * tags; the published vectors 0 and 1 differ, so assert that pair. */
+    expect(hex(deriveViewTag(derivation, 0))).not.toBe(hex(deriveViewTag(derivation, 1)));
   });
 });
 

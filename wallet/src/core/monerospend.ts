@@ -82,36 +82,66 @@ export interface Destination {
 // which is an inconvenience and not a loss, so the estimate rounds up.
 
 /**
- * The approximate weight of a signed RingCT transaction, in bytes.
- *
- * The pieces: a CLSAG per input, whose size grows with the ring; the outputs,
- * each a key, a commitment and an encrypted amount; a Bulletproof+ range proof
- * whose size grows with the log of the output count; and fixed overhead. The
- * Bulletproof+ also carries a weight clawback the network applies, which this
- * folds in. Transcribed from wallet2's `estimate_tx_weight`; approximate by
- * design, and rounded so an estimate error relays rather than bounces.
+ * The extra field of a standard spend: the transaction public key (tag plus 32
+ * bytes) and the dummy encrypted payment id every wallet2 transaction carries
+ * for uniformity (tag, length, and the eight-byte encrypted id, nine bytes of
+ * payload). A spend whose `extra` differs passes its own size here.
  */
-export function estimateWeight(inputs: number, outputs: number, ringSize = RING_SIZE): number {
-  const clsagPerInput = (ringSize + 1) * 32 + 32; // s per member, c1, key image handled below
-  const inputBytes = inputs * (32 /* key image */ + 8 /* offsets */ + clsagPerInput);
+export const STANDARD_EXTRA_SIZE = 1 + 32 + 1 + 1 + 1 + 8;
 
-  const outputBytes = outputs * (32 /* one-time key */ + 32 /* commitment */ + 8 /* ecdh */ + 3);
+/**
+ * The weight of a signed Bulletproof+ CLSAG transaction, in bytes.
+ *
+ * Transcribed from wallet2's `estimate_rct_tx_size` and `estimate_tx_weight`
+ * for the only transaction kind this wallet builds: RingCT type 6, CLSAG
+ * signatures, tagged (view-tag) outputs. Every term is the reference's, so the
+ * estimate tracks the serialized size closely; the one deliberate looseness is
+ * the ring-offset varints, which the reference also approximates as two bytes
+ * each, and which serialize to at most that. The Bulletproof+ weight clawback,
+ * the surcharge the network applies to proofs padded past their output count,
+ * is the exact `(bp_base * padded - bp_size) * 4/5` from the source, not an
+ * approximation, because underpricing it is what gets a many-output spend
+ * rejected at relay.
+ */
+export function estimateWeight(
+  inputs: number,
+  outputs: number,
+  ringSize = RING_SIZE,
+  extraSize = STANDARD_EXTRA_SIZE,
+): number {
+  const mixin = ringSize - 1; // wallet2 counts decoys; ring size is mixin + 1
 
-  // Bulletproof+ size: a proof over the next power of two ≥ outputs. Log-sized
-  // in the padded count, plus a fixed body.
-  const padded = Math.max(1, 1 << Math.ceil(Math.log2(Math.max(1, outputs))));
-  const bpLog = Math.log2(padded);
-  const bpBytes = (2 * bpLog + 6) * 32 + 3 * 32;
+  let size = 0;
+  size += 1 + 6; // version and unlock time
+  size += inputs * (1 + 6 + (mixin + 1) * 2 + 32); // vin: tag, amount, offsets, key image
+  size += outputs * (6 + 32); // vout: amount, tag, one-time key
+  size += extraSize;
+  size += 1; // rct type
 
-  const overhead = 64; // prefix, version, unlock time, extra, fee varint
+  // Bulletproof+ range proof: 6 fixed elements plus L and R, each of length
+  // 6 + log2(padded outputs).
+  let logPadded = 0;
+  while ((1 << logPadded) < outputs) logPadded++;
+  size += (2 * (6 + logPadded) + 6) * 32 + 3;
 
-  const size = inputBytes + outputBytes + bpBytes + overhead;
+  size += inputs * (32 * (mixin + 1) + 64); // CLSAGs: s per member, c1 and D
+  size += outputs; // one view-tag byte per output
+  size += 32 * inputs; // pseudoOuts
+  size += 8 * outputs; // ecdhInfo
+  size += 32 * outputs; // outPk commitments
+  size += 4; // txnFee
 
-  // The Bulletproof+ weight clawback: for a proof padded well past the real
-  // output count, the network counts extra weight. Small here (few outputs),
-  // included for fidelity and to round the estimate upward.
-  const bpClawback = padded > outputs ? Math.floor(bpBytes * 0.2) : 0;
-  return size + bpClawback;
+  if (outputs > 2) {
+    const bpBase = Math.floor((32 * (6 + 7 * 2)) / 2); // 320, a normalized 2-output proof
+    let lpo = 2;
+    while ((1 << lpo) < outputs) lpo++;
+    const nlr = 2 * (6 + lpo);
+    const bpSize = 32 * (6 + nlr);
+    const clawback = Math.floor(((bpBase * (1 << lpo) - bpSize) * 4) / 5);
+    size += clawback;
+  }
+
+  return size;
 }
 
 /**
@@ -225,6 +255,9 @@ export interface UnsignedOutput {
   amount: string;
   /** True for the change output paying the sender's own address. */
   change: boolean;
+  /** True for a zero-amount padding output. Consensus needs two outputs; a
+   *  spend that would have one gets this, paying the sender nothing. */
+  dummy?: boolean;
 }
 
 export interface UnsignedTxSet {
@@ -288,11 +321,21 @@ export function assembleUnsigned(params: AssembleParams): Assembled {
     address: d.address,
     amount: d.amount.toString(),
     change: false,
+    dummy: false,
   }));
   if (change > 0n) {
     /* The single most important line in this file. Change goes to the owner's
      * own address, full stop. */
-    outputs.push({ address: ownAddress, amount: change.toString(), change: true });
+    outputs.push({ address: ownAddress, amount: change.toString(), change: true, dummy: false });
+  }
+  if (outputs.length < 2) {
+    /* Consensus has required at least two outputs since hard fork 12. A spend
+     * whose destinations and change come to a single output (an exact-amount
+     * send, or one whose change was folded into the fee) gets a zero-amount
+     * output to the sender, exactly as wallet2 does. It pays nobody, changes
+     * no balance, and the fee was already sized for a change output, so the
+     * weight is covered. */
+    outputs.push({ address: ownAddress, amount: '0', change: true, dummy: true });
   }
 
   const wireInputs: UnsignedInput[] = inputs.map((input, i) => {
@@ -409,7 +452,7 @@ export function parseUnsigned(
     const output = entry as Record<string, unknown>;
     const amt = amount(output['amount']);
     if (typeof output['address'] !== 'string' || amt === null) return { ok: false, problem: 'An output is malformed.' };
-    outputs.push({ address: output['address'], amount: amt.toString(), change: output['change'] === true });
+    outputs.push({ address: output['address'], amount: amt.toString(), change: output['change'] === true, dummy: output['dummy'] === true });
   }
 
   return {

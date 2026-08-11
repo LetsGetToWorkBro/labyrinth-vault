@@ -13872,6 +13872,16 @@ zoo`.split("\n"));
     buffer.set(index, 32);
     return hashToScalar(buffer);
   }
+  var VIEW_TAG_DOMAIN = new TextEncoder().encode("view_tag");
+  function deriveViewTag(derivation, outputIndex) {
+    expect32(derivation, "derivation");
+    const index = writeVarint(outputIndex);
+    const buffer = new Uint8Array(VIEW_TAG_DOMAIN.length + 32 + index.length);
+    buffer.set(VIEW_TAG_DOMAIN, 0);
+    buffer.set(derivation, VIEW_TAG_DOMAIN.length);
+    buffer.set(index, VIEW_TAG_DOMAIN.length + 32);
+    return keccak_256(buffer).subarray(0, 1);
+  }
   function derivePublicKey(derivation, outputIndex, base) {
     const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
     if (scalar === 0n) throw new Error("That derivation produced a zero scalar.");
@@ -14759,13 +14769,25 @@ zoo`.split("\n"));
     }
     return keccak_256(cat(prefixHash, keccak_256(baseBytes), keccak_256(cat(...fields))));
   }
+  function transactionWeight(sizeBytes, nOutputs) {
+    if (nOutputs <= 2) return sizeBytes;
+    const bpBase = Math.floor(32 * (6 + 7 * 2) / 2);
+    let logPadded = 2;
+    while (1 << logPadded < nOutputs) logPadded++;
+    const nlr = 2 * (6 + logPadded);
+    const bpSize = 32 * (6 + nlr);
+    const clawback = Math.floor((bpBase * (1 << logPadded) - bpSize) * 4 / 5);
+    return sizeBytes + clawback;
+  }
   function assembleRawTransaction(prefix2, base, prunable) {
     const prefixBytes = serializePrefix(prefix2);
     const baseBytes = serializeRctBase(base);
     const prunableBytes = serializeRctPrunable(prunable);
+    const sizeBytes = prefixBytes.length + baseBytes.length + prunableBytes.length;
     return {
       hex: toHex(cat(prefixBytes, baseBytes, prunableBytes)),
-      txid: transactionId(prefixBytes, baseBytes, prunableBytes)
+      txid: transactionId(prefixBytes, baseBytes, prunableBytes),
+      weight: transactionWeight(sizeBytes, base.outPk.length)
     };
   }
 
@@ -14856,21 +14878,15 @@ zoo`.split("\n"));
       const output = entry;
       const amt = amount(output["amount"]);
       if (typeof output["address"] !== "string" || amt === null) return { ok: false, problem: "An output is malformed." };
-      outputs.push({ address: output["address"], amount: amt.toString(), change: output["change"] === true });
+      outputs.push({ address: output["address"], amount: amt.toString(), change: output["change"] === true, dummy: output["dummy"] === true });
+    }
+    if (outputs.length < 2) {
+      return { ok: false, problem: "That set has fewer than two outputs, which the network will not accept." };
     }
     return { ok: true, set: { v: UNSIGNED_VERSION, chain: "xmr", network, inputs, outputs, fee: fee.toString(), ringSize } };
   }
   function signingRandomCount(nInputs, ringSize, nOutputs) {
     return 1 + 1 + (nInputs - 1) + nInputs * (ringSize + 1) + bppRandomCount(nOutputs);
-  }
-  function viewTagFor(derivation, outputIndex) {
-    const salt = new TextEncoder().encode("view_tag");
-    const index = writeVarint(outputIndex);
-    const buf = new Uint8Array(salt.length + 32 + index.length);
-    buf.set(salt, 0);
-    buf.set(derivation, salt.length);
-    buf.set(index, salt.length + 32);
-    return toHex(keccak_256(buf).subarray(0, 1));
   }
   function encryptAmount(amount, sharedSecret) {
     const mask = amountMask(sharedSecret);
@@ -14957,7 +14973,7 @@ zoo`.split("\n"));
         builtOutputs.push({
           source: output,
           oneTimeKey: toHex(derivePublicKey(derivation, position, keys.spendPublic)),
-          viewTag: viewTagFor(derivation, position),
+          viewTag: toHex(deriveViewTag(derivation, position)),
           ecdhAmount: encryptAmount(amount, shared),
           commitment: toHex(commit(amount, mask)),
           mask: b2s2(mask),
@@ -15070,6 +15086,7 @@ zoo`.split("\n"));
           txid: raw.txid,
           network: set.network,
           fee: set.fee,
+          weight: raw.weight,
           keyImages: builtInputs.map((input) => toHex(input.keyImage)),
           outputs: builtOutputs.map((o) => ({ address: o.source.address, amount: o.amount.toString(), change: o.source.change }))
         }

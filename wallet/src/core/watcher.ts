@@ -44,7 +44,7 @@
 
 import { openWatch, type BtcWallet } from '@vault/keys/bitcoin';
 import type { Asset, Atoms, Transaction } from './model';
-import type { AssetView, BroadcastResult, ChainSnapshot, FeeOption, Watcher } from './chain';
+import type { AssetView, BroadcastOptions, BroadcastResult, ChainSnapshot, FeeOption, Watcher } from './chain';
 import { discover, type Discovery } from './discover';
 import type { NodeConfig } from './nodes';
 import { KeyImageBook, buildOutputsRequest, settle, type ImportOutcome } from './keyimages';
@@ -699,19 +699,21 @@ export class NodeWatcher implements Watcher {
     };
   }
 
-  async broadcast(asset: Asset, raw: Uint8Array): Promise<BroadcastResult> {
+  async broadcast(asset: Asset, raw: Uint8Array, options?: BroadcastOptions): Promise<BroadcastResult> {
     const transport = asset === 'BTC' ? this.transports.btc : this.transports.xmr;
     if (!transport) {
       return { ok: false, txid: null, problem: `No ${asset} node is set, so there is nothing to broadcast through.` };
     }
 
     if (asset === 'XMR') {
-      /* The gate. A Monero spend may be built and signed as far as the
-       * verified pieces reach, but it is not broadcast with real value until a
-       * live node has accepted bytes this code produced. `core/moneroreadiness`
-       * carries the whole reasoning; this is the chokepoint it guards. The app
-       * is mainnet-only today, so the network is mainnet. */
-      const gate = moneroBroadcastGate('mainnet');
+      /* The gate. A Monero spend may be built and signed as far as the verified
+       * pieces reach, but a mainnet spend is not broadcast with real value
+       * until a live node has accepted bytes this code produced. The network
+       * comes from the signed transaction itself, so a stagenet transaction,
+       * which is exactly how that evidence gets made, passes; only mainnet is
+       * held. `core/moneroreadiness` carries the whole reasoning. */
+      const network = options?.network ?? 'mainnet';
+      const gate = moneroBroadcastGate(network);
       if (!gate.allowed) return { ok: false, txid: null, problem: gate.problem };
     }
 
@@ -720,8 +722,10 @@ export class NodeWatcher implements Watcher {
       ? await esplora.broadcast(transport, hex)
       : await monerod.broadcast(transport, hex);
 
-    return result.ok
-      ? { ok: true, txid: asset === 'BTC' ? result.value : null, problem: null }
-      : { ok: false, txid: null, problem: result.problem };
+    if (!result.ok) return { ok: false, txid: null, problem: result.problem };
+    /* Bitcoin's broadcast returns the id; monerod returns only a status, so the
+     * id computed at signing and handed in here is what the caller gets back. */
+    const txid = asset === 'BTC' ? result.value : options?.txid ?? null;
+    return { ok: true, txid, problem: null };
   }
 }

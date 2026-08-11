@@ -89,6 +89,18 @@ export async function planMoneroSpend(params: PlanParams): Promise<Plan> {
     if (!real || real.key !== input.key || real.commitment !== input.commitment) {
       return { ok: false, problem: 'The node returned a different output than the one being spent. Not signing that.' };
     }
+    /* The output being spent must itself be old enough. The node's `unlocked`
+     * flag already answers this, but the age is also checked here against the
+     * tip directly, so a node that lies about `unlocked` cannot walk a freshly
+     * received coin into a transaction every relay on the network will reject.
+     * A spend of an unconfirmed or barely confirmed output is the common,
+     * innocent version of this, and it deserves a sentence that names it. */
+    if (tip.value.height - real.height < SPENDABLE_AGE) {
+      return {
+        ok: false,
+        problem: `That output is only ${tip.value.height - real.height} block(s) deep and needs ${SPENDABLE_AGE}. Wait a few blocks and try again.`,
+      };
+    }
     /* Every member must be spendable, or the ring is one the network rejects. */
     if (fetched.value.some((m: ChainOutput) => !m.unlocked)) {
       return { ok: false, problem: 'A ring member is not yet spendable. Try again in a few blocks.' };

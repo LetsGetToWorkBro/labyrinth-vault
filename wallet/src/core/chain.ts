@@ -111,6 +111,18 @@ export interface BroadcastResult {
   problem: string | null;
 }
 
+/** What a caller knows about a signed transaction that the raw bytes do not say. */
+export interface BroadcastOptions {
+  /** The network the transaction was built for. The Monero mainnet gate reads
+   *  this: a stagenet transaction is not held by the mainnet gate, which is how
+   *  the evidence to lift it gets made. Defaults to mainnet, the safe reading. */
+  network?: 'mainnet' | 'stagenet' | 'testnet';
+  /** The transaction id, for chains whose broadcast reply does not echo one.
+   *  monerod answers with a status, not an id, so the id computed at signing is
+   *  passed through here rather than reconstructed. */
+  txid?: string;
+}
+
 /**
  * The one thing the online half is for.
  *
@@ -121,7 +133,7 @@ export interface BroadcastResult {
  */
 export interface Watcher {
   snapshot(now: number): ChainSnapshot;
-  broadcast(asset: Asset, raw: Uint8Array): Promise<BroadcastResult>;
+  broadcast(asset: Asset, raw: Uint8Array, options?: BroadcastOptions): Promise<BroadcastResult>;
 }
 
 /* There is no `nextAddress` here on purpose. Handing out a fresh address means

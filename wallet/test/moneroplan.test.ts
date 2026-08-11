@@ -38,6 +38,8 @@ interface NodeOptions {
   swapReal?: boolean;
   /** Mark a fetched output as not unlocked. */
   lockOne?: boolean;
+  /** Report the real output as freshly mined, to test the maturity refusal. */
+  youngReal?: boolean;
 }
 
 /** A node with a big, dense output distribution and answers for get_outs. */
@@ -70,7 +72,8 @@ function fakeNode(realOutputs: SpendableOutput[], options: NodeOptions = {}): Tr
               const real = byIndex.get(o.index);
               if (real) {
                 const key = options.swapReal ? hex64('ff') : real.key;
-                return { key, mask: real.commitment, unlocked: !options.lockOne, height: 1 };
+                const height = options.youngReal ? tip - 3 : 1;
+                return { key, mask: real.commitment, unlocked: !options.lockOne, height };
               }
               return { key: hex64(`de${position}`), mask: hex64(`ad${position}`), unlocked: true, height: 1 };
             }),
@@ -147,6 +150,21 @@ describe('planning a spend end to end', () => {
     });
     expect(plan.ok).toBe(false);
     if (!plan.ok) expect(plan.problem).toMatch(/spendable/);
+  });
+
+  it('refuses to spend an output that is not yet mature', async () => {
+    const input = owned(2_000_000_000_000n, 1_000_007);
+    const plan = await planMoneroSpend({
+      transport: fakeNode([input], { youngReal: true }),
+      ownAddress: OWN,
+      network: 'mainnet',
+      owned: [input],
+      destinations: [{ address: THEM, amount: 1_000_000_000_000n }],
+      feePerByte: 10n,
+      uniform: rng(0x1234),
+    });
+    expect(plan.ok).toBe(false);
+    if (!plan.ok) expect(plan.problem).toMatch(/deep and needs/);
   });
 
   it('refuses when the owned outputs cannot cover the send', async () => {

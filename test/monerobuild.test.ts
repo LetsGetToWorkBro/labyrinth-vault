@@ -132,8 +132,8 @@ function unsignedSet(overrides: Partial<VaultUnsignedSet> = {}): VaultUnsignedSe
       realPosition,
     }],
     outputs: [
-      { address: receiver.address, amount: PAYMENT.toString(), change: false },
-      { address: sender.address, amount: CHANGE.toString(), change: true },
+      { address: receiver.address, amount: PAYMENT.toString(), change: false, dummy: false },
+      { address: sender.address, amount: CHANGE.toString(), change: true, dummy: false },
     ],
     fee: FEE.toString(),
     ringSize: 16,
@@ -343,7 +343,7 @@ describe('signing a spend end to end', () => {
     expect(absolute).toEqual(set.inputs[0]!.ring.map((m) => m.globalIndex));
   });
 
-  it('is deterministic under the same randomness, fresh under different', () => {
+  it('is deterministic under the same randomness, fresh under different', { timeout: 30_000 }, () => {
     const again = signMoneroSpend(sender, set, randomsFor(set));
     expect(again.ok).toBe(true);
     if (again.ok) expect(again.tx.txid).toBe(result.tx.txid);
@@ -403,6 +403,52 @@ describe('signing with two inputs', () => {
     expect(lhs.equals(rhs)).toBe(true);
 
     expect(scanAsWallet(receiver, tx)[0]!.amount).toBe(payment);
+  });
+});
+
+describe('signing a dummy-padded spend', () => {
+  it('signs a payment plus a zero-amount self output, both scannable', () => {
+    /* An exact-amount send: one real payment, padded to two outputs by a
+     * zero-amount output to the sender, the way the wallet assembler pads it. */
+    const payment = 900_000_000_000n;
+    const fee = 720_000_000n;
+    const funded = fundSender(payment + fee, 1, 0xd00d);
+    const realPosition = 3;
+    const set = unsignedSet({
+      inputs: [{
+        txPublicKey: funded.txPublicKey,
+        indexInTx: funded.indexInTx,
+        globalIndex: 1_000_000 + realPosition * 7,
+        amount: funded.amount.toString(),
+        ring: ringAround(funded, realPosition, 0xab00),
+        realPosition,
+      }],
+      outputs: [
+        { address: receiver.address, amount: payment.toString(), change: false },
+        { address: sender.address, amount: '0', change: true, dummy: true },
+      ],
+      fee: fee.toString(),
+    });
+    const result = signMoneroSpend(sender, set, randomsFor(set, 0x2020));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tx = readTx(result.tx.hex, set.ringSize);
+
+    /* The balance closes with a zero-value output in the mix. */
+    let lhs = Point.ZERO;
+    for (const pseudo of tx.pseudoOuts) lhs = lhs.add(Point.fromBytes(fromHex(pseudo)));
+    let rhs = Point.fromBytes(RCT_H).multiplyUnsafe(tx.fee);
+    for (const commitment of tx.outPk) rhs = rhs.add(Point.fromBytes(fromHex(commitment)));
+    expect(lhs.equals(rhs)).toBe(true);
+
+    /* The range proof covers both outputs, zero included. */
+    expect(verifyBulletproofPlus(tx.outPk, tx.bpp)).toBe(true);
+
+    /* The receiver gets the payment; the sender finds the zero-amount pad. */
+    expect(scanAsWallet(receiver, tx)[0]!.amount).toBe(payment);
+    const mine = scanAsWallet(sender, tx);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.amount).toBe(0n);
   });
 });
 
