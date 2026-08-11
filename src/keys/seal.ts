@@ -13,7 +13,7 @@
  *
  *   passphrase --Argon2id--> key --XChaCha20-Poly1305--> sealed blob
  *
- * **Argon2id** (RFC 9106) because passphrases are guessable and the defence is
+ * **Argon2id** (RFC 9106) because passphrases are guessable and the defense is
  * making each guess expensive in *memory*, which is the one resource a GPU
  * farm cannot fake cheaply. Parameters are stored in the header and default to
  * RFC 9106's second recommendation, 64 MiB with t=3. Both primitives here are

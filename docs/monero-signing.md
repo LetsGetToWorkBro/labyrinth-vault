@@ -34,7 +34,7 @@ and exists only in Monero's `crypto-ops.c`. It is transcribed by hand in this
 repository, which is precisely why the Monero project's own vectors for it,
 with nothing wrapped around them, are in the test suite.
 
-`src/keys/monerotx.ts` recognises Monero's own file formats and refuses them by
+`src/keys/monerotx.ts` recognizes Monero's own file formats and refuses them by
 name. All six magic strings from `src/wallet/wallet2.cpp`:
 
 - `Monero unsigned tx set` — the file a watching wallet writes for an offline
@@ -86,9 +86,9 @@ container cannot be opened at all.
 
 ### 2. Boost's portable binary archive
 
-Inside the encryption is a C++ object graph serialised by
+Inside the encryption is a C++ object graph serialized by
 `boost::archive::portable_binary_oarchive`. It is not a documented wire format
-with a specification to implement against; it is defined by the behaviour of a
+with a specification to implement against; it is defined by the behavior of a
 particular library, including its class-version tracking, its object tracking,
 and its handling of pointers and containers.
 

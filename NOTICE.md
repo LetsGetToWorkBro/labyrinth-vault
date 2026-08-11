@@ -8,7 +8,7 @@ be both a licensing problem and an interoperability one.
 
 ## Copied into this repository
 
-**The Monero mnemonic word list** — `src/keys/monero-words.ts`
+**The Monero mnemonic word list**, in `src/keys/monero-words.ts`
 
 1626 words, transcribed verbatim from `src/mnemonics/english.h` in
 [monero-project/monero](https://github.com/monero-project/monero), which is
@@ -18,7 +18,7 @@ It is copied rather than imported because a seed phrase written from a
 different list restores to a different wallet. The list is the only reason a
 phrase written down here can be typed into the official Monero wallet later.
 
-**The bytewords table** — `src/airgap/bytewords.ts`
+**The bytewords table**, in `src/airgap/bytewords.ts`
 
 256 four-letter words from the Blockchain Commons **Uniform Resources** (BC-UR)
 specification, taken from the reference implementation
@@ -30,7 +30,7 @@ to a different wallet, and nobody finds out until the money is gone.
 
 ## Test vectors
 
-- **BIP84** — the `abandon abandon ... about` account key and its first
+- **BIP84**. The `abandon abandon ... about` account key and its first
   addresses, from the specification itself.
 - **The Monero project's donation address**, published at
   [getmonero.org](https://www.getmonero.org/get-started/contributing/), used in
@@ -78,7 +78,7 @@ once, to produce the expected answers.
 Those same vectors also live in `test/fixtures/primitives.json`, in a form
 either language can read. That file exists because
 [docs/native-primitives.md](docs/native-primitives.md) leaves the door open to a
-native Argon2id one day, and because one behaviour — NFKD passphrase
-normalisation — is already implemented twice, in `src/keys/seal.ts` and in
+native Argon2id one day, and because one behavior — NFKD passphrase
+normalization — is already implemented twice, in `src/keys/seal.ts` and in
 `ios/LabyrinthVault/Support/Passphrase.swift`. Neither side of that is allowed
 to be the oracle for the other: both are checked against the file.

@@ -5,12 +5,18 @@ your drawer.**
 
 > ### Do not put money on this yet
 >
-> Nothing here has been independently audited. The engine is tested, the app is
-> wired to it, and the platform-free half of the Swift — the transaction
-> shapes, the refusal model, the passphrase encoding — compiles and passes its
-> own tests. The rest of the iOS target, everything touching SwiftUI and
-> JavaScriptCore, has never been through a compiler: it was written where there
-> is no Apple toolchain. Tested is not the same as safe to hold your savings.
+> Nothing here has been independently audited.
+>
+> The vault's engine is tested, its app is wired to it, and the platform-free
+> half of the Swift compiles and passes its own tests. The rest of the iOS
+> target, everything touching SwiftUI and JavaScriptCore, has never been
+> through a compiler: it was written where there is no Apple toolchain.
+>
+> The wallet is a frontend and there is no chain behind it. Every balance,
+> price and fee it shows comes from a fixture, and it says so on screen for
+> exactly as long as that stays true.
+>
+> Tested is not the same as safe to hold your savings.
 >
 > Read it, break it, tell us what is wrong with it. Do not trust it with a
 > balance you would miss.
@@ -34,7 +40,7 @@ signs what you approve. It asks for no network permission, which means the
 absence is something you can verify in Settings rather than something we
 assert in a README.
 
-**The companion** (your everyday phone, or a desktop wallet like Sparrow)
+**The wallet** (`wallet/` in this repository, or a desktop wallet like Sparrow)
 watches the chain with a watch-only key, builds unsigned transactions, and
 broadcasts the signed ones. It cannot spend anything: it has never seen a
 private key.
@@ -42,8 +48,8 @@ private key.
 They talk in one direction at a time, by showing each other QR codes.
 
 ```
-   vault (offline)                        companion (online)
-   ───────────────                        ──────────────────
+   vault (offline)                        wallet (online)
+   ───────────────                        ───────────────
    make keys
    show watch-only key   ──── QR ───▶     watch the chain
                                           build a payment
@@ -64,7 +70,7 @@ byte is valid and the money goes to someone else. No checksum catches that. No
 encryption catches that. A person reading the destination catches that.
 
 Any build of this app that hides those details behind a friendly "Sign" button
-has thrown away the only defence it had. The checksum on the wire is there to
+has thrown away the only defense it had. The checksum on the wire is there to
 catch a misread camera frame, and that is all it claims.
 
 There is one thing the vault can do beyond showing you, and it does it: it
@@ -84,12 +90,12 @@ fail-closed rules, and what the threat model does and does not cover.
 
 Early. What exists and is tested:
 
-- **The airgap wire** (`src/airgap/envelope.ts`) — chunking a payload across
+- **The airgap wire** (`src/airgap/envelope.ts`). Chunking a payload across
   many QR frames, reading them back out of order and repeated, and refusing to
   assemble anything that does not match its own digest. 18 tests, most of them
   about the refusing.
 
-- **BC-UR** (`src/airgap/ur.ts`) — the format Sparrow, Electrum, Keystone and
+- **BC-UR** (`src/airgap/ur.ts`). The format Sparrow, Electrum, Keystone and
   Cupcake already animate, so the vault can be pointed at the wallet somebody
   already uses instead of only at ours. Bytewords, a CBOR subset, and the
   fountain code that lets a scan finish even when the camera missed a frame.
@@ -132,13 +138,13 @@ Early. What exists and is tested:
   in isolation, with no hashing before and no cofactor multiplication after.
 
   This is not Monero signing, and `src/keys/monerotx.ts` says so out loud:
-  it recognises all six of wallet2's file formats and refuses them by name,
+  it recognizes all six of wallet2's file formats and refuses them by name,
   because telling somebody their perfectly good `unsigned_monero_tx` "is not a
   transaction" sends them off to debug a file that was never wrong. See
   [docs/monero-signing.md](docs/monero-signing.md) for the four layers that are
   still missing and why none of them is being guessed at.
 
-- **The confirmation screen's contents** (`src/keys/psbt.ts`) — the part that
+- **The confirmation screen's contents** (`src/keys/psbt.ts`). The part that
   is actually the security. It reads an unsigned transaction and says what it
   does, then signs it or refuses.
 
@@ -157,7 +163,7 @@ Early. What exists and is tested:
   top of this README is checked against the actual source on every run rather
   than trusted to stay true.
 
-- **The sealed vault** (`src/keys/seal.ts`) — what the seed looks like at
+- **The sealed vault** (`src/keys/seal.ts`). What the seed looks like at
   rest: Argon2id (memory-hard, calibrated on the device itself) into
   XChaCha20-Poly1305, with the KDF parameters authenticated alongside the
   ciphertext so a file cannot be talked into weakening itself. Both primitives
@@ -177,7 +183,7 @@ Early. What exists and is tested:
   stay inside the audited noble/scure family. An upgrade is a visible diff,
   never a side effect.
 
-- **One launch gate** (`src/selftest.ts`) — every module that can lose money
+- **One launch gate** (`src/selftest.ts`). Every module that can lose money
   proves itself against outside vectors on the device, at every launch, and
   the rule is that nothing runs if anything fails. See
   [SECURITY.md](SECURITY.md) for the threat model in one table.
@@ -194,7 +200,7 @@ Early. What exists and is tested:
   than encoding one, so the convenient path cannot quietly become the
   unwipeable path again.
 
-  That normalisation is the one behaviour in this repository deliberately
+  That normalization is the one behavior in this repository deliberately
   implemented twice, in Swift and in TypeScript, because the text has to stop
   being text before it crosses. It is allowed to be twice because
   `test/fixtures/primitives.json` pins the exact bytes for the inputs where two
@@ -239,6 +245,19 @@ Early. What exists and is tested:
   of what a transaction says and it is the one under test. The bundle is
   rebuilt and driven end to end by `test/bundle.test.ts`: make a vault, unlock,
   export, read a transaction, sign, lock. See [docs/engine.md](docs/engine.md).
+
+- **The online half** (`wallet/`). Labyrinth Wallet, the everyday app that
+  watches the chain, builds the payments, shows them to the vault as QR frames
+  and broadcasts what comes back. A React Native application, and the whole
+  interface exists: the send flow end to end, the vault screen, the security
+  center, and the state that matters most, which is a returned transaction that
+  does not match the one that was approved.
+
+  It imports the wire and the address rules from `src/` rather than copying
+  them, so both halves speak one format by construction. It has its own
+  package, because it depends on React Native and the vault's dependency list
+  is a test. There is no node client behind it yet, and it says so on screen.
+  See [wallet/README.md](wallet/README.md).
 
 Next, in order:
 

@@ -37,9 +37,9 @@ one at a time, and asserts each flip fails.
 
 ## Decisions, with reasons
 
-**Argon2id (RFC 9106)** because passphrases are guessable and the defence is
+**Argon2id (RFC 9106)** because passphrases are guessable and the defense is
 making each guess cost real memory, which is the resource a GPU farm cannot
-fake. Defaults are 64 MiB, t=3, lanes=1 — RFC 9106's second recommended
+fake. Defaults are 64 MiB, t=3, lanes=1, which is RFC 9106's second recommended
 setting, which lands around a second on decade-old phones. Lanes stay at 1
 because JavaScript runs them sequentially: raising it would cost the owner
 time without costing an attacker anything.
@@ -61,14 +61,14 @@ ceiling is enforced on the claim, before the allocation.
 without birthday arithmetic. Salt and nonce are both drawn fresh per seal, so
 the derived key itself is fresh per seal and nonce reuse cannot arise.
 
-**NFKD normalisation** of the passphrase, the same rule BIP39 uses, so the
+**NFKD normalization** of the passphrase, the same rule BIP39 uses, so the
 passphrase typed on one keyboard opens the vault sealed from another.
 
 `passphraseToBytes` in `src/keys/seal.ts` is the one place text becomes bytes,
 and `seal`/`unseal` take only bytes — a string cannot be wiped, and the
-passphrase is the one secret a person types. The app normalises in Swift, since
+passphrase is the one secret a person types. The app normalizes in Swift, since
 the text has to stop being text before it crosses into the engine, which makes
-this the single behaviour in the project implemented twice on purpose. Both
+this the single behavior in the project implemented twice on purpose. Both
 implementations are checked against `test/fixtures/primitives.json` rather than
 against each other. A disagreement there would not fail loudly: it would
 produce a vault that opens on the device that sealed it and on nothing else.

@@ -85,7 +85,7 @@ Two things worth running as soon as it builds:
 
 Real, in this code:
 
-- The complete design system: colour, type, spacing, the labyrinth geometry,
+- The complete design system: color, type, spacing, the labyrinth geometry,
   the grain, the motion and haptic language.
 - Every screen and every interaction: the scroll gate, hold-to-sign with
   progressive haptics, out-of-order frame acquisition, the refusal states,

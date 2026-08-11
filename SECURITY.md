@@ -5,7 +5,7 @@
 Found something? Email **info@labyrinth.vision**. Please do not open a public
 issue for anything exploitable; everything else is welcome in the tracker.
 
-There is no bounty programme. There is credit, gratitude, and a fix.
+There is no bounty program. There is credit, gratitude, and a fix.
 
 ## Status, honestly
 
@@ -17,7 +17,7 @@ hold funds you would miss with anything built on it.
 
 ## The threat model, in one table
 
-| Threat | Defence | Where |
+| Threat | Defense | Where |
 |---|---|---|
 | Key theft over the network | There is no network code, enforced by a test that walks the source and a build that loads no DOM types | `test/no-network.test.ts` |
 | Compromised companion sends a valid-but-hostile transaction | The confirmation screen; the vault renders everything and a person approves | `src/keys/psbt.ts` |
@@ -58,7 +58,7 @@ hold funds you would miss with anything built on it.
   every wallet object, every seal, every signature — stays in wipeable bytes.
 - **Wiping of internal scratch buffers.** Intermediates are zeroed
   (`mnemonicFromEntropy`, `openFromMnemonic`, `deriveKey`), but a local buffer
-  that nothing else can reach has no observable behaviour, so unlike every
+  that nothing else can reach has no observable behavior, so unlike every
   other claim on this page it cannot be mutation-tested. Removing those calls
   breaks no test. It is kept by review, and it is listed here rather than
   counted among the things the suite proves.
@@ -73,19 +73,21 @@ hold funds you would miss with anything built on it.
 git clone https://github.com/LetsGetToWorkBro/labyrinth-vault
 cd labyrinth-vault
 npm ci        # installs exactly the lockfile, integrity-checked
-npm test      # 339 tests, including the cross-implementation vectors
+npm test      # vault 407, wallet 84, Swift 12
 npm run typecheck
 ```
 
-The claims above are tests, not prose: delete a defence and the suite goes
-red. Every one has been verified by mutation — each guard removed in turn, the
-suite re-run, and the failure confirmed. That includes the guards added by the
-most recent audit: the opaque-output refusal, the wallet binding, the `yourNet`
-arithmetic, the calibration floor, the account validation and the single-frame
-cap.
+The claims above are tests, not prose: delete a defense and the suite goes
+red. Every one has been verified by mutation. Each guard was removed in turn,
+the suite re-run, and the failure confirmed. That includes the guards added by
+the most recent passes: the opaque-output refusal, the wallet binding, the
+`yourNet` arithmetic, the calibration floor, the account validation, the
+single-frame cap, the Monero container refusal, the byte-only passphrase and
+the bundle digest the app checks before it evaluates a line of its engine.
 
 That exercise is worth doing rather than assuming. One test in this suite
-originally passed with the defence it was written for deleted — a
-denial-of-service cap whose effect is invisible in the return value — and was
-rewritten to measure the work avoided instead. A test nobody has tried to break
-is a test of unknown value.
+originally passed with the defense it was written for deleted. It guarded a
+denial-of-service cap whose effect is invisible in the return value, so it was
+rewritten to measure the work avoided instead, with a threshold taken from
+measurement rather than taste. A test nobody has tried to break is a test of
+unknown value.

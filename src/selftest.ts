@@ -4,7 +4,7 @@
  * This is the one function the app calls at launch, and the rule is simple:
  * if anything here fails, nothing else runs. Not a toast, not a "continue
  * anyway" button. A signing device whose hash is wrong, or whose derivation
- * stopped matching the published vectors, has exactly one honest behaviour,
+ * stopped matching the published vectors, has exactly one honest behavior,
  * which is to say so and stop.
  *
  * Why at launch rather than in CI: CI proved a build on somebody's laptop

@@ -137,7 +137,7 @@ including the throwing one. `passphraseFromWire` in `host.ts` refuses a string
 rather than encoding one, so the convenient path cannot quietly become the
 unwipeable path again.
 
-That second change is the one place in this project where the same behaviour is
+That second change is the one place in this project where the same behavior is
 deliberately implemented twice — NFKD, in Swift and in TypeScript. It is
 allowed because it is a Unicode operation with a specification, both
 implementations are the platform's rather than ours, and

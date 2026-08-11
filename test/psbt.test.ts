@@ -1,5 +1,5 @@
 /**
- * The confirmation screen, which is the only real defence this device has.
+ * The confirmation screen, which is the only real defense this device has.
  *
  * Most of this file builds hostile transactions. That is deliberate: a signer
  * that handles the honest case is a signer that has been tested against a
@@ -362,7 +362,7 @@ describe('the sighash-flags attack', () => {
   });
 
   it('is refused by the signing layer independently of the description', () => {
-    /* Defence in depth: even a summary doctored to look clean cannot make the
+    /* Defense in depth: even a summary doctored to look clean cannot make the
      * signing call accept a non-ALL flag, because the signing call pins its
      * own allowlist. The two nets fail separately. */
     const psbt = withSighash(btc.SigHash.NONE);

@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .DS_Store
+wallet/node_modules/
+wallet/.expo/
 
 # SwiftPM build products (Package.swift builds the platform-free model).
 .build/
