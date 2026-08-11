@@ -41,7 +41,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hashToPoint, hashToScalar, RCT_H } from './monerocrypto';
-import { fromHex } from './monero';
+import { fromHex, toHex } from './monero';
 
 const Point = ed25519.Point;
 type EdPoint = InstanceType<typeof Point>;
@@ -369,4 +369,282 @@ export function verifyBulletproofPlus(commitments: readonly string[], proof: Bul
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The prover
+// ---------------------------------------------------------------------------
+
+/** A weighted sum of points; zero scalars are skipped, so terms may carry them. */
+function msum(terms: readonly { scalar: bigint; point: EdPoint }[]): EdPoint {
+  let acc = Point.ZERO;
+  for (const term of terms) {
+    const s = ((term.scalar % L) + L) % L;
+    if (s === 0n) continue;
+    acc = acc.add(term.point.multiplyUnsafe(s));
+  }
+  return acc;
+}
+
+/** a·P + b·Q, the two-term case the folds use. */
+function fold2(a: bigint, P: EdPoint, b: bigint, Q: EdPoint): EdPoint {
+  return msum([{ scalar: a, point: P }, { scalar: b, point: Q }]);
+}
+
+/**
+ * How many 32-byte random scalars `proveBulletproofPlus` consumes for a given
+ * number of amounts: alpha, then dL and dR per inner-product round, then
+ * r, s, d, eta at the end.
+ */
+export function bppRandomCount(nAmounts: number): number {
+  let logM = 0;
+  while ((1 << logM) < nAmounts) logM++;
+  return 1 + 2 * (logM + LOG_N) + 4;
+}
+
+export interface BulletproofPlusProof {
+  proof: BulletproofPlus;
+  /** The offset commitments `V` the proof is over; `outPk[i]` is `8·V[i]`. */
+  V: string[];
+}
+
+/**
+ * Prove that each amount is in `[0, 2^64)`, without revealing any of them.
+ *
+ * Transcribed from `bulletproof_plus_PROVE` in `bulletproofs_plus.cc`. The
+ * commitment for amount `i` is `masks[i]·G + amounts[i]·H` (what `commit`
+ * produces, and what goes on the wire as `outPk`); the proof itself carries
+ * everything else. `randomScalars` supplies the blinding scalars, exactly
+ * `bppRandomCount(amounts.length)` of them, injected rather than drawn here
+ * for the same reason `clsagSign` does it: the caller owns the entropy source,
+ * and the tests can replay one.
+ *
+ * The proof this returns is checked by `verifyBulletproofPlus`, and that
+ * verifier is anchored against real mainnet proofs. That chain is the whole
+ * argument for this prover: it is not verified against itself, it is verified
+ * against a verifier that agrees with consensus.
+ *
+ * The reference retries its transcript on a zero challenge; at 256 bits that
+ * is a probability of roughly 2^-252 per draw, so this throws instead of
+ * retrying, and a thrown proof is a proof that was never produced.
+ */
+export function proveBulletproofPlus(
+  amounts: readonly bigint[],
+  masks: readonly Uint8Array[],
+  randomScalars: readonly Uint8Array[],
+): BulletproofPlusProof {
+  if (amounts.length === 0) throw new Error('Nothing to prove.');
+  if (amounts.length !== masks.length) throw new Error('Each amount needs exactly one mask.');
+  if (amounts.length > MAX_M) throw new Error(`At most ${MAX_M} amounts per proof.`);
+  for (const amount of amounts) {
+    if (amount < 0n || amount >= 2n ** 64n) throw new Error('An amount is outside [0, 2^64), which is the range being proven.');
+  }
+  const need = bppRandomCount(amounts.length);
+  if (randomScalars.length !== need) throw new Error(`Proving over ${amounts.length} amounts needs exactly ${need} random scalars.`);
+  let drawAt = 0;
+  const draw = (): bigint => {
+    const s = b2s(randomScalars[drawAt++]!);
+    if (s === 0n) throw new Error('A supplied random scalar reduced to zero.');
+    return s;
+  };
+
+  let logM = 0;
+  while ((1 << logM) < amounts.length) logM++;
+  const M = 1 << logM;
+  const MN = M * N;
+
+  const gammas = masks.map(b2s);
+
+  // V[i] = (gamma·inv8)·G + (amount·inv8)·H, the offset commitment on the wire.
+  const V: EdPoint[] = amounts.map((amount, i) =>
+    msum([
+      { scalar: mul(gammas[i]!, INV8), point: G },
+      { scalar: mul(amount % L, INV8), point: H },
+    ]),
+  );
+  const Vwire = V.map((p) => p.toBytes());
+
+  /* Bit decomposition, padded to M amounts: aL is the bits, aR is aL - 1,
+   * and the 8^-1-scaled copies are what the commitment A is built from. */
+  const aL = new Array<bigint>(MN).fill(0n);
+  const aR = new Array<bigint>(MN).fill(0n);
+  const aL8 = new Array<bigint>(MN).fill(0n);
+  const aR8 = new Array<bigint>(MN).fill(0n);
+  const MINUS_ONE = sub(0n, 1n);
+  const MINUS_INV8 = sub(0n, INV8);
+  for (let j = 0; j < M; j++) {
+    for (let i = 0; i < N; i++) {
+      if (j < amounts.length && ((amounts[j]! >> BigInt(i)) & 1n) === 1n) {
+        aL[j * N + i] = 1n;
+        aL8[j * N + i] = INV8;
+      } else {
+        aR[j * N + i] = MINUS_ONE;
+        aR8[j * N + i] = MINUS_INV8;
+      }
+    }
+  }
+
+  // --- Fiat-Shamir, mirrored exactly by the verifier ---
+  let transcript = tu(INITIAL_TRANSCRIPT, hashScalar(...Vwire));
+
+  const alpha = draw();
+  const preATerms: { scalar: bigint; point: EdPoint }[] = [];
+  for (let i = 0; i < MN; i++) {
+    preATerms.push({ scalar: aL8[i]!, point: Gi(i) });
+    preATerms.push({ scalar: aR8[i]!, point: Hi(i) });
+  }
+  preATerms.push({ scalar: mul(alpha, INV8), point: G });
+  const Awire = msum(preATerms).toBytes();
+
+  transcript = tu(transcript, Awire);
+  const y = b2s(transcript);
+  if (y === 0n) throw new Error('The challenge y is zero.');
+  const z = b2s(hashScalar(s2b(y)));
+  if (z === 0n) throw new Error('The challenge z is zero.');
+  transcript = s2b(z);
+  const zSquared = mul(z, z);
+
+  // d[j·N+i] = z^(2(j+1)) · 2^i
+  const d = new Array<bigint>(MN).fill(0n);
+  d[0] = zSquared;
+  for (let i = 1; i < N; i++) d[i] = mul(d[i - 1]!, 2n);
+  for (let j = 1; j < M; j++) for (let i = 0; i < N; i++) d[j * N + i] = mul(d[(j - 1) * N + i]!, zSquared);
+
+  // Powers of y up to y^(MN+1).
+  const yPowers = new Array<bigint>(MN + 2).fill(0n);
+  yPowers[0] = 1n;
+  for (let i = 1; i <= MN + 1; i++) yPowers[i] = mul(yPowers[i - 1]!, y);
+
+  // aL1 = aL - z ; aR1 = aR + z + d∘(reversed y powers)
+  let aprime = aL.map((v) => sub(v, z));
+  let bprime = aR.map((v, i) => add(add(v, z), mul(d[i]!, yPowers[MN - i]!)));
+
+  let alpha1 = alpha;
+  let zPow = 1n;
+  for (let j = 0; j < amounts.length; j++) {
+    zPow = mul(zPow, zSquared);
+    alpha1 = muladd(mul(yPowers[MN + 1]!, zPow), gammas[j]!, alpha1);
+  }
+
+  const yinv = inv(y);
+  const yinvPow = new Array<bigint>(MN).fill(0n);
+  yinvPow[0] = 1n;
+  for (let i = 1; i < MN; i++) yinvPow[i] = mul(yinvPow[i - 1]!, yinv);
+
+  let Gprime: EdPoint[] = [];
+  let Hprime: EdPoint[] = [];
+  for (let i = 0; i < MN; i++) { Gprime.push(Gi(i)); Hprime.push(Hi(i)); }
+
+  const Lwire: Uint8Array[] = [];
+  const Rwire: Uint8Array[] = [];
+
+  /* Weighted inner product: sum a[i]·b[i]·y^(i+1). */
+  const wip = (a: readonly bigint[], b: readonly bigint[]): bigint => {
+    let res = 0n;
+    let yPower = 1n;
+    for (let i = 0; i < a.length; i++) {
+      yPower = mul(yPower, y);
+      res = muladd(mul(a[i]!, b[i]!), yPower, res);
+    }
+    return res;
+  };
+
+  let nprime = MN;
+  while (nprime > 1) {
+    nprime = Math.floor(nprime / 2);
+
+    const cL = wip(aprime.slice(0, nprime), bprime.slice(nprime));
+    const cR = wip(aprime.slice(nprime).map((v) => mul(v, yPowers[nprime]!)), bprime.slice(0, nprime));
+
+    const dL = draw();
+    const dR = draw();
+
+    /* compute_LR: the scaled halves of aprime/bprime over the offset halves of
+     * the generators, plus the inner product on H and the blind on G, all
+     * carried at 8^-1 so the verifier's multiply-by-8 lands them where the
+     * equation wants them. */
+    const lTerms: { scalar: bigint; point: EdPoint }[] = [];
+    const rTerms: { scalar: bigint; point: EdPoint }[] = [];
+    for (let i = 0; i < nprime; i++) {
+      lTerms.push({ scalar: mul(mul(aprime[i]!, yinvPow[nprime]!), INV8), point: Gprime[nprime + i]! });
+      lTerms.push({ scalar: mul(bprime[nprime + i]!, INV8), point: Hprime[i]! });
+      rTerms.push({ scalar: mul(mul(aprime[nprime + i]!, yPowers[nprime]!), INV8), point: Gprime[i]! });
+      rTerms.push({ scalar: mul(bprime[i]!, INV8), point: Hprime[nprime + i]! });
+    }
+    lTerms.push({ scalar: mul(cL, INV8), point: H }, { scalar: mul(dL, INV8), point: G });
+    rTerms.push({ scalar: mul(cR, INV8), point: H }, { scalar: mul(dR, INV8), point: G });
+    const Lr = msum(lTerms).toBytes();
+    const Rr = msum(rTerms).toBytes();
+    Lwire.push(Lr);
+    Rwire.push(Rr);
+
+    transcript = tu(transcript, Lr, Rr);
+    const challenge = b2s(transcript);
+    if (challenge === 0n) throw new Error('An inner-product challenge is zero.');
+    const challengeInv = inv(challenge);
+
+    const gFold = mul(yinvPow[nprime]!, challenge);
+    const nextG: EdPoint[] = [];
+    const nextH: EdPoint[] = [];
+    for (let i = 0; i < nprime; i++) {
+      nextG.push(fold2(challengeInv, Gprime[i]!, gFold, Gprime[nprime + i]!));
+      nextH.push(fold2(challenge, Hprime[i]!, challengeInv, Hprime[nprime + i]!));
+    }
+    Gprime = nextG;
+    Hprime = nextH;
+
+    const aFold = mul(challengeInv, yPowers[nprime]!);
+    const nextA: bigint[] = [];
+    const nextB: bigint[] = [];
+    for (let i = 0; i < nprime; i++) {
+      nextA.push(add(mul(aprime[i]!, challenge), mul(aprime[nprime + i]!, aFold)));
+      nextB.push(add(mul(bprime[i]!, challengeInv), mul(bprime[nprime + i]!, challenge)));
+    }
+    aprime = nextA;
+    bprime = nextB;
+
+    alpha1 = muladd(dL, mul(challenge, challenge), alpha1);
+    alpha1 = muladd(dR, mul(challengeInv, challengeInv), alpha1);
+  }
+
+  // --- Final round ---
+  const r = draw();
+  const s = draw();
+  const dScalar = draw();
+  const eta = draw();
+
+  const A1wire = msum([
+    { scalar: mul(r, INV8), point: Gprime[0]! },
+    { scalar: mul(s, INV8), point: Hprime[0]! },
+    { scalar: mul(dScalar, INV8), point: G },
+    { scalar: mul(add(mul(mul(r, y), bprime[0]!), mul(mul(s, y), aprime[0]!)), INV8), point: H },
+  ]).toBytes();
+
+  const Bwire = msum([
+    { scalar: mul(eta, INV8), point: G },
+    { scalar: mul(mul(mul(r, y), s), INV8), point: H },
+  ]).toBytes();
+
+  transcript = tu(transcript, A1wire, Bwire);
+  const e = b2s(transcript);
+  if (e === 0n) throw new Error('The final challenge e is zero.');
+  const eSquared = mul(e, e);
+
+  const r1 = muladd(aprime[0]!, e, r);
+  const s1 = muladd(bprime[0]!, e, s);
+  const d1 = muladd(alpha1, eSquared, muladd(dScalar, e, eta));
+
+  return {
+    proof: {
+      A: toHex(Awire),
+      A1: toHex(A1wire),
+      B: toHex(Bwire),
+      r1: toHex(s2b(r1)),
+      s1: toHex(s2b(s1)),
+      d1: toHex(s2b(d1)),
+      L: Lwire.map(toHex),
+      R: Rwire.map(toHex),
+    },
+    V: Vwire.map(toHex),
+  };
 }

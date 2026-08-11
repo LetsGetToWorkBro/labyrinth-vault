@@ -115,3 +115,125 @@ describe('Bulletproof+ rejects every tamper', () => {
     expect(verifyBulletproofPlus([], tx.bpp)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The prover, checked against the anchored verifier
+// ---------------------------------------------------------------------------
+
+/* The verifier above agrees with consensus on real proofs. So a proof this
+ * prover makes that this verifier accepts is a proof the network would accept,
+ * which is the entire reason the verifier was anchored first: the prover is
+ * never checked against itself. */
+
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { proveBulletproofPlus, bppRandomCount } from '../src/keys/bulletproofplus';
+import { commit } from '../src/keys/monerocrypto';
+import { fromHex, toHex } from '../src/keys/monero';
+
+/** Deterministic 32 bytes, reduced small so it is a valid scalar. */
+function detScalar(seed: number): Uint8Array {
+  const b = new Uint8Array(32);
+  let x = seed >>> 0 || 1;
+  for (let i = 0; i < 32; i++) { x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0; b[i] = x & 0xff; }
+  b[31] = b[31]! & 0x0f;
+  return b;
+}
+
+function randoms(n: number, seed: number): Uint8Array[] {
+  return Array.from({ length: bppRandomCount(n) }, (_, i) => detScalar(seed + i));
+}
+
+/** outPk from the proof's offset V: the network's own 8·V relation. */
+function outPkOf(V: readonly string[]): string[] {
+  return V.map((v) => toHex(ed25519.Point.fromBytes(fromHex(v)).multiplyUnsafe(8n).toBytes()));
+}
+
+describe('Bulletproof+ prover against the anchored verifier', () => {
+  const cases: { name: string; amounts: bigint[] }[] = [
+    { name: 'one amount', amounts: [1_000_000_000_000n] },
+    { name: 'two amounts (a real spend: payment and change)', amounts: [750_000_000_000n, 249_289_920_000n] },
+    { name: 'three amounts', amounts: [1n, 2n, 3n] },
+    { name: 'zero, which real change sometimes is', amounts: [0n, 5n] },
+    { name: 'the largest 64-bit amount', amounts: [2n ** 64n - 1n] },
+    { name: 'five amounts, padding M to eight', amounts: [10n, 20n, 30n, 40n, 50n] },
+  ];
+
+  for (const { name, amounts } of cases) {
+    // MN grows with the amount count, and this is plain JavaScript arithmetic
+    // sharing a loaded CI worker, hence the generous ceiling.
+    it(`proves and verifies ${name}`, { timeout: 90_000 }, () => {
+      const masks = amounts.map((_, i) => detScalar(7000 + i));
+      const { proof, V } = proveBulletproofPlus(amounts, masks, randoms(amounts.length, 9000));
+      expect(verifyBulletproofPlus(outPkOf(V), proof)).toBe(true);
+    });
+  }
+
+  it('commits exactly what commit() commits: outPk is 8·V is mask·G + amount·H', () => {
+    const amounts = [123_456_789n, 42n];
+    const masks = amounts.map((_, i) => detScalar(4200 + i));
+    const { V } = proveBulletproofPlus(amounts, masks, randoms(amounts.length, 4300));
+    const fromProof = outPkOf(V);
+    const fromCommit = amounts.map((a, i) => toHex(commit(a, masks[i]!)));
+    expect(fromProof).toEqual(fromCommit);
+  });
+
+  it('is deterministic given the same randomness', () => {
+    const amounts = [999n];
+    const masks = [detScalar(1)];
+    const a = proveBulletproofPlus(amounts, masks, randoms(1, 5000));
+    const b = proveBulletproofPlus(amounts, masks, randoms(1, 5000));
+    expect(a).toEqual(b);
+  });
+
+  it('produces different proofs from different randomness, over the same commitments', () => {
+    const amounts = [999n];
+    const masks = [detScalar(1)];
+    const a = proveBulletproofPlus(amounts, masks, randoms(1, 5000));
+    const b = proveBulletproofPlus(amounts, masks, randoms(1, 6000));
+    expect(a.V).toEqual(b.V);
+    expect(a.proof.A1).not.toBe(b.proof.A1);
+    expect(verifyBulletproofPlus(outPkOf(a.V), a.proof)).toBe(true);
+    expect(verifyBulletproofPlus(outPkOf(b.V), b.proof)).toBe(true);
+  });
+
+  it('a proof does not verify against the wrong commitments', () => {
+    const masksA = [detScalar(11)];
+    const masksB = [detScalar(22)];
+    const a = proveBulletproofPlus([100n], masksA, randoms(1, 5000));
+    const b = proveBulletproofPlus([100n], masksB, randoms(1, 5000));
+    expect(verifyBulletproofPlus(outPkOf(b.V), a.proof)).toBe(false);
+    expect(verifyBulletproofPlus(outPkOf(a.V), b.proof)).toBe(false);
+  });
+
+  it('every field of a fresh proof is load-bearing', () => {
+    const { proof, V } = proveBulletproofPlus([77n, 88n], [detScalar(3), detScalar(4)], randoms(2, 8100));
+    const outPk = outPkOf(V);
+    expect(verifyBulletproofPlus(outPk, proof)).toBe(true);
+    for (const field of ['A', 'A1', 'B', 'r1', 's1', 'd1'] as const) {
+      const bad = clone(proof);
+      bad[field] = bump(bad[field]);
+      expect(verifyBulletproofPlus(outPk, bad), field).toBe(false);
+    }
+    const badL = clone(proof);
+    badL.L[2] = bump(badL.L[2]!);
+    expect(verifyBulletproofPlus(outPk, badL)).toBe(false);
+  });
+
+  it('refuses an amount outside the range instead of proving a lie', () => {
+    expect(() => proveBulletproofPlus([2n ** 64n], [detScalar(5)], randoms(1, 100))).toThrow(/range|2\^64/);
+    expect(() => proveBulletproofPlus([-1n], [detScalar(5)], randoms(1, 100))).toThrow();
+  });
+
+  it('refuses the wrong amount of randomness, because silently reusing any would be worse', () => {
+    expect(() => proveBulletproofPlus([1n], [detScalar(5)], randoms(1, 100).slice(1))).toThrow(/random/);
+    expect(() => proveBulletproofPlus([], [], [])).toThrow();
+    expect(() => proveBulletproofPlus([1n], [], randoms(1, 100))).toThrow(/mask/);
+  });
+
+  it('matches the shape the wire expects: 6+logM inner-product rounds', () => {
+    const one = proveBulletproofPlus([5n], [detScalar(9)], randoms(1, 300));
+    expect(one.proof.L).toHaveLength(6);
+    const three = proveBulletproofPlus([5n, 6n, 7n], [detScalar(9), detScalar(10), detScalar(11)], randoms(3, 300));
+    expect(three.proof.L).toHaveLength(8);
+  });
+});

@@ -44,10 +44,18 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { encodeParts, type PayloadKind } from '../airgap/envelope';
 import { Scanner } from '../airgap/scanner';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
 import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
+import {
+  encodeSignedTx,
+  parseUnsignedSet,
+  signMoneroSpend,
+  signingRandomCount,
+  type VaultUnsignedSet,
+} from '../keys/monerobuild';
 import {
   checkBtcAddress,
   checkExtendedKey,
@@ -473,6 +481,78 @@ export const api = {
     });
   }),
 
+  /**
+   * Read an unsigned Monero set, in the shape the confirmation screen renders.
+   *
+   * Same two-step contract as the Bitcoin pair: this parses and remembers,
+   * `moneroSign` acts only on the digest of what was remembered. The digest is
+   * over the payload bytes, so the set a person approves is byte-identical to
+   * the set that gets signed, not merely equal-looking.
+   */
+  moneroDescribe: guarded('moneroDescribe', (payloadHex: string) => {
+    requireSession();
+    const payload = fromHex(payloadHex);
+    if (!payload || payload.length === 0) return fail('That is not an unsigned Monero transaction set.');
+    const parsed = parseUnsignedSet(payload);
+    if (!parsed.ok) return fail(parsed.problem);
+    const digest = toHex(keccak_256(payload));
+    lastMoneroDescribed = { digest, set: parsed.set };
+    const paying = parsed.set.outputs
+      .filter((output) => !output.change)
+      .reduce((sum, output) => sum + BigInt(output.amount), 0n);
+    return done({
+      digest,
+      network: parsed.set.network,
+      fee: parsed.set.fee,
+      paying: paying.toString(),
+      inputCount: parsed.set.inputs.length,
+      ringSize: parsed.set.ringSize,
+      outputs: parsed.set.outputs.map((output) => ({
+        address: output.address,
+        amount: output.amount,
+        change: output.change,
+      })),
+    });
+  }),
+
+  /**
+   * Sign the described Monero set, given the approved digest and fresh
+   * platform entropy.
+   *
+   * `randomHex` is `signingRandomCount(...) * 32` bytes from the platform
+   * CSPRNG in one draw, the same convention as `create`. Every re-derivation,
+   * the curve balance, the range proof, and each ring signature are checked
+   * inside `signMoneroSpend` before any bytes come back; what returns is the
+   * broadcastable transaction as XMRSIGNED frames, plus the id and the key
+   * images for the record.
+   */
+  moneroSign: guarded('moneroSign', (approvedDigest: string, randomHex: string) => {
+    const open = requireSession();
+    if (!lastMoneroDescribed) return fail('Nothing has been described on this device to approve.');
+    if (lastMoneroDescribed.digest !== String(approvedDigest)) {
+      return fail('That approval does not match the set that was read. Nothing was signed.');
+    }
+    const set = lastMoneroDescribed.set;
+    const need = signingRandomCount(set.inputs.length, set.ringSize, set.outputs.length);
+    const random = fromHex(randomHex);
+    if (!random || random.length !== need * 32) {
+      return fail(`Signing this set needs exactly ${need * 32} bytes of randomness.`);
+    }
+    const scalars = Array.from({ length: need }, (_, i) => random.subarray(i * 32, (i + 1) * 32));
+    const result = signMoneroSpend(open.xmr, set, scalars);
+    if (!result.ok) return fail(result.problem);
+    /* One approval buys one signature. */
+    lastMoneroDescribed = null;
+    return done({
+      txid: result.tx.txid,
+      network: result.tx.network,
+      fee: result.tx.fee,
+      keyImages: result.tx.keyImages,
+      outputs: result.tx.outputs,
+      frames: encodeParts('XMRSIGNED' satisfies PayloadKind, encodeSignedTx(result.tx)),
+    });
+  }),
+
   /** Field validation, so the screen and the signer agree about what is valid. */
   checkAddress: guarded('checkAddress', (text: string, chain: string) => {
     if (chain === 'xmr') {
@@ -495,6 +575,9 @@ export const api = {
 /** The description the person is currently looking at. Never crosses. */
 let lastDescribed: PsbtSummary | null = null;
 
+/** The Monero set the person is currently looking at. Never crosses. */
+let lastMoneroDescribed: { digest: string; set: VaultUnsignedSet } | null = null;
+
 function lockInternal(): void {
   if (session) {
     closeWallet(session.btc);
@@ -503,6 +586,7 @@ function lockInternal(): void {
   }
   session = null;
   lastDescribed = null;
+  lastMoneroDescribed = null;
   scanner.reset();
 }
 

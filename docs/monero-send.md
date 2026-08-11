@@ -5,12 +5,14 @@ answers "how do I spend it", and it is the harder half, because a spend is a
 ring signature, a range proof, and a fistful of consensus rules rather than a
 scan.
 
-The short version: the pieces that authorize a spend and the pieces that could
-*lose* money are built and tested. The last mile, a from-scratch Bulletproof+
-range proof accepted by a real node, is not, and cannot be from a test
-environment with no node, so the wallet refuses to broadcast a Monero spend
-with real value on mainnet until a live acceptance has been recorded. Nothing
-about that gate is hidden.
+The short version: the whole path is built and tested, from the unsigned set
+to the raw bytes a node relays, with every piece anchored to the chain where
+an anchor exists: the range proof verifier to real mainnet proofs, the
+serializer to real transaction ids, the prover and the assembly to those
+anchors in turn. The one thing a test environment with no node cannot produce
+is a live node accepting a fresh transaction, so the wallet refuses to
+broadcast a Monero spend with real value on mainnet until a stagenet
+acceptance has been recorded. Nothing about that gate is hidden.
 
 ## The division of labor
 
@@ -47,9 +49,26 @@ where the online device never touches a spend key.
   way: against three real Bulletproof+ proofs pulled from mainnet transactions,
   in `test/fixtures/bulletproof-plus.json`. It accepts every proof the network
   accepted and rejects the moment any field is disturbed, so it agrees with
-  consensus about what a valid range proof is. That is a stronger check than a
-  round trip against a prover of one's own, and it is what a prover can be built
-  against next.
+  consensus about what a valid range proof is. The same file holds the
+  **prover**, and the prover is never checked against itself: every proof it
+  makes must satisfy the consensus-anchored verifier, over commitments built
+  by the same `commit` the scan proves amounts with.
+- `monerowire.ts` is the transaction wire format, anchored the same way: the
+  serializer reproduces three real mainnet transaction ids byte for byte from
+  their parsed fields, in `test/fixtures/monero-raw-tx.json`. The id is the
+  Keccak of the serialized sections, so there is no partial credit; one byte
+  wrong anywhere and the test fails. The same functions serialize a fresh
+  spend, which is what makes "the node will parse it" a tested claim.
+- `monerobuild.ts` is the final assembly: parse the unsigned set, re-prove
+  every input from the vault's own keys (the one-time key must re-derive, the
+  claimed amount must recommit to the on-chain commitment), build the outputs
+  with their view tags and encrypted amounts, close the balance on the curve,
+  prove the range, sign every ring, and emit the raw hex plus its id. The test
+  then does what the network and the receiver would do to the bytes: re-parse
+  them independently, check the money equation, re-verify every proof, and run
+  the receiver's own scan, which finds the payment and decrypts the exact
+  amount. The bridge exposes it as `moneroDescribe` and `moneroSign`, the same
+  describe-then-approve contract the Bitcoin signer uses.
 
 ## Where a mistake loses money, and where it does not
 
@@ -89,12 +108,21 @@ That work already paid for itself once. The generators are
 hashes the argument that `get_exponent` had already hashed, and a verifier
 written from the algorithm alone would have used one round, produced generators
 that look perfectly valid, and rejected every real proof with no clue why. The
-fixtures are the clue. What is still missing is the **prover**: a from-scratch
-Bulletproof+ verified only by round-trip against its own verifier would be the
-"unverifiable thing with no real blobs to check against" that this repository
-refused when it put the chain scan on the JSON path instead of an epee decoder.
-The consensus-anchored verifier is what a prover gets checked against, so the
-prover is the next step, not a blind one.
+fixtures are the clue. The **prover** is written against that verifier, which
+is the whole reason the verifier came first: a from-scratch Bulletproof+
+verified only by round-trip against its own prover would be the "unverifiable
+thing with no real blobs to check against" that this repository refused when
+it put the chain scan on the JSON path instead of an epee decoder. Here the
+order is reversed and the circle is broken: real chain proofs anchor the
+verifier, and the verifier judges the prover.
+
+The serializer got the same treatment. Reproducing three real transaction ids
+from parsed fields proves the byte layout against consensus, and the assembly
+test closes the loop from the other end: the receiver's own scan, run on the
+emitted bytes, finds the output, matches the view tag, decrypts the amount,
+and proves it against the commitment. What no test here can produce is a
+node's acceptance of a whole fresh transaction, and that is the one claim
+still marked unverified.
 
 ## The gate
 

@@ -16,6 +16,7 @@ import {
   encodeUnsigned,
   estimateWeight,
   feeFor,
+  parseSignedTx,
   parseUnsigned,
   selectInputs,
   UNSIGNED_VERSION,
@@ -253,5 +254,42 @@ describe('the unsigned set crosses the wire intact', () => {
     const wrong = JSON.parse(new TextDecoder().decode(encodeUnsigned(set)));
     wrong.v = UNSIGNED_VERSION + 1;
     expect(parseUnsigned(new TextEncoder().encode(JSON.stringify(wrong))).ok).toBe(false);
+  });
+});
+
+describe('reading the signed transaction back from the vault', () => {
+  const valid = {
+    v: 1,
+    chain: 'xmr',
+    network: 'stagenet',
+    txid: 'a'.repeat(64),
+    hex: 'ab'.repeat(1200),
+    fee: '720000000',
+    keyImages: ['b'.repeat(64)],
+  };
+  const bytes = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
+
+  it('accepts what the vault emits', () => {
+    const parsed = parseSignedTx(bytes(valid));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.tx.txid).toBe(valid.txid);
+      expect(parsed.tx.network).toBe('stagenet');
+      expect(parsed.tx.keyImages).toEqual(valid.keyImages);
+    }
+  });
+
+  it('refuses garbage, the wrong chain, the wrong version', () => {
+    expect(parseSignedTx(new Uint8Array([0x7b])).ok).toBe(false);
+    expect(parseSignedTx(bytes({ ...valid, chain: 'btc' })).ok).toBe(false);
+    expect(parseSignedTx(bytes({ ...valid, v: 2 })).ok).toBe(false);
+  });
+
+  it('refuses a malformed id, bytes, or key image', () => {
+    expect(parseSignedTx(bytes({ ...valid, txid: 'short' })).ok).toBe(false);
+    expect(parseSignedTx(bytes({ ...valid, hex: 'zz' })).ok).toBe(false);
+    expect(parseSignedTx(bytes({ ...valid, hex: 'ab' })).ok).toBe(false);
+    expect(parseSignedTx(bytes({ ...valid, keyImages: [] })).ok).toBe(false);
+    expect(parseSignedTx(bytes({ ...valid, keyImages: ['nope'] })).ok).toBe(false);
   });
 });

@@ -417,3 +417,68 @@ export function parseUnsigned(
     set: { v: UNSIGNED_VERSION, chain: 'xmr', network: raw['network'], inputs, outputs, fee: fee.toString(), ringSize },
   };
 }
+
+// ---------------------------------------------------------------------------
+// The signed transaction, back from the vault
+
+/** Must match the vault's `SIGNED_VERSION`; bumped together. */
+export const SIGNED_VERSION = 1;
+
+export interface SignedTx {
+  txid: string;
+  /** The broadcastable bytes, hex: what goes to `/send_raw_transaction`. */
+  hex: string;
+  network: 'mainnet' | 'stagenet' | 'testnet';
+  fee: string;
+  /** One per spent input, for the key image book. */
+  keyImages: string[];
+}
+
+/**
+ * Read an XMRSIGNED payload, refusing anything malformed.
+ *
+ * The wallet does not re-verify the cryptography inside; it cannot, without
+ * the secrets, and the vault already verified every piece before emitting it.
+ * What the wallet does own is the broadcast gate and the key image book, so
+ * the id, the network, and the key images are held to the same strictness as
+ * everything else that crosses the airgap.
+ */
+export function parseSignedTx(
+  bytes: Uint8Array,
+): { ok: true; tx: SignedTx } | { ok: false; problem: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(decoder.decode(bytes));
+  } catch {
+    return { ok: false, problem: 'That is not a signed transaction.' };
+  }
+  if (!value || typeof value !== 'object') return { ok: false, problem: 'That is not a signed transaction.' };
+  const raw = value as Record<string, unknown>;
+  if (raw['chain'] !== 'xmr') return { ok: false, problem: 'That signed transaction is not about Monero.' };
+  if (raw['v'] !== SIGNED_VERSION) return { ok: false, problem: 'That signed transaction is from a different vault version.' };
+  const network = raw['network'];
+  if (network !== 'mainnet' && network !== 'stagenet' && network !== 'testnet') {
+    return { ok: false, problem: 'That signed transaction does not name a known network.' };
+  }
+  const txid = raw['txid'];
+  if (typeof txid !== 'string' || !/^[0-9a-f]{64}$/.test(txid)) {
+    return { ok: false, problem: 'That signed transaction has no id.' };
+  }
+  const hex = raw['hex'];
+  if (typeof hex !== 'string' || !/^[0-9a-f]+$/.test(hex) || hex.length % 2 !== 0 || hex.length < 200) {
+    return { ok: false, problem: 'That signed transaction has no usable bytes.' };
+  }
+  const fee = raw['fee'];
+  if (typeof fee !== 'string' || !/^\d+$/.test(fee)) return { ok: false, problem: 'That signed transaction has no fee.' };
+  if (!Array.isArray(raw['keyImages']) || raw['keyImages'].length === 0) {
+    return { ok: false, problem: 'That signed transaction lists no key images.' };
+  }
+  const keyImages: string[] = [];
+  for (const image of raw['keyImages']) {
+    if (typeof image !== 'string' || !/^[0-9a-f]{64}$/.test(image)) {
+      return { ok: false, problem: 'A key image in that signed transaction is malformed.' };
+    }
+    keyImages.push(image);
+  }
+  return { ok: true, tx: { txid, hex, network, fee, keyImages } };
+}
