@@ -52,6 +52,21 @@ const xmrWallet = walletFromSeed(DEMO_XMR_SEED);
 
 export const DEMO_XMR_ADDRESS = xmrWallet.address;
 
+/**
+ * The matching private view key, in the open, because it guards nothing here.
+ *
+ * A view key finds payments to a wallet and cannot move them. This one belongs
+ * to the wallet whose seed is ten lines above, which is empty and will stay
+ * empty, so publishing it costs nothing and buys the same thing `DEMO_ZPUB`
+ * buys on the Bitcoin side: a real account for the scanner to walk a real
+ * chain against, until there is a pairing flow to hand over somebody's own.
+ *
+ * Exported as bytes rather than as text on purpose. This codebase took its
+ * secrets off strings deliberately, and a demo secret is still a secret-shaped
+ * thing that should not teach the wrong habit at its call site.
+ */
+export const DEMO_XMR_VIEW_SECRET: Uint8Array = xmrWallet.viewSecret;
+
 /** Receiving addresses, really derived, in order. */
 function receiveAddress(index: number): { address: string; script: Uint8Array } {
   return addressAt(btcWallet, 0, index);
@@ -267,6 +282,7 @@ export class DemoWatcher implements Watcher {
       feeOptions: BTC_FEES,
       confirmationTarget: 6,
       height: 874_904,
+      caveat: null,
     };
 
     const monero: AssetView = {
@@ -278,6 +294,10 @@ export class DemoWatcher implements Watcher {
       feeOptions: XMR_FEES,
       confirmationTarget: 10,
       height: 3_204_925,
+      /* The fixture is a fixture. The whole snapshot is already marked `demo`
+       * and the home screen says so, and repeating it here would put the same
+       * warning on screen twice. */
+      caveat: null,
     };
 
     return {

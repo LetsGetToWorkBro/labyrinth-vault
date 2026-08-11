@@ -18,31 +18,27 @@
  * the Monero project's own test file. What is hard is not the arithmetic. It
  * is getting the blocks.
  *
- * ## What this file does, and the one thing it does not
+ * ## What this file is
  *
- * Built and testable here:
+ * One node's HTTP surface, and no decisions.
  *
  *   - `info`, `feeEstimate` and `broadcast` against monerod's restricted RPC,
  *     which is the surface a public node exposes and the one your own node
  *     exposes with `--restricted-rpc`.
- *   - `scanTransaction`, the real ownership test, over transactions in the
- *     JSON form monerod returns from `/get_transactions?decode_as_json=true`.
+ *   - `ownsOutput` and `scanTransaction`, the ownership test itself.
+ *   - `blockAt` and `transactions`, which are the two calls a chain walk needs.
  *
- * Not built, and not pretended at: **the sync loop**. Walking the chain needs
- * either `/get_blocks.bin`, which speaks epee portable storage, a binary
- * format with no specification outside Monero's source, or a light wallet
- * server, which means handing your view key to somebody else's machine so it
- * can scan on your behalf.
+ * What to do with those, in what order, from which height, and what the
+ * resulting numbers may honestly be called, is `core/moneroscan.ts`. The
+ * division is the same one `net/esplora.ts` keeps against `core/discover.ts`,
+ * and for the same reason: a file that both talks to a node and decides what
+ * its answers mean is a file where a wrong answer becomes a wrong balance
+ * without passing anything that could have refused it.
  *
- * Those are the only two options and they are a genuine fork in the product,
- * not an implementation detail:
- *
- *   - **Your own node, full scan.** Nothing leaves the device but block
- *     requests. Costs an epee decoder and real sync time on a phone.
- *   - **A light wallet server.** Fast and cheap, and the server learns every
- *     payment you have ever received, because that is what a view key is.
- *
- * This file is the floor under both. `docs/monero-sync.md` is the decision.
+ * The scan here is over JSON rather than `/get_blocks.bin`, which is the fast
+ * path and speaks epee portable storage, a binary format with no specification
+ * outside Monero's own source. That trade is argued in full further down, next
+ * to the code it applies to.
  *
  * ## Why the arithmetic is borrowed rather than written
  *
@@ -242,16 +238,44 @@ export function ownsOutput(
   txPublicKey: string,
   candidate: OutputCandidate,
 ): OwnedOutput | null {
+  const derivation = keyDerivation(keys.viewSecret, txPublicKey);
+  return derivation ? ownsWithDerivation(derivation, keys.spendPublic, candidate) : null;
+}
+
+/**
+ * The shared secret for one transaction, computed once.
+ *
+ * Split out because it is the expensive half. The derivation is a scalar
+ * multiplication and it is the same for every output of a transaction, while
+ * the per-output work below is a hash and a point addition. A scanner that
+ * recomputed it per output would do the costly operation three times for a
+ * three-output transaction and get the same answer each time, which on a phone
+ * walking a hundred thousand blocks is the difference between a sync and an
+ * afternoon.
+ *
+ * Null rather than throwing. A malformed key on a chain we do not control is
+ * an ordinary event and not an exception.
+ */
+export function keyDerivation(viewSecret: Uint8Array, txPublicKey: string): Uint8Array | null {
   try {
-    const derivation = generateKeyDerivation(fromHex(txPublicKey), keys.viewSecret);
-    const derived = toHex(
-      derivePublicKey(derivation, candidate.index, fromHex(keys.spendPublic)),
-    );
+    return generateKeyDerivation(fromHex(txPublicKey), viewSecret);
+  } catch {
+    return null;
+  }
+}
+
+/** The per-output half of `ownsOutput`, given a derivation already computed. */
+export function ownsWithDerivation(
+  derivation: Uint8Array,
+  spendPublic: string,
+  candidate: OutputCandidate,
+): OwnedOutput | null {
+  try {
+    const derived = toHex(derivePublicKey(derivation, candidate.index, fromHex(spendPublic)));
     return derived === candidate.key.toLowerCase() ? { ...candidate, derived } : null;
   } catch {
-    /* A malformed key on a chain we do not control is an ordinary event, not
-     * an exception. An output we cannot parse is an output that is not ours,
-     * which is the same conclusion by a shorter route. */
+    /* An output we cannot parse is an output that is not ours, which is the
+     * same conclusion by a shorter route. */
     return null;
   }
 }
@@ -269,9 +293,12 @@ export function scanTransaction(
   txPublicKey: string,
   outputs: readonly OutputCandidate[],
 ): OwnedOutput[] {
+  const derivation = keyDerivation(keys.viewSecret, txPublicKey);
+  if (!derivation) return [];
+
   const found: OwnedOutput[] = [];
   for (const candidate of outputs) {
-    const owned = ownsOutput(keys, txPublicKey, candidate);
+    const owned = ownsWithDerivation(derivation, keys.spendPublic, candidate);
     if (owned) found.push(owned);
   }
   return found;
@@ -308,4 +335,193 @@ export function transactionPublicKey(extra: Uint8Array): string | null {
     return null;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Walking the chain, over JSON
+//
+// `/get_blocks.bin` is the fast way and it speaks epee portable storage, a
+// binary format with no specification outside Monero's own source. Writing a
+// decoder for it with no real blobs to check against is exactly the kind of
+// unverified work this repository refuses elsewhere, so the sync below uses
+// the JSON surface instead: `get_block` for a height, `/get_transactions` with
+// `decode_as_json` for its contents.
+//
+// That is slower. More requests, more bytes, more parsing. It is also
+// available on every restricted public node, needs nothing that cannot be
+// tested here against recorded answers, and is correct. When an epee decoder
+// exists and has been checked against a real node, it slots in underneath
+// `blockTransactions` and nothing above this line changes.
+
+export interface BlockSummary {
+  height: number;
+  hash: string;
+  /** Hashes of the ordinary transactions. The miner's is not among them. */
+  txHashes: string[];
+  /** The coinbase transaction, which the node reports separately. */
+  minerTxHash: string | null;
+  timestamp: number;
+}
+
+export async function blockAt(transport: Transport, height: number): Promise<Parsed<BlockSummary>> {
+  const reply = await rpc<{
+    block_header?: { hash?: string; height?: number; timestamp?: number; miner_tx_hash?: string };
+    tx_hashes?: unknown;
+    json?: string;
+  }>(transport, 'get_block', { height });
+  if (!reply.ok) return reply;
+
+  const header = reply.value.block_header;
+  if (!header || typeof header.hash !== 'string') {
+    return { ok: false, problem: 'That node did not answer with a block.' };
+  }
+
+  /* `tx_hashes` is absent on a block containing only its miner transaction,
+   * which is most blocks. Absent means empty, not malformed. */
+  const hashes = Array.isArray(reply.value.tx_hashes)
+    ? reply.value.tx_hashes.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+
+  return {
+    ok: true,
+    value: {
+      height: typeof header.height === 'number' ? header.height : height,
+      hash: header.hash,
+      txHashes: hashes,
+      minerTxHash: /^[0-9a-f]{64}$/i.test(String(header.miner_tx_hash))
+        ? String(header.miner_tx_hash).toLowerCase()
+        : null,
+      timestamp: typeof header.timestamp === 'number' ? header.timestamp : 0,
+    },
+  };
+}
+
+/** One transaction, reduced to what scanning needs and nothing else. */
+export interface ScannableTx {
+  hash: string;
+  /** The one-time key on each output, in order. */
+  outputs: OutputCandidate[];
+  /** The transaction public key, pulled out of `extra`. Null when absent. */
+  publicKey: string | null;
+  /**
+   * The RingCT version, as the transaction declares it.
+   *
+   * Zero means the amounts are in the clear, which is every transaction before
+   * 2017 and every coinbase since. Four and above carry the eight-byte masked
+   * amount this wallet can open. One through three are the older RingCT forms,
+   * whose amounts are encrypted differently, and `core/moneroscan.ts` says so
+   * rather than guessing at them.
+   */
+  rctType: number;
+  /** The masked amount for each output, hex, in output order. */
+  ecdh: string[];
+  /** The Pedersen commitment for each output, hex, in output order. */
+  commitments: string[];
+}
+
+interface RawJsonTx {
+  vout?: { amount?: number; target?: { key?: string; tagged_key?: { key?: string } } }[];
+  extra?: number[];
+  rct_signatures?: {
+    type?: number;
+    ecdhInfo?: { amount?: string }[];
+    outPk?: (string | { mask?: string })[];
+  };
+}
+
+/** Hex or nothing. The chain is not a trusted source of well-formed strings. */
+const hexOrNull = (value: unknown, bytes?: number): string | null => {
+  if (typeof value !== 'string') return null;
+  const text = value.toLowerCase();
+  if (!/^[0-9a-f]*$/.test(text) || text.length % 2) return null;
+  if (bytes !== undefined && text.length !== bytes * 2) return null;
+  return text;
+};
+
+/**
+ * Transactions by hash, decoded far enough to scan.
+ *
+ * monerod returns each transaction's body as a JSON *string* inside the reply,
+ * which then has to be parsed again. That is not a mistake in this code: it is
+ * how `decode_as_json` works, and the double parse is the price of not writing
+ * an epee decoder.
+ */
+export async function transactions(
+  transport: Transport,
+  hashes: readonly string[],
+): Promise<Parsed<ScannableTx[]>> {
+  if (hashes.length === 0) return { ok: true, value: [] };
+  for (const hash of hashes) {
+    if (!/^[0-9a-f]{64}$/i.test(hash)) {
+      return { ok: false, problem: 'That node listed a transaction hash that is not one.' };
+    }
+  }
+
+  const reply = parseJson<{ txs?: { tx_hash?: string; as_json?: string }[]; status?: string }>(
+    await transport.send({
+      method: 'POST',
+      path: '/get_transactions',
+      body: { txs_hashes: [...hashes], decode_as_json: true },
+    }),
+  );
+  if (!reply.ok) return reply;
+  if (!Array.isArray(reply.value.txs)) {
+    return { ok: false, problem: 'That node did not answer with transactions.' };
+  }
+
+  const out: ScannableTx[] = [];
+  for (const entry of reply.value.txs) {
+    const hash = typeof entry.tx_hash === 'string' ? entry.tx_hash : '';
+    if (!hash || typeof entry.as_json !== 'string') continue;
+
+    let body: RawJsonTx;
+    try {
+      body = JSON.parse(entry.as_json) as RawJsonTx;
+    } catch {
+      /* One unreadable transaction is one transaction whose outputs are not
+       * found. Failing the whole block would stall the scan on a single odd
+       * entry; skipping it loses at most that transaction, and the height is
+       * recorded so a later pass over the same range would find it. */
+      continue;
+    }
+
+    const outputs: OutputCandidate[] = [];
+    (body.vout ?? []).forEach((vout, index) => {
+      /* Two shapes, and both are current. `target.key` is the older form;
+       * `target.tagged_key.key` arrives with view tags, which most outputs
+       * have carried since 2022. A scanner that knew only one of them would
+       * quietly find nothing on a modern chain. */
+      const key = vout.target?.tagged_key?.key ?? vout.target?.key;
+      if (typeof key !== 'string' || !/^[0-9a-f]{64}$/i.test(key)) return;
+      outputs.push({
+        key: key.toLowerCase(),
+        amount: typeof vout.amount === 'number' && vout.amount > 0 ? BigInt(vout.amount) : null,
+        index,
+      });
+    });
+
+    const extra = Array.isArray(body.extra)
+      ? Uint8Array.from(body.extra.filter((byte) => Number.isInteger(byte) && byte >= 0 && byte < 256))
+      : new Uint8Array(0);
+
+    const rct = body.rct_signatures;
+    /* `outPk` is serialized two ways depending on the node's version: a bare
+     * mask string, or an object with the mask under a key. Both mean the same
+     * commitment, and a scanner that understood only one would report every
+     * amount as unverifiable against half the nodes in the network. */
+    const commitments = (rct?.outPk ?? []).map((entry) =>
+      hexOrNull(typeof entry === 'string' ? entry : entry?.mask, 32) ?? '',
+    );
+
+    out.push({
+      hash,
+      outputs,
+      publicKey: transactionPublicKey(extra),
+      rctType: typeof rct?.type === 'number' ? rct.type : 0,
+      ecdh: (rct?.ecdhInfo ?? []).map((entry) => hexOrNull(entry?.amount) ?? ''),
+      commitments,
+    });
+  }
+
+  return { ok: true, value: out };
 }

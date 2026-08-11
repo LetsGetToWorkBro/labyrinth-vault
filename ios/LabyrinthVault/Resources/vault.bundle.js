@@ -16027,6 +16027,11 @@ zoo`.split("\n"));
     if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
     return hashToEc(publicKey).multiply(scalar).toBytes();
   }
+  var RCT_H = (() => {
+    const hashed = keccak_256(Point4.BASE.toBytes());
+    return Point4.fromBytes(hashed).multiplyUnsafe(8n).toBytes();
+  })();
+  var RCT_H_HEX = "8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94";
   function hex3(bytes) {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
@@ -16088,6 +16093,10 @@ zoo`.split("\n"));
       ));
       const want = "a637203ec41eab772532d30420eac80612fce8e44f1758bc7e2cb1bdda815887";
       return [got === want, got];
+    });
+    add2("The RingCT second generator", "Every amount this wallet reads is proved against a commitment built on this point.", () => {
+      const got = hex3(RCT_H);
+      return [got === RCT_H_HEX, got];
     });
     return checks;
   }

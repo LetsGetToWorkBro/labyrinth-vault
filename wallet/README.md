@@ -72,16 +72,26 @@ That is inherent to light clients, not a flaw in this implementation, and the
 nodes screen says it in those words. Running your own is the only fix and it is
 presented as the ordinary option rather than the advanced one.
 
-**Monero** is different, and better, and unfinished. A node serving blocks
-learns nothing about which outputs are yours, because the scan happens on the
-device. The scan itself is four operations and they are written, using the
-vault's primitives that are pinned to the Monero project's own vectors. What is
-missing is the block download, which needs either an epee decoder or a light
-wallet server, and those are a fork in the road rather than a task. See
-[../docs/monero-sync.md](../docs/monero-sync.md).
+**Monero** is different, and better. A node serving blocks learns nothing about
+which outputs are yours, because the scan happens on this device.
+`src/net/monerod.ts` speaks the restricted RPC and `src/core/moneroscan.ts`
+walks the chain from a birth height, testing every output with primitives
+pinned to the Monero project's own vectors.
 
-Until then the Monero view carries a real height and a balance of zero that is
-labeled as not scanned. A zero that is labeled is honest.
+Amounts come out of RingCT commitments, and every one of them is proved against
+the commitment the chain published before it is shown. An amount that does not
+rebuild its commitment is reported as unknown rather than as a number, because
+a wrong amount looks exactly like a right one on a screen.
+
+The scan runs two hundred blocks per refresh, writes down where it got to, and
+carries on from there next time. The percentage is on the nodes screen.
+
+**What it cannot do:** a view key finds payments coming in and cannot tell which
+of them you have already spent, because that needs key images and key images
+need the spend key, which is in the vault. So the Monero figure is what
+arrived, it says so under every screen that shows it, and it is never called a
+balance. [../docs/monero-sync.md](../docs/monero-sync.md) has the whole
+argument, including why `rct::H` is not derived the way you would guess.
 
 ## Swapping, and the address nothing can check
 
@@ -217,19 +227,24 @@ activity, transaction detail with the two-device timeline, the vault screen,
 pairing, the security center, and the error states, including the one that
 matters, which is a returned transaction that does not match.
 
+Also real: the watcher behind `Watcher` in `src/core/chain.ts`, for both
+chains, and the node addresses and Monero scan height are remembered between
+launches in one readable JSON file. No keys are in it.
+
 What does not exist yet, in order:
 
-1. **The watcher.** A real client behind the `Watcher` interface in
-   `src/core/chain.ts`: Electrum servers for Bitcoin, a daemon or a light
-   wallet server for Monero. The interface is shaped so that swapping it in is
-   a change to one file.
+1. **Key image import.** The vault already recognizes `Monero key image export`
+   as one of the six wallet2 containers. Until that round trip is built, the
+   Monero figure is what was received rather than what is left, and every
+   screen showing it says so.
 2. **Monero sending.** The transport is finished: `XMRUNSIGNED` frames, and
    BC-UR the way Cupcake animates it. What is missing is `wallet2`'s
    unsigned-set format, which is not written on either side yet. Until it is, a Monero draft is tagged
    `provisional`, the interface says so on screen, and `verifySigned` refuses it
    outright rather than waving a stub through.
-3. **Real pairing.** Reading an `ACCOUNT` payload off a vault and persisting the
-   watch-only key, which needs somewhere to keep it.
+3. **Real pairing.** Reading an `ACCOUNT` payload off a vault, rather than the
+   published test vectors that stand in for one today. The storage it needs now
+   exists; what is missing is the screen.
 
 See [SECURITY.md](../SECURITY.md) for the threat model of the system, and
 [docs/airgap-protocol.md](../docs/airgap-protocol.md) for what crosses between

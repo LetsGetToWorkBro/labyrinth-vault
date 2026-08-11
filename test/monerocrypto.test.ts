@@ -18,7 +18,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { publicFromSecret } from '../src/keys/monero';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { publicFromSecret, reduceScalar } from '../src/keys/monero';
 import {
   FIELD_CONSTANTS,
   derivationToScalar,
@@ -30,7 +31,14 @@ import {
   hashToScalar,
   selfTest,
   writeVarint,
+  RCT_H,
+  RCT_H_HEX,
+  amountMask,
+  commit,
+  commitmentMask,
 } from '../src/keys/monerocrypto';
+
+const Point = ed25519.Point;
 
 interface Fixture {
   note: string;
@@ -289,10 +297,107 @@ describe('varints', () => {
   });
 });
 
+describe('the RingCT second generator', () => {
+  it('is what Monero says it is', () => {
+    /* Computed in the module from the construction and compared here to the
+     * literal in monero-project's rctTypes.h. Both halves are load-bearing:
+     * the computation shows the constant is what the definition produces, and
+     * this comparison shows we agree with the network about which point it is. */
+    expect(hex(RCT_H)).toBe(RCT_H_HEX);
+  });
+
+  it('is not the Elligator map, which is the mistake to make', () => {
+    /* Every other bytes-to-point step in Monero is `hash_to_ec`: Keccak, the
+     * Elligator map, then a multiply by eight. H is not. It is Keccak of G's
+     * encoding read *directly* as a point encoding, which happens to decode.
+     * Getting this wrong produces a well-formed generator that no commitment
+     * on the chain will ever verify against. */
+    const g = bytes('5866666666666666666666666666666666666666666666666666666666666666');
+    const elligator = hashToPoint(keccak_256(g));
+    expect(hex(elligator)).not.toBe(RCT_H_HEX);
+  });
+
+  it('is not the base point, and not the identity', () => {
+    expect(hex(RCT_H)).not.toBe('5866666666666666666666666666666666666666666666666666666666666666');
+    expect(hex(RCT_H)).not.toBe('0100000000000000000000000000000000000000000000000000000000000000');
+  });
+});
+
+describe('opening a RingCT amount', () => {
+  const shared = bytes('ca780b065e48091d910de90bcab2411db3d1a845e6d95cfd556af4138504c737');
+
+  it('gives the mask and the amount key different values from one secret', () => {
+    /* Same input, two labels. One hash serving both would let the amount be
+     * recovered from the mask. */
+    expect(hex(commitmentMask(shared))).not.toBe(hex(amountMask(shared)));
+  });
+
+  it('is deterministic, because both sides have to agree without talking', () => {
+    expect(hex(commitmentMask(shared))).toBe(hex(commitmentMask(shared)));
+    expect(hex(amountMask(shared))).toBe(hex(amountMask(shared)));
+  });
+
+  it('makes a mask that is a reduced scalar', () => {
+    /* An unreduced value is a valid 32-byte string and not a valid scalar, and
+     * every implementation that does reduce disagrees with one that does not. */
+    const mask = commitmentMask(shared);
+    expect(mask.length).toBe(32);
+    expect(mask[31]! & 0xf0).toBe(0);
+  });
+
+  it('refuses a shared secret that is not 32 bytes', () => {
+    expect(() => commitmentMask(new Uint8Array(31))).toThrow();
+    expect(() => amountMask(new Uint8Array(33))).toThrow();
+  });
+
+  it('commits to different amounts differently under one mask', () => {
+    const mask = commitmentMask(shared);
+    const seen = new Set([0n, 1n, 2n, 10n ** 12n].map((amount) => hex(commit(amount, mask))));
+    expect(seen.size).toBe(4);
+  });
+
+  it('commits to one amount differently under different masks', () => {
+    /* The blinding is the whole privacy property. Two payments of the same
+     * size producing the same point would make amounts readable off the chain
+     * by comparison alone. */
+    const a = commit(10n ** 12n, commitmentMask(shared));
+    const b = commit(10n ** 12n, commitmentMask(bytes('0'.repeat(63) + '1')));
+    expect(hex(a)).not.toBe(hex(b));
+  });
+
+  it('handles a zero amount, which is legal and occasionally real', () => {
+    expect(() => commit(0n, commitmentMask(shared))).not.toThrow();
+  });
+
+  it('refuses an amount outside 64 bits', () => {
+    expect(() => commit(-1n, commitmentMask(shared))).toThrow();
+    expect(() => commit(2n ** 64n, commitmentMask(shared))).toThrow();
+    expect(() => commit(2n ** 64n - 1n, commitmentMask(shared))).not.toThrow();
+  });
+
+  it('is homomorphic, which is the property the whole scheme rests on', () => {
+    /* commit(a, x) + commit(b, y) == commit(a+b, x+y). This is what lets the
+     * network check that a transaction's inputs and outputs balance without
+     * learning any of the amounts. Testing it here means the two masks and the
+     * generator are all being combined the way Monero combines them. */
+    const one = commitmentMask(shared);
+    const two = commitmentMask(bytes('0'.repeat(62) + '02'));
+    const sum = new Uint8Array(32);
+    let carry = 0;
+    for (let i = 0; i < 32; i++) {
+      const total = one[i]! + two[i]! + carry;
+      sum[i] = total & 0xff;
+      carry = total >> 8;
+    }
+    const left = Point.fromBytes(commit(4n, one)).add(Point.fromBytes(commit(7n, two)));
+    expect(hex(left.toBytes())).toBe(hex(commit(11n, reduceScalar(sum))));
+  });
+});
+
 describe('the launch checks', () => {
   it('all pass', () => {
     const checks = selfTest();
-    expect(checks.length).toBe(6);
+    expect(checks.length).toBe(7);
     for (const check of checks) expect(check.ok, `${check.name}: ${check.detail}`).toBe(true);
   });
 

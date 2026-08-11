@@ -20,6 +20,11 @@
  *
  * **Nothing is chosen until it is chosen.** The suggestions are inert. There
  * is no default, and with no node set the app shows fixture data and says so.
+ *
+ * The screen also carries the two things a person needs to know about what
+ * this app keeps: how far the Monero scan has got, and the short list of what
+ * survives a relaunch. Both are here rather than in a settings sub-page,
+ * because both are consequences of the choice made above them.
  */
 
 import { useState } from 'react';
@@ -40,6 +45,7 @@ import {
   type NodeConfig,
   type NodeKind,
 } from '../core/nodes';
+import { SPEND_BLINDNESS } from '../core/moneroscan';
 
 export function NodesScreen({ navigation }: Nav<'Nodes'>) {
   const store = useStore();
@@ -189,11 +195,61 @@ export function NodesScreen({ navigation }: Nav<'Nodes'>) {
         ))}
 
         <Gap />
-        <Notice title="NOT REMEMBERED YET" tone="plain">
-          A node set here lasts until the app is closed. Storing it needs a
-          dependency this package does not have yet, and adding one deserves
-          its own change rather than arriving quietly beside a node client.
+        <Rule />
+        <Gap />
+
+        <Label>MONERO SCAN</Label>
+        <Gap size={8} />
+        {store.moneroStatus ? (
+          <>
+            <Panel>
+              <Title>
+                {store.moneroStatus.caughtUp
+                  ? 'UP TO DATE'
+                  : `${Math.floor(store.moneroStatus.fraction * 100)}% SCANNED`}
+              </Title>
+              <Mono size={12}>
+                block {store.moneroStatus.scan.height} of {store.moneroStatus.tip}
+              </Mono>
+              <Gap size={4} />
+              <Small>
+                {store.moneroStatus.outputs} payment
+                {store.moneroStatus.outputs === 1 ? '' : 's'} found
+                {store.moneroStatus.unvalued > 0
+                  ? `, ${store.moneroStatus.unvalued} of them with an amount this wallet could not prove`
+                  : ''}
+                .
+              </Small>
+            </Panel>
+            <Gap size={8} />
+          </>
+        ) : null}
+        <Small>{SPEND_BLINDNESS}</Small>
+        <Gap size={8} />
+        <Small>
+          Monero has no address index, so finding your payments means testing
+          every output in every block on this phone. That is why it takes a
+          while, and it is also why the node learns nothing about which of them
+          were yours.
+        </Small>
+
+        <Gap />
+        <Rule />
+        <Gap />
+
+        <Notice title="WHAT IS REMEMBERED" tone="plain">
+          The nodes above and how far the Monero scan got, in one file in this
+          app's own storage. No keys and no payment history: those arrive from
+          the vault and live in memory until the app closes.
         </Notice>
+        <Gap size={8} />
+        <ActionRow>
+          <Action
+            label="FORGET EVERYTHING STORED"
+            quiet
+            onPress={() => { confirmed(); store.forgetStored(); }}
+          />
+        </ActionRow>
       </ScrollView>
     </Screen>
   );

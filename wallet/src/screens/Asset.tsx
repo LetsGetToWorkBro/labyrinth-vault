@@ -31,7 +31,10 @@ export function AssetScreen({ navigation, route }: Nav<'Asset'>) {
   const asset = route.params.asset;
   const view = store.snapshot.assets[asset];
   const history = store.snapshot.transactions.filter((tx) => tx.asset === asset);
-  const unconfirmed = view.balance - view.spendable;
+  /* Bitcoin only. On the Monero side `spendable` is deliberately zero, because
+   * this half of the product cannot build a Monero spend at all, and
+   * subtracting that from the balance would label every coin unconfirmed. */
+  const unconfirmed = asset === 'BTC' ? view.balance - view.spendable : 0n;
 
   return (
     <Screen>
@@ -66,6 +69,18 @@ export function AssetScreen({ navigation, route }: Nav<'Asset'>) {
             centsPerUnit={store.snapshot.centsPerUnit[asset]}
             stale={store.snapshot.stale}
           />
+
+          {/* Directly under the number, not at the bottom of the page. A
+              caveat about what a figure means is only doing its job if it is
+              read before somebody acts on the figure. */}
+          {view.caveat ? (
+            <>
+              <Gap size={space.snug} />
+              <Notice title="WHAT THIS NUMBER IS" tone="warn">
+                {view.caveat}
+              </Notice>
+            </>
+          ) : null}
 
           <Gap size={space.section} />
           <ActionRow>

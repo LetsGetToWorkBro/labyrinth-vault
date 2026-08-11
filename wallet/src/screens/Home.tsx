@@ -127,6 +127,16 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
           <Press onPress={() => navigation.navigate('Asset', { asset: 'XMR' })}>
             <AssetLine asset="XMR" balance={monero.balance} centsPerUnit={snapshot.centsPerUnit.XMR} />
           </Press>
+          {/* A Monero figure from a view key is what arrived rather than what
+              is left, and a scan that has not reached the tip has not seen
+              everything. Both of those change what the number above means, so
+              they belong beside it and not in a settings page. */}
+          {monero.caveat ? (
+            <>
+              <Gap size={space.snug} />
+              <Small tone={color.dim}>{monero.caveat}</Small>
+            </>
+          ) : null}
         </View>
 
         <Gap size={space.section} />

@@ -591,6 +591,13 @@ describe('the screen model matches the wire, field for field', () => {
     expect(swiftFiles.length).toBeGreaterThan(5);
 
     for (const path of swiftFiles) {
+      /* The generated digest file is sixty-four characters of hexadecimal, and
+       * a long enough hexadecimal string eventually contains `1e8`. One did.
+       * That is the fifth guard in this repository to fail on text that was
+       * never code, and the fix is the same as the other four: look only at
+       * what somebody wrote. Nothing in a generated constant can be doing
+       * arithmetic. */
+      if (path.endsWith('BundleDigest.swift')) continue;
       const text = readFileSync(path, 'utf8');
       expect(text, `${path} converts satoshis`).not.toMatch(/100_?000_?000|1e8/);
       expect(text, `${path} formats a number itself`).not.toMatch(/NumberFormatter|Decimal\(/);

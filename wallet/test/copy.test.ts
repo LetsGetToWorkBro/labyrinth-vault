@@ -121,7 +121,29 @@ describe('a wallet with no chain behind it says so, everywhere it shows a number
     expect(nodes).toMatch(/no node set by/i);
   });
 
-  it('says the node is not remembered, because it is not', () => {
-    expect(nodes).toMatch(/NOT REMEMBERED YET/);
+  it('says what is remembered, and lists nothing more than is', () => {
+    /* The claim on the screen and the code behind it have to agree, and the
+     * failure that matters is the screen understating what it keeps. */
+    expect(nodes).toMatch(/WHAT IS REMEMBERED/);
+    expect(nodes).toMatch(/No keys and no payment history/);
+    const persisted = readFileSync('src/state/persist.ts', 'utf8');
+    expect(persisted).toMatch(/nodes: \{ btc: NodeConfig \| null; xmr: NodeConfig \| null \}/);
+    expect(persisted).toMatch(/moneroScan: \{ height: number; birth: number \} \| null/);
+  });
+
+  it('offers a way to throw the stored file away', () => {
+    expect(nodes).toMatch(/FORGET EVERYTHING STORED/);
+  });
+
+  it('says what a view key cannot see, on the screen that shows the number', () => {
+    /* The one claim in this app that a person could be materially wrong about:
+     * a received total under the word BALANCE would tell somebody who has
+     * spent money that they still have it. */
+    const watcher = readFileSync('src/core/watcher.ts', 'utf8');
+    expect(watcher).toMatch(/SPEND_BLINDNESS/);
+    const home = readFileSync('src/screens/Home.tsx', 'utf8');
+    expect(home).toMatch(/monero\.caveat/);
+    const asset = readFileSync('src/screens/Asset.tsx', 'utf8');
+    expect(asset).toMatch(/view\.caveat/);
   });
 });

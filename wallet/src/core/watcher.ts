@@ -26,17 +26,20 @@
  * is alarming and false. A person seeing yesterday's balance labeled as
  * yesterday's is better informed than one seeing zero.
  *
- * ## What is real here and what is not
+ * ## What is real here
  *
- * Bitcoin is real: discovery, outputs, history, fee estimates, broadcast.
+ * Bitcoin: discovery, outputs, history, fee estimates, broadcast.
  *
- * Monero is not, and this file does not pretend. There is no sync loop yet,
- * for the reason set out at length in `net/monerod.ts`: walking the chain
- * needs either an epee decoder or a light wallet server, and that is a product
- * decision rather than an afternoon. Until then the Monero view carries the
- * node's height and its fee estimate, both real, and a balance of zero marked
- * as not-yet-scanned. A zero that is labeled is honest. A zero that is not is
- * a wallet telling somebody their money is gone.
+ * Monero: the node's height and fee estimate, and a chain scan that finds
+ * every output paid to the paired account and proves each amount against the
+ * commitment on the chain. What it cannot do, and says so on every screen that
+ * shows the number, is tell which of those outputs has since been spent. That
+ * needs key images, key images need the spend key, and the spend key is in the
+ * vault. `core/moneroscan.ts` is where that is argued at length.
+ *
+ * A Monero scan is also long. It runs a bounded number of blocks per refresh
+ * and hands back where it got to, so the app can persist that, show it, and
+ * pick the work up again rather than starting over every launch.
  */
 
 import { openWatch, type BtcWallet } from '@vault/keys/bitcoin';
@@ -44,6 +47,16 @@ import type { Asset, Atoms, Transaction } from './model';
 import type { AssetView, BroadcastResult, ChainSnapshot, FeeOption, Watcher } from './chain';
 import { discover, type Discovery } from './discover';
 import type { NodeConfig } from './nodes';
+import {
+  outputKey,
+  progressFraction,
+  scan,
+  totalReceived,
+  SPEND_BLINDNESS,
+  type MoneroAccount,
+  type Received,
+  type ScanState,
+} from './moneroscan';
 import { live, type Transport } from '../net/http';
 import * as esplora from '../net/esplora';
 import * as monerod from '../net/monerod';
@@ -51,6 +64,25 @@ import * as monerod from '../net/monerod';
 export interface WatcherNodes {
   btc: NodeConfig | null;
   xmr: NodeConfig | null;
+}
+
+/** The Monero half of what this watcher is watching, when there is one. */
+export interface MoneroWatch {
+  account: MoneroAccount;
+  /** Where a previous run got to, from storage, or the birth height twice. */
+  scan: ScanState;
+}
+
+/** What the app persists after a refresh, and what the screens read. */
+export interface MoneroStatus {
+  scan: ScanState;
+  tip: number;
+  /** Zero to one, measured from the birth height. */
+  fraction: number;
+  caughtUp: boolean;
+  outputs: number;
+  /** Outputs found whose amount could not be proved. */
+  unvalued: number;
 }
 
 export interface RefreshResult {
@@ -181,7 +213,32 @@ const EMPTY_VIEW = (asset: Asset): AssetView => ({
         ],
   confirmationTarget: asset === 'BTC' ? 6 : 10,
   height: 0,
+  caveat: null,
 });
+
+/**
+ * The sentence under a Monero balance, which is never absent.
+ *
+ * Three things can be true at once and each of them changes what the number
+ * means, so they are said in order of how badly somebody would be misled by
+ * not knowing: a scan that has not finished, then amounts that could not be
+ * proved, then the permanent one about spends.
+ */
+export function moneroCaveat(status: MoneroStatus, unvalued: number): string {
+  const parts: string[] = [];
+  if (!status.caughtUp) {
+    parts.push(
+      `Scanned to block ${status.scan.height} of ${status.tip}, which is ${Math.floor(status.fraction * 100)}%. Anything paid after that has not been looked for yet.`,
+    );
+  }
+  if (unvalued > 0) {
+    parts.push(
+      `${unvalued} ${unvalued === 1 ? 'output was' : 'outputs were'} found whose amount could not be proved against the chain, so ${unvalued === 1 ? 'it is' : 'they are'} not in this total.`,
+    );
+  }
+  parts.push(SPEND_BLINDNESS);
+  return parts.join(' ');
+}
 
 /**
  * The watcher the app uses when a node is configured.
@@ -192,6 +249,17 @@ const EMPTY_VIEW = (asset: Asset): AssetView => ({
 export class NodeWatcher implements Watcher {
   private snap: ChainSnapshot;
   private readonly btcWallet: BtcWallet | null;
+  private monero: MoneroWatch | null;
+  /**
+   * Every output found so far, keyed so a rescan cannot double-count.
+   *
+   * In memory only. The outputs themselves are cheap to find again given the
+   * scan height, and writing a list of somebody's incoming payments to disk
+   * would put on the filesystem exactly the thing the view key was protecting.
+   * The height is persisted; the findings are not.
+   */
+  private readonly found = new Map<string, Received>();
+  private moneroStatus: MoneroStatus | null = null;
 
   constructor(
     private readonly nodes: WatcherNodes,
@@ -201,7 +269,9 @@ export class NodeWatcher implements Watcher {
       xmr: nodes.xmr ? live(nodes.xmr.url) : null,
     },
     now: number = Date.now(),
+    monero: MoneroWatch | null = null,
   ) {
+    this.monero = monero;
     const opened = zpub ? openWatch(zpub) : null;
     this.btcWallet = opened?.ok ? opened.wallet ?? null : null;
     this.snap = {
@@ -309,17 +379,30 @@ export class NodeWatcher implements Watcher {
         feeOptions: fees.ok ? feeOptionsFrom(fees.value) : this.snap.assets.BTC.feeOptions,
         confirmationTarget: 6,
         height: height.value,
+        /* Bitcoin needs no caveat: the chain states amounts in the clear and
+         * `discover` refuses to report a total it did not finish gathering. */
+        caveat: null,
       },
     };
   }
 
+  /** Where the Monero scan has got to, for the caller that persists it. */
+  moneroProgress(): MoneroStatus | null {
+    return this.moneroStatus;
+  }
+
   /**
-   * Monero: what a node can answer today.
+   * Monero: the node's numbers, then one bounded pass of the chain scan.
    *
-   * Height and fee are real. The balance is not scanned, because the sync loop
-   * does not exist, and it is left at zero rather than invented. The screen
-   * reads `height > 0 && balance === 0n` together with the note in
-   * `nodes.ts` to say "connected, not scanned" rather than "you have nothing".
+   * Bounded because a scan from a wallet's birth is tens of thousands of
+   * requests and will not finish inside one pull-to-refresh. Each pass moves
+   * the height forward, the caller writes it down, and the next refresh
+   * carries on. A person watching this sees a percentage that climbs rather
+   * than a spinner that never resolves.
+   *
+   * The balance it produces is what arrived. Read `core/moneroscan.ts` for why
+   * that is not the same as what is left, and why saying so is not a
+   * placeholder for a feature that is coming.
    */
   private async refreshMonero(
     transport: Transport,
@@ -327,14 +410,60 @@ export class NodeWatcher implements Watcher {
     const reply = await monerod.info(transport);
     if (!reply.ok) return { problem: reply.problem, view: this.snap.assets.XMR };
     if (reply.value.syncing) {
+      /* A node behind the chain answers happily and its answers are correct
+       * for a past that is not now. Scanning against it would record a height
+       * this wallet has not really passed. */
       return {
         problem: `That node is still catching up, at ${reply.value.height} of ${reply.value.targetHeight}.`,
         view: this.snap.assets.XMR,
       };
     }
+
+    const tip = reply.value.height;
+    const watch = this.monero;
+    if (!watch) {
+      return {
+        problem: null,
+        view: {
+          ...this.snap.assets.XMR,
+          height: tip,
+          caveat: 'No Monero account has been paired, so nothing has been scanned for.',
+        },
+      };
+    }
+
+    const pass = await scan(transport, watch.account, watch.scan, tip);
+    /* The height advances even when the pass failed part way. `scan` leaves it
+     * on the block it did not finish, so keeping it is resuming rather than
+     * skipping, and throwing it away would redo work that succeeded. */
+    this.monero = { ...watch, scan: pass.state };
+    for (const output of pass.received) this.found.set(outputKey(output), output);
+
+    const total = totalReceived([...this.found.values()]);
+    const status: MoneroStatus = {
+      scan: pass.state,
+      tip,
+      fraction: progressFraction(pass.state, tip),
+      caughtUp: pass.caughtUp,
+      outputs: total.outputs,
+      unvalued: total.unknown,
+    };
+    this.moneroStatus = status;
+
     return {
-      problem: null,
-      view: { ...this.snap.assets.XMR, height: reply.value.height },
+      problem: pass.problem,
+      view: {
+        ...this.snap.assets.XMR,
+        balance: total.total,
+        /* Zero, and not because the scan is incomplete. Building a Monero
+         * spend needs key images and ring members, neither of which this half
+         * of the product has. A non-zero spendable here would put a send
+         * button in front of somebody it cannot serve. */
+        spendable: 0n,
+        addresses: [{ address: watch.account.address, path: null, used: true }],
+        height: tip,
+        caveat: moneroCaveat(status, total.unknown),
+      },
     };
   }
 

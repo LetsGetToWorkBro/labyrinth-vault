@@ -76,6 +76,19 @@ export interface AssetView {
   confirmationTarget: number;
   /** Tip height, for the "N confirmations" arithmetic. */
   height: number;
+  /**
+   * Why the balance above is not quite what it looks like, when it is not.
+   *
+   * Required rather than optional, so that adding an asset means answering the
+   * question rather than forgetting it. It exists because of Monero: a view
+   * key finds every payment coming in and cannot tell which of them has since
+   * been spent, so the honest figure is what arrived rather than what is left.
+   * It is also where a scan that has not reached the tip says how far it got.
+   *
+   * Null means the number under the word BALANCE means what that word normally
+   * means, and the screens show nothing extra.
+   */
+  caveat: string | null;
 }
 
 export interface ChainSnapshot {

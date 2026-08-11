@@ -394,6 +394,95 @@ export function generateKeyImage(publicKey: Uint8Array, secret: Uint8Array): Uin
 }
 
 // ---------------------------------------------------------------------------
+// RingCT amounts
+// ---------------------------------------------------------------------------
+
+/**
+ * `rct::H`, the second generator, computed here rather than pasted in.
+ *
+ * A Pedersen commitment is `mask*G + amount*H`, and the whole scheme rests on
+ * nobody knowing a number `k` with `H = k*G`. Monero gets that by deriving H
+ * from G by a route that nobody chose the output of.
+ *
+ * **The route is not the one you would guess, and guessing it costs a day.**
+ * Everywhere else in Monero, turning bytes into a point means `hash_to_ec`:
+ * Keccak, then the Elligator map in `ge_fromfe_frombytes_vartime`, then a
+ * multiply by eight. H does not use that. H is Keccak of G's encoding read
+ * *directly as a point encoding* by `ge_frombytes_vartime`, then multiplied by
+ * eight. Monero's own unit test says as much in a comment beside it, and warns
+ * that the trick only works because that particular hash happens to decode.
+ *
+ * Which is why this is computed rather than copied, and then checked against
+ * the literal in Monero's source by `selfTest` below. Computing it shows the
+ * constant is what the construction produces; comparing it shows this file
+ * agrees with the network about which point that is. Doing only one of the two
+ * would have left the Elligator version sitting here looking reasonable.
+ */
+export const RCT_H: Uint8Array = (() => {
+  const hashed = keccak_256(Point.BASE.toBytes());
+  /* `Point.fromBytes` is `ge_frombytes_vartime`: it decompresses, and throws
+   * if the bytes are not a point. The multiply by eight clears the cofactor,
+   * so what comes out is in the prime-order subgroup. */
+  return Point.fromBytes(hashed).multiplyUnsafe(8n).toBytes();
+})();
+
+/** The same point as Monero's own source states it, for the check below. */
+export const RCT_H_HEX = '8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94';
+
+function tagged(tag: string, sharedSecret: Uint8Array): Uint8Array {
+  expect32(sharedSecret, 'shared secret');
+  const out = new Uint8Array(tag.length + 32);
+  for (let i = 0; i < tag.length; i++) out[i] = tag.charCodeAt(i);
+  out.set(sharedSecret, tag.length);
+  return out;
+}
+
+/**
+ * `genCommitmentMask`: the blinding factor a receiver recomputes.
+ *
+ * The sender does not transmit the mask. Both sides derive it from the same
+ * shared secret, which is what makes a commitment openable by its recipient and
+ * opaque to everybody else.
+ */
+export function commitmentMask(sharedSecret: Uint8Array): Uint8Array {
+  return hashToScalar(tagged('commitment_mask', sharedSecret));
+}
+
+/**
+ * `ecdhHash`: the eight bytes an amount is masked with.
+ *
+ * Keccak of the shared secret under a different label than the mask above.
+ * Same input, different tag, so the two results are unrelated; one hash serving
+ * both purposes would let the amount be recovered from the mask.
+ */
+export function amountMask(sharedSecret: Uint8Array): Uint8Array {
+  return keccak_256(tagged('amount', sharedSecret));
+}
+
+/**
+ * `rct::commit`: the point that stands on the chain in place of an amount.
+ *
+ * Worth having in a watching wallet because it turns amount recovery into
+ * something checkable. A decrypted amount and its mask either rebuild the
+ * commitment the chain published or they do not, and if they do then the
+ * amount is right. That is a better guarantee than a test vector, because it is
+ * re-proved against real data on every output ever scanned.
+ */
+export function commit(amount: bigint, mask: Uint8Array): Uint8Array {
+  if (amount < 0n || amount >= 2n ** 64n) {
+    throw new Error('An amount is a 64-bit count of piconero.');
+  }
+  const blind = toBigIntLE(expect32(mask, 'mask')) % L;
+  /* `multiplyUnsafe` on both, deliberately. Neither scalar is a key: the mask
+   * is recomputable by anybody holding the shared secret, and the amount is the
+   * value being proved rather than hidden. The constant-time variant also
+   * refuses zero, and a zero-amount output is an ordinary thing to meet. */
+  return Point.BASE.multiplyUnsafe(blind)
+    .add(Point.fromBytes(RCT_H).multiplyUnsafe(amount))
+    .toBytes();
+}
+
+// ---------------------------------------------------------------------------
 // Launch checks
 // ---------------------------------------------------------------------------
 
@@ -484,6 +573,15 @@ export function selfTest(): Check[] {
     ));
     const want = 'a637203ec41eab772532d30420eac80612fce8e44f1758bc7e2cb1bdda815887';
     return [got === want, got];
+  });
+
+  add('The RingCT second generator', 'Every amount this wallet reads is proved against a commitment built on this point.', () => {
+    /* Not a vector from tests.txt: computed above from the definition, and
+     * checked here against the literal in Monero's own rctTypes.h. A mismatch
+     * would mean every recovered amount silently failed to verify, which reads
+     * on screen as a wallet that finds outputs worth nothing. */
+    const got = hex(RCT_H);
+    return [got === RCT_H_HEX, got];
   });
 
   return checks;

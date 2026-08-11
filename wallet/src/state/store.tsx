@@ -27,27 +27,43 @@ import { parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
 import type { OwnAddresses, SwapOrder, SwapTransport } from '../core/swap';
 import type { NodeConfig, NodeKind } from '../core/nodes';
-import { NodeWatcher, type RefreshResult, type WatcherNodes } from '../core/watcher';
-import { demoSwapTransport } from '../core/demo';
+import { openAccount, type ScanState } from '../core/moneroscan';
+import { NodeWatcher, type MoneroStatus, type RefreshResult, type WatcherNodes } from '../core/watcher';
+import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../core/demo';
+import { restoreHeight, revealSecretHex } from '@vault/keys/monero';
+import { EMPTY, load, save, type Persisted } from './persist';
+import { fileStore } from './fileStore';
 import { transmit } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
 
 const demoWatcher = new DemoWatcher();
 
 /**
- * Node configuration is held in memory and not written anywhere.
+ * There is no node until somebody sets one.
  *
- * Not an oversight and not a security decision: this package has no storage
- * dependency, and adding one is a change to the dependency list that deserves
- * its own commit rather than being smuggled in beside a node client. Until
- * then a node has to be set again after a relaunch, the nodes screen says so,
- * and nothing pretends otherwise.
- *
- * When storage does land, it goes here and only here. A node address is not a
- * secret, so it wants ordinary storage rather than the keychain, and the
- * distinction is worth keeping visible.
+ * The constant every other wallet ships with an address in it. This one is
+ * empty and stays empty: picking a node for everybody is picking who gets to
+ * watch everybody's addresses, and it is a decision this app makes on screen
+ * rather than in a source file. With nothing set the app shows the fixture and
+ * says `DEMO DATA` at the top of the home screen.
  */
 const NO_NODES: WatcherNodes = { btc: null, xmr: null };
+
+/**
+ * What is remembered between launches, and what is deliberately not.
+ *
+ * Which nodes to talk to, and where the Monero scan got to. That is all, and
+ * `state/persist.ts` is where the reasoning lives, including why everything
+ * read back from the file is put through the same validation as something
+ * somebody typed.
+ *
+ * Not remembered: the account keys, which arrive from the vault and live in
+ * memory for the session; and the Monero outputs a scan found, which are a
+ * list of somebody's incoming payments and are exactly what the view key was
+ * protecting. The scan *height* is written down because it is a number about
+ * the chain rather than about the person, and it is the expensive thing to
+ * recompute.
+ */
 
 export interface Store {
   /** One clock for the whole interface. */
@@ -79,6 +95,19 @@ export interface Store {
   nodeProblems: { asset: Asset; problem: string }[];
   refresh(): Promise<void>;
   setNode(kind: NodeKind, config: NodeConfig | null): void;
+  /** How far the Monero chain scan has got, or null before it has run. */
+  moneroStatus: MoneroStatus | null;
+  /** True once what was stored has been read, so a screen can say so. */
+  restored: boolean;
+  /**
+   * Throw away everything on disk and start the Monero scan again.
+   *
+   * Wanted for two different reasons that happen to want the same button: a
+   * scan that somehow got ahead of itself, and somebody handing the phone on.
+   * Nothing secret is stored, so this is a convenience rather than a wipe, and
+   * it does not claim to be one.
+   */
+  forgetStored(): void;
 
   /** The addresses a swap payout may be sent to, derived rather than typed.
    *  See core/swap.ts for why that distinction is the whole feature. */
@@ -134,10 +163,69 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [nodes, setNodes] = useState<WatcherNodes>(NO_NODES);
   const [refreshing, setRefreshing] = useState(false);
   const [nodeProblems, setNodeProblems] = useState<RefreshResult['problems']>([]);
+  const [moneroScan, setMoneroScan] = useState<Persisted['moneroScan']>(null);
+  const [moneroStatus, setMoneroStatus] = useState<MoneroStatus | null>(null);
   /* Bumped after every refresh so the snapshot below is recomputed. The
    * watcher holds the data and hands back the same object until something
    * fetches; a counter is what tells React that something did. */
   const [fetched, setFetched] = useState(0);
+
+  const storage = useMemo(() => fileStore(), []);
+  /**
+   * False until the file has been read, and the reason it exists.
+   *
+   * The saving effect below runs whenever the nodes change, and on the first
+   * render they are `NO_NODES` because nothing has been loaded yet. Without
+   * this flag that first render writes an empty file over a real one, and the
+   * app forgets its node every launch while appearing to have storage. The
+   * bug is quiet, it only happens on a cold start, and it is the whole reason
+   * this is a separate piece of state rather than a check for empty nodes.
+   */
+  const [restored, setRestored] = useState(false);
+  /* Where a stored scan gets handed to a freshly built watcher. A ref rather
+   * than state because the watcher must not be rebuilt every time the scan
+   * advances: that would throw away the outputs it has found and restart the
+   * scan, forever, on every refresh. */
+  const scanStart = useRef<ScanState | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void load(storage).then((stored) => {
+      if (!current) return;
+      scanStart.current = stored.moneroScan;
+      setMoneroScan(stored.moneroScan);
+      setNodes(stored.nodes);
+      setRestored(true);
+    });
+    return () => { current = false; };
+  }, [storage]);
+
+  useEffect(() => {
+    if (!restored) return;
+    void save(storage, { ...EMPTY, nodes, moneroScan });
+  }, [restored, storage, nodes, moneroScan]);
+
+  /**
+   * The account the Monero scan is for.
+   *
+   * The fixture wallet, standing in for a pairing that does not exist yet, in
+   * the same way `DEMO_ZPUB` stands in on the Bitcoin side. It is a real
+   * account with a real view key, so what the scanner does against a real node
+   * is the real thing rather than a rehearsal. It is also empty, so a correct
+   * scan of it finds nothing, which is why `openAccount` checks that the view
+   * key belongs to the address: without that check, finding nothing would be
+   * indistinguishable from being pointed at the wrong keys.
+   */
+  const moneroWatch = useMemo(() => {
+    const opened = openAccount(DEMO_XMR_ADDRESS, revealSecretHex(DEMO_XMR_VIEW_SECRET));
+    if (!opened.ok) return null;
+    /* A wallet with no stored progress starts a week back rather than at the
+     * tip. Starting late means silently never seeing payments that arrived
+     * first, which reads as money that did not turn up. */
+    const birth = restoreHeight();
+    return { account: opened.account, scan: scanStart.current ?? { birth, height: birth } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restored]);
 
   /**
    * The watcher, which is the fixture until a node is set and the node after.
@@ -149,8 +237,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const watcher = useMemo(() => {
     if (!nodes.btc && !nodes.xmr) return demoWatcher;
-    return new NodeWatcher(nodes, DEMO_ZPUB);
-  }, [nodes]);
+    return new NodeWatcher(nodes, DEMO_ZPUB, undefined, Date.now(), moneroWatch);
+  }, [nodes, moneroWatch]);
 
   const snapshot = useMemo(
     () => watcher.snapshot(now),
@@ -164,6 +252,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       const result = await watcher.refresh(Date.now());
       setNodeProblems(result.problems);
+      /* Written down after every pass, including one that failed part way.
+       * `scan` leaves the height on the block it did not finish, so storing it
+       * resumes rather than skips, and not storing it would redo the blocks
+       * that did succeed. */
+      const progress = watcher.moneroProgress();
+      setMoneroStatus(progress);
+      if (progress) setMoneroScan(progress.scan);
     } finally {
       setRefreshing(false);
       setFetched((count) => count + 1);
@@ -350,6 +445,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     refresh,
     setNode: (kind: NodeKind, config: NodeConfig | null) =>
       setNodes((current) => (kind === 'esplora' ? { ...current, btc: config } : { ...current, xmr: config })),
+    moneroStatus,
+    restored,
+    forgetStored: () => {
+      scanStart.current = null;
+      setMoneroScan(null);
+      setMoneroStatus(null);
+      setNodes(NO_NODES);
+      void storage.clear();
+    },
     pairVault: (label: string) =>
       setVault({
         state: 'ready',
