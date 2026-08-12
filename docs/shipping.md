@@ -17,7 +17,7 @@ needs a Mac, and it is marked.
 | Icon | generated, committed | generated, committed |
 | Privacy manifest | four empty lists, tested | four empty lists, tested |
 | Export compliance | **yes**, mass market | **no**, and here is why |
-| Compiles | model only, the rest parsed | prebuild proven; never compiled |
+| Compiles | **yes, Xcode, first try** | prebuild proven; never compiled |
 
 ## Export compliance: the two apps have different true answers
 

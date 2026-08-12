@@ -68,10 +68,22 @@ permission, because the camera is the only wire it has.
 
 ### What to expect on the first build
 
-**This has never been compiled by Xcode.** It was written on Linux, where
-there is no Apple toolchain, so treat the first build as a code review the
-compiler is performing on your behalf rather than as something that should
-already work.
+**It builds.** The first Xcode build of this target succeeded, which closes the
+largest open question in the whole project: twenty-three files that had only
+ever been parsed met a type-checker and survived it. What follows is kept as
+written, because it explains what that does and does not prove.
+
+**It had never been compiled by Xcode.** It was written on Linux, where
+there is no Apple toolchain, so the first build was a code review the
+compiler performed on our behalf rather than something that should
+already have worked.
+
+A compiler proves the app is *well formed*. It says nothing about whether it
+*runs*: the launch gate evaluates the engine bundle in JavaScriptCore, checks
+its SHA-256 against `Support/BundleDigest.swift`, and runs the self-test
+vectors, and none of that happens until the app is on a device or a simulator.
+A stale digest gives a build that compiles and then correctly refuses to launch,
+which is why `npm test` comes before `xcodegen`.
 
 What *has* been compiled, and is green, is the platform-free half: the
 transaction shapes, the refusal model and the passphrase encoding, which
@@ -82,15 +94,22 @@ can reach them. It is also how a genuine bug was found. `Refusal.detail` was
 a non-exhaustive switch missing five of its nine cases, which no amount of
 grepping would have shown.
 
-Everything that imports SwiftUI, JavaScriptCore, CryptoKit or CoreImage has
+Everything that imports SwiftUI, JavaScriptCore, CryptoKit or CoreImage had
 only been *parsed*. Syntax, balanced braces, well-formed declarations. Not
-types, not exhaustiveness, not whether a call exists. So expect the first
-build to surface real errors in `Engine.swift`, `Vault.swift`, the screens and
-the design system, and expect them to be ordinary ones: a renamed symbol, an
-argument label, a `@MainActor` isolation complaint from Swift 6's concurrency
-checking.
+types, not exhaustiveness, not whether a call exists. Real errors in
+`Engine.swift`, `Vault.swift`, the screens and the design system were the
+expected outcome, and none of them appeared. Two things bought that, and both
+are worth keeping: the app's own contracts are checked by `test/app-wiring.test.ts`
+walking the Swift source on every change, and the half that could be compiled
+was compiled, which is where the one genuine bug turned up.
 
-Two things worth running as soon as it builds:
+Note that `project.yml` pins `SWIFT_VERSION: "5.9"`. Under Swift 6's language
+mode the three detached tasks in `Vault.swift` that carry an `Engine` and its
+replies across actor boundaries would be errors rather than warnings. That
+migration is real work and is not done; it is a deliberate not-yet, not an
+oversight.
+
+Two things worth running now that it builds:
 
 1. **⌘U.** The test target runs `PassphraseContractTests`, which checks NFKD
    against `test/fixtures/primitives.json`, the same file the TypeScript is
