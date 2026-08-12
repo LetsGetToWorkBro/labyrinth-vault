@@ -63,6 +63,25 @@ describe('the vault is shaped like something that can be uploaded', () => {
     expect(doc).toMatch(/self-classification/i);
   });
 
+  it('reaches its fixtures through the accessor that exists in both builds', () => {
+    /* `Bundle.module` is synthesised by SwiftPM for targets that declare
+     * resources. Xcode synthesises nothing, so naming it there is a compile
+     * error: "Type 'Bundle' has no member 'module'". It is the same shape of
+     * mistake as the module name above, and it fails in the same asymmetric
+     * way: green under `swift test`, green in CI, broken at the first ⌘U.
+     *
+     * `FixtureBundle` holds both lookups in one place, including the detail
+     * that SwiftPM's `.copy` preserves the `Fixtures/` directory while
+     * Xcode's resource phase flattens it to the bundle root. */
+    const tests = sourcesUnder('ios/LabyrinthVaultTests', ['.swift']);
+    for (const { path, text } of tests) {
+      if (path.endsWith('FixtureBundle.swift')) continue;
+      expect(text, `${path} uses Bundle.module, which does not exist under Xcode`).not.toMatch(
+        /Bundle\.module/,
+      );
+    }
+  });
+
   it('imports the model under both names it is built with', () => {
     /* The same sources are built twice. `Package.swift` makes the
      * platform-free files a library target called `LabyrinthVaultCore`, which

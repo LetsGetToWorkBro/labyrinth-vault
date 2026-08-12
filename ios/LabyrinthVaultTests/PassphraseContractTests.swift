@@ -59,7 +59,7 @@ final class PassphraseContractTests: XCTestCase {
     }
 
     private func loadFixture() throws -> Fixture {
-        guard let url = Bundle.module.url(forResource: "primitives", withExtension: "json") else {
+        guard let url = FixtureBundle.url("primitives") else {
             XCTFail("primitives.json is not in this target's resources")
             throw CocoaError(.fileNoSuchFile)
         }

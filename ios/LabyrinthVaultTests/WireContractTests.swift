@@ -38,7 +38,7 @@ final class WireContractTests: XCTestCase {
     }
 
     private func load() throws -> Fixtures {
-        guard let url = Bundle.module.url(forResource: "summary", withExtension: "json") else {
+        guard let url = FixtureBundle.url("summary") else {
             XCTFail("summary.json is not in this target's resources")
             throw CocoaError(.fileNoSuchFile)
         }

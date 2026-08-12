@@ -25,7 +25,7 @@ final class MoneroContractTests: XCTestCase {
     }
 
     private func load() throws -> MoneroSummary {
-        guard let url = Bundle.module.url(forResource: "monero-summary", withExtension: "json") else {
+        guard let url = FixtureBundle.url("monero-summary") else {
             XCTFail("monero-summary.json is not in this target's resources")
             throw CocoaError(.fileNoSuchFile)
         }
