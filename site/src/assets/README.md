@@ -18,14 +18,14 @@ changed file gets a new name rather than a stale cache.
 
 ## Why they are small
 
-The originals totalled **30.3 MB**. The current set is **4.9 MB**, and nothing
+The originals totalled **30.3 MB**. The current set is **4.6 MB**, and nothing
 visible was given up.
 
 | | Was | Is |
 | --- | --- | --- |
-| favicon | 4.0 MB PNG, 2048x2048 | 653 B `.ico` at 16/32/48, plus a 26 KB apple-touch icon |
-| og:image | 2.3 MB PNG, 2048x1360 | 84 KB JPEG at 1200x630, the size the spec asks for |
-| drawer photo | 10.2 MB PNG, 3504x2336 | 191 KB WebP at 2400 wide |
+| favicon | 4.0 MB PNG, 2048x2048 | 653 B `.ico` at 16/32/48, plus a 24 KB apple-touch icon |
+| og:image | 2.3 MB PNG, 2048x1360 | 75 KB JPEG at 1200x630, the size the spec asks for |
+| drawer photo | 10.2 MB PNG, 3504x2336 | 131 KB grey WebP at 1920 wide |
 | QR phones photo | 6.4 MB PNG, 3840x2160 | 58 KB WebP at 2400 wide |
 | hero clip, desktop | 5.5 MB | 3.1 MB |
 | hero clip, mobile | 2.1 MB | 1.3 MB |
@@ -65,10 +65,48 @@ ffmpeg -i in.mp4 -an -c:v libx264 -preset slow -crf 25 \
 
 Measured against the originals at SSIM 0.996, which is visually lossless.
 
+## The budget, and what it counts
+
+**Nobody downloads this directory.** The hero ships a desktop clip and a mobile
+clip and fetches exactly one, chosen by media query, and the same goes for the
+two posters. The budget used to add up every file and hold the sum under 6 MB,
+which charged a phone for a 3.1 MB clip only a laptop ever asks for.
+
+So there are two numbers now, and they answer different questions:
+
+| | Now | Cap |
+| --- | --- | --- |
+| A phone's whole visit | 1.44 MB | |
+| **A laptop's whole visit** | **3.27 MB** | **4.5 MB** |
+| The repository total | 4.63 MB | 8 MB |
+| Any single image | | 400 KB |
+
+The strict cap is the laptop one, because it is the only figure somebody waits
+for. The shape of it matters: **3.1 MB of that 3.27 MB is the desktop hero
+clip, and it cannot be made smaller.** Only the already-encoded files were ever
+committed, never the masters, so re-encoding is a second generation of loss
+rather than a saving, and the short keyframe interval the scrubbing depends on
+is most of what it costs. The real headroom for anything new is the megabyte
+above it.
+
+The either-or pairing is written down in the test rather than inferred from
+filenames, so a new variant nobody adds to that table counts against the strict
+budget by default. That is the safe direction to be wrong in.
+
+## Every photograph here is painted in grey
+
+`.drawer-section img` is `filter: grayscale(1)` and `.qr-language img` is
+`grayscale(0.95)`, so the browser throws the color away before you see it.
+The drawer photo was stored in color anyway, at 2400px, for a slot no wider
+than about 790 CSS pixels. Stored as grey at 1920 it is **131 KB instead of
+191 KB**, and identical on screen because the screen was never going to show
+the difference. Do the same with anything new: convert to `L`, size it to
+about twice its widest real slot, and let the CSS do what it was going to do.
+
 ## If you add media here
 
-`test/site-claims.test.ts` will fail the build if any image goes over 400 KB,
-if the whole set goes over 6 MB, if the favicon grows past 50 KB, or if
-anything in the site loads media from a remote host again. Those numbers are
-generous for what this page is. If a new asset genuinely needs to break one,
-change the limit in the same commit and say why.
+`test/site-claims.test.ts` fails the build if any image goes over 400 KB, if a
+single visit goes over 4.5 MB, if the whole set goes over 8 MB, if the favicon
+grows past 50 KB, or if anything loads media from a remote host again. If a new
+asset genuinely needs to break one, change the limit in the same commit and say
+why.
