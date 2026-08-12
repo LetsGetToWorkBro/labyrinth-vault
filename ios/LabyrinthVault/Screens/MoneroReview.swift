@@ -185,7 +185,7 @@ struct XmrReviewView: View {
             FieldRow(label: "BALANCE CLOSES", value: "IN + FEE = OUT", tone: .verified)
             Text("A Monero fee is written into the set rather than left over. Before any " +
                  "signature exists, the signer checks that inputs equal outputs plus exactly " +
-                 "this fee — a set that does not balance fails instead of signing.")
+                 "this fee. A set that does not balance fails instead of signing.")
                 .font(Type.body(13.5))
                 .lineSpacing(4)
                 .foregroundStyle(Ink.paperDim)
@@ -234,7 +234,7 @@ struct XmrReviewView: View {
             FieldRow(label: "RING SIZE", value: "\(tx.ringSize)")
             FieldRow(label: "DECOYS PER INPUT", value: "\(tx.ringSize - 1)")
             Text("Your inputs hide among decoys the companion chose. Decoy choice affects " +
-                 "privacy, never custody — a bad ring cannot move money — which is why it is " +
+                 "privacy, never custody (a bad ring cannot move money), which is why it is " +
                  "listed here and not among the safety checks.")
                 .font(Type.body(13.5))
                 .lineSpacing(4)
@@ -365,7 +365,7 @@ struct XmrDestinationView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Read it against the address on your companion. A substitution " +
                              "attack changes the middle and keeps the ends familiar, so read " +
-                             "the middle — all ninety-five characters are here.")
+                             "the middle. All ninety-five characters are here.")
                             .font(Type.body())
                             .lineSpacing(5)
                             .foregroundStyle(Ink.paperDim)
@@ -523,7 +523,7 @@ struct XmrSignedView: View {
                     FieldRow(label: "SENT ANYWHERE", value: "NO", tone: .verified)
 
                     Text("Nothing has left this device and nothing will. The vault has no way " +
-                         "to reach the network — carrying this to the chain is the companion's " +
+                         "to reach the network. Carrying this to the chain is the companion's " +
                          "job, and only if you show it the code.")
                         .font(Type.body())
                         .lineSpacing(5)

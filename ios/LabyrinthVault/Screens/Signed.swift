@@ -38,7 +38,7 @@ struct SignedView: View {
                     FieldRow(label: "SENT ANYWHERE", value: "NO", tone: .verified)
 
                     Text("Nothing has left this device and nothing will. The vault has no way " +
-                         "to reach the network — carrying this to the chain is the companion's " +
+                         "to reach the network. Carrying this to the chain is the companion's " +
                          "job, and only if you show it the code.")
                         .font(Type.body())
                         .lineSpacing(5)

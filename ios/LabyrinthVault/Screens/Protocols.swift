@@ -70,7 +70,7 @@ struct MoneroView: View {
                             Eyebrow("WHAT THE VAULT CHECKS", color: Ink.paper)
                             Text("An unsigned set is read and rendered in full before anything " +
                                  "is signed: every destination, the stated fee, and the claim " +
-                                 "that change returns here — checked against this vault's own " +
+                                 "that change returns here, checked against this vault's own " +
                                  "address, and refused outright when the claim lies. The ring " +
                                  "signature, range proof and balance are proven during signing; " +
                                  "a set that fails any of them fails instead of signing.")

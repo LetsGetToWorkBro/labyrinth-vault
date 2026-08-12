@@ -114,7 +114,7 @@ enum Refusal: Equatable {
             "it appears to be."
         case .duplicateInput:
             "The same coin appears as an input twice. It can only be spent once, so every total " +
-            "computed from this transaction — what leaves, what returns, what the fee is — is a " +
+            "computed from this transaction (what leaves, what returns, what the fee is) is a " +
             "number describing something that cannot happen."
         case .opaqueOutput:
             "One output pays a script that does not decode to any address this device can show " +
@@ -127,8 +127,8 @@ enum Refusal: Equatable {
             "These bytes did not parse as a transaction. Most often that is a misread camera " +
             "frame, and scanning again fixes it. The vault will not guess at a partial parse."
         case .moneroFile:
-            "This is one of Monero's own wallet files, and it is a perfectly good one — the " +
-            "vault recognises the header. What it cannot do is open it: everything past the " +
+            "This is one of Monero's own wallet files, and it is a perfectly good one. The " +
+            "vault recognizes the header. What it cannot do is open it: everything past the " +
             "header is encrypted with a key derived by CryptoNight, which this build does not " +
             "implement, and signing a Monero transaction needs CLSAG ring signatures on top of " +
             "that. Bitcoin signing works today. Monero here is keys, addresses and recovery " +
@@ -139,7 +139,7 @@ enum Refusal: Equatable {
             "something nobody read is not going to be produced."
         case .unrecognised(let code):
             "The transaction reader refused this with a condition (\(code)) that this version of " +
-            "the screen has no words for. It is still a refusal: an unrecognised reason to stop is " +
+            "the screen has no words for. It is still a refusal: an unrecognized reason to stop is " +
             "a reason to stop. Update the app."
         }
     }

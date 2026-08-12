@@ -197,7 +197,7 @@ struct ReviewView: View {
             FieldRow(label: "RATE", value: tx.feeRate ?? "N/A")
             FieldRow(label: "VIRTUAL SIZE", value: tx.vsize)
             FieldRow(label: "INPUT VALUES", value: "ALL KNOWN", tone: .verified)
-            Text("The fee is not written in a transaction — it is what is left over. The " +
+            Text("The fee is not written in a transaction. It is what is left over. The " +
                  "vault can only state it because every input value was supplied and checked. " +
                  "Had one been missing, this screen would not exist.")
                 .font(Type.body(13.5))

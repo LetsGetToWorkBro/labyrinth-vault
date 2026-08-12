@@ -88,7 +88,7 @@ struct RecoveryView: View {
                         Eyebrow("RECOVERY").padding(.top, 16)
                         Statement("TWELVE WORDS", "ON PAPER", size: 34).padding(.top, 12)
                         Text("This is the only backup that exists. Write it by hand. Do not " +
-                             "photograph it — the camera roll is on a phone that has a network.")
+                             "photograph it. The camera roll is on a phone that has a network.")
                             .font(Type.body())
                             .lineSpacing(5)
                             .foregroundStyle(Ink.paperDim)

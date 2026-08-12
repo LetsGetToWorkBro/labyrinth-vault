@@ -70,7 +70,7 @@ private struct RadiosView: View {
                         Statement("SEVER", "THE RADIOS.", size: 44)
                             .padding(.top, 18)
                         Text("Each of these is yours to do. The vault cannot turn a radio off " +
-                             "for you — it can only refuse to ask for one.")
+                             "for you. It can only refuse to ask for one.")
                             .font(Type.body())
                             .lineSpacing(5)
                             .foregroundStyle(Ink.paperDim)
@@ -156,7 +156,7 @@ private struct VerifyAirgapView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Eyebrow("VERIFYING").padding(.top, 20)
                     Statement("NETWORK", "ACCESS", size: 42).padding(.top, 16)
-                    Text(verdict ? "NONE" : "— — —")
+                    Text(verdict ? "NONE" : "· · ·")
                         .font(Type.readout(44))
                         .foregroundStyle(verdict ? Ink.verified : Ink.paperGhost)
                         .padding(.top, 16)
@@ -209,8 +209,8 @@ private struct BoundaryView: View {
                     Eyebrow("SECURITY BOUNDARY")
                     Statement("THIS", "DEVICE.", size: 60).padding(.top, 16)
                     Hairline(weight: 2, color: Ink.ruleHeavy).padding(.vertical, 26)
-                    Text("Everything inside this phone is trusted. Everything outside it — the " +
-                         "companion, the desktop wallet, the QR code you are about to scan — is " +
+                    Text("Everything inside this phone is trusted. Everything outside it (the " +
+                         "companion, the desktop wallet, the QR code you are about to scan) is " +
                          "not, and is not required to be.")
                         .font(Type.body())
                         .lineSpacing(5)
