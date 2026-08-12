@@ -18,7 +18,7 @@ changed file gets a new name rather than a stale cache.
 
 ## Why they are small
 
-The originals totalled **30.3 MB**. The current set is **4.6 MB**, and nothing
+The originals totalled **30.3 MB**. The current set is **5.1 MB**, and nothing
 visible was given up.
 
 | | Was | Is |
@@ -76,13 +76,13 @@ So there are two numbers now, and they answer different questions:
 
 | | Now | Cap |
 | --- | --- | --- |
-| A phone's whole visit | 1.44 MB | |
-| **A laptop's whole visit** | **3.27 MB** | **4.5 MB** |
-| The repository total | 4.63 MB | 8 MB |
+| A phone's whole visit | 1.88 MB | |
+| **A laptop's whole visit** | **3.71 MB** | **4.5 MB** |
+| The repository total | 5.06 MB | 8 MB |
 | Any single image | | 400 KB |
 
 The strict cap is the laptop one, because it is the only figure somebody waits
-for. The shape of it matters: **3.1 MB of that 3.27 MB is the desktop hero
+for. The shape of it matters: **3.1 MB of that 3.71 MB is the desktop hero
 clip, and it cannot be made smaller.** Only the already-encoded files were ever
 committed, never the masters, so re-encoding is a second generation of loss
 rather than a saving, and the short keyframe interval the scrubbing depends on

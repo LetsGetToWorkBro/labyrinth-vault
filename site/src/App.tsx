@@ -2,6 +2,10 @@ import { ScrollScrub } from "./components/scroll-scrub";
 import { scrollScrubScenes, scrollScrubTheme } from "./scroll-scrub-scenes";
 import qrPhones from "./assets/qr-phones.webp";
 import drawerPhone from "./assets/drawer.webp";
+import ledgerLegible from "./assets/ledger-legible.webp";
+import ledgerObscured from "./assets/ledger-obscured.webp";
+import nothingToConnect from "./assets/nothing-to-connect.webp";
+import verifyLoupe from "./assets/verify-loupe.webp";
 import "./labyrinth.css";
 
 const architecture = [
@@ -116,7 +120,11 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="airgap section-pad">
-        <div><h2>NOTHING<br />TO CONNECT.</h2><p>The absence is inspectable. The Vault target contains no network code, and the app says so rather than claiming to read your radios. Seeing those would need the very frameworks it refuses to link.</p></div>
+        <div>
+          <h2>NOTHING<br />TO CONNECT.</h2>
+          <p>The absence is inspectable. The Vault target contains no network code, and the app says so rather than claiming to read your radios. Seeing those would need the very frameworks it refuses to link.</p>
+          <img className="section-photo" src={nothingToConnect} alt="An old iPhone on a dark surface with its SIM tray ejected beside it, next to a coiled cable plugged into nothing" width={1280} height={859} loading="lazy" decoding="async" />
+        </div>
         <div className="airgap-facts">
           <div className="airgap-group">
             <h3>THIS BUILD, AS FACT</h3>
@@ -159,7 +167,16 @@ export default function LabyrinthSite() {
 
       <section className="chains-section section-pad">
         <h2>DIFFERENT CHAINS.<br />SAME PRINCIPLE.</h2>
-        <div className="chain-worlds"><article><span>BTC</span><h3>BITCOIN</h3><p>Transparent transaction structure. Human-readable outputs. Offline signing.</p></article><article><span>XMR</span><h3>MONERO</h3><p>Private-by-default protocol. The same separation between online watch and offline authority.</p></article></div>
+        <div className="chain-worlds">
+          <article>
+            <img className="chain-photo" src={ledgerLegible} alt="A continuous-feed printout under hard light, its rows of characters legible" width={1400} height={939} loading="lazy" decoding="async" />
+            <span>BTC</span><h3>BITCOIN</h3><p>Transparent transaction structure. Human-readable outputs. Offline signing.</p>
+          </article>
+          <article>
+            <img className="chain-photo" src={ledgerObscured} alt="The same printout on the same desk under the same light, its rows faded past reading" width={1400} height={933} loading="lazy" decoding="async" />
+            <span>XMR</span><h3>MONERO</h3><p>Private-by-default protocol. The same separation between online watch and offline authority.</p>
+          </article>
+        </div>
         <p className="offline-line">YOUR KEYS STAY OFFLINE.</p>
       </section>
 
@@ -175,7 +192,11 @@ export default function LabyrinthSite() {
       </section>
 
       <section id="source" className="source-section section-pad">
-        <div><h2>DON’T TRUST.<br />VERIFY.</h2><p>Labyrinth is designed to be inspected, challenged, and improved.</p></div>
+        <div>
+          <h2>DON’T TRUST.<br />VERIFY.</h2>
+          <p>Labyrinth is designed to be inspected, challenged, and improved.</p>
+          <img className="section-photo" src={verifyLoupe} alt="A jeweller’s loupe resting on a printed sheet of hexadecimal, the characters under the glass magnified and sharp" width={1200} height={805} loading="lazy" decoding="async" />
+        </div>
         <div className="source-grid">{sourceAreas.map((area) => <span key={area}>{area}</span>)}</div>
         <a className="source-action" href="https://github.com/LetsGetToWorkBro/labyrinth-vault" target="_blank" rel="noreferrer"><span>VIEW SOURCE</span><b>↗</b></a>
       </section>
