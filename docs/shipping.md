@@ -149,6 +149,18 @@ Export it in a shell profile rather than committing it: it is not a secret,
 but it is an account identifier and it has no reason to be in a public
 repository.
 
+**Then the app record in App Store Connect**, which asks for one more
+identifier the App ID page did not: a **SKU**. Use the bundle identifier
+again, `vision.labyrinth.vault` and `vision.labyrinth.wallet`.
+
+It is private and never shown to anybody using the app. It has to be unique
+within the account, **it cannot be changed once the record exists**, and it is
+the column the sales and financial reports are keyed by, so it wants to be
+something still recognizable in a spreadsheet in two years. The bundle
+identifier is already unique, already fixed in `ios/project.yml` and
+`wallet/app.json`, and reusing it means there is no second name to keep track
+of. Letters, numbers, hyphens, periods and underscores; no spaces.
+
 ### 2. Vault: generate and build (needs a Mac)
 
 ```sh
