@@ -22,8 +22,10 @@ screenshot; this app has never been compiled, so there are no real ones yet.
 > that walks blocks on the device, proves every found amount against its
 > on-chain commitment, and subtracts spends once the vault has answered a key
 > image round trip (`src/core/moneroscan.ts`, `src/core/keyimages.ts`). There
-> is deliberately no default node and no price feed, so the app never talks to
-> a server nobody chose, and fiat figures appear only in the demo.
+> is deliberately no default node, and no price service is ever asked from the
+> phone: dollar figures come from Labyrinth's own relay, which serves every
+> client one cached answer (`worker/src/prices.ts`, `src/net/prices.ts`), and
+> with no relay reachable balances are shown in coin.
 >
 > In a development build the send flow can also sign for itself with the seed
 > phrase published in BIP84, the one every wallet's tests use, which controls

@@ -8,10 +8,11 @@ will reasonably conclude the app is not doing what it says. They are marked
 `DEMO DATA` on screen. Set a node on the Nodes screen and both chains read
 real data; there is deliberately no default node, and the Nodes screen
 explains why (a public node learns every address in the account) and presents
-running your own as the ordinary choice. With a node set there is one more
-honest absence: live balances are shown in coin, with no dollar figures,
-because the app has no price feed. The fiat numbers in the demo come from the
-fixture and are labeled with it.
+running your own as the ordinary choice. Dollar figures appear only when a
+price is actually known: from the labeled fixture in the demo, or from
+Labyrinth's own relay, which serves every client one cached answer so that no
+price service ever sees a user. When neither is available, live balances are
+shown in coin, which is the truth rather than an absence.
 
 **2. This is the online half of a two-device wallet, and the second device
 signs.** The whole flow up to the airgap handoff runs on this phone alone. You

@@ -140,20 +140,36 @@ describe('the listings say what the code does', () => {
   });
 
   it('the wallet prices nothing it has no price for', () => {
-    /* The listing now says live balances are shown in coin because the app
-     * has no price feed. That is a claim about the screens: with a real node
-     * `centsPerUnit` is zero, zero means unknown, and a screen that rendered
-     * it anyway would print "$0.00" under somebody's actual money. The gate
-     * is `hasPrice`, and the two components every fiat line goes through have
-     * to ask it. */
-    const description = read('store/wallet/description.txt');
-    expect(description).toMatch(/no price feed/i);
+    /* The listing says a dollar figure appears only when a price is actually
+     * known. That is a claim about the screens: `centsPerUnit` is zero until
+     * the relay answers, zero means unknown, and a screen that rendered it
+     * anyway would print "$0.00" under somebody's actual money. The gate is
+     * `hasPrice`, and the components every fiat line goes through have to ask
+     * it. */
     const units = readFileSync('wallet/src/core/units.ts', 'utf8');
     expect(units).toMatch(/export function hasPrice/);
     const money = readFileSync('wallet/src/components/money.tsx', 'utf8');
     expect(money).toMatch(/if \(!hasPrice\(centsPerUnit\)\) return null;/);
     const home = readFileSync('wallet/src/screens/Home.tsx', 'utf8');
     expect(home).toMatch(/hasPrice\(/);
+  });
+
+  it('the price the wallet does show came through the relay, never a service the phone asks', () => {
+    /* The listing sells the arrangement: the relay asks the price source and
+     * serves every client one cached answer, so the source sees a server on a
+     * timer and never a person. Held together the usual way: the claim in the
+     * listing, the client that only speaks to the relay, the Worker module
+     * with the pinned host and the cache, and the watcher wiring that reads
+     * the same deployment string the swap does. */
+    const description = read('store/wallet/description.txt');
+    expect(description).toMatch(/cached answer/i);
+    const client = readFileSync('wallet/src/net/prices.ts', 'utf8');
+    expect(client).toMatch(/\/v1\/price/);
+    const worker = readFileSync('worker/src/prices.ts', 'utf8');
+    expect(worker).toMatch(/PRICE_CACHE_MS/);
+    expect(worker).toMatch(/api\.coingecko\.com/);
+    const watcher = readFileSync('wallet/src/core/watcher.ts', 'utf8');
+    expect(watcher).toMatch(/swapConfigured\(\) \? live\(SWAP_PROXY\) : null/);
   });
 
   it('the wallet review notes explain the stand-in before a reviewer finds it', () => {

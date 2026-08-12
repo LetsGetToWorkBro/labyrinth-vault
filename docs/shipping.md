@@ -400,10 +400,12 @@ is chosen (`DEMO DATA`, by design, since there is no default node); the
 Monero mainnet broadcast gate, which refuses until a live stagenet acceptance
 is recorded in `wallet/src/core/moneroreadiness.ts`; and the swap, which
 serves labeled fixture quotes until the proxy Worker is deployed and its
-address set in `wallet/src/net/swapproxy.ts`. Live balances are shown in
-coin, with no fiat, because the app has no price feed and will not invent
-one. The external-testing gate is no longer a missing node client; it is
-recording the stagenet acceptance and deciding the swap deployment.
+address set in `wallet/src/net/swapproxy.ts`. That one string also turns on
+prices: the Worker serves every client the same cached answer from
+`worker/src/prices.ts`, so no price service ever sees a phone, and until it
+is deployed live balances are shown in coin rather than at a made-up rate.
+The external-testing gate is no longer a missing node client; it is
+recording the stagenet acceptance and deploying the Worker.
 
 **The vault compiles and launches; real hardware is the open gate.** The
 state table at the top is the record: built in Xcode, launched in a

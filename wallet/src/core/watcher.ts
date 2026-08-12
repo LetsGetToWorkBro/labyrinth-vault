@@ -40,6 +40,13 @@
  * A Monero scan is also long. It runs a bounded number of blocks per refresh
  * and hands back where it got to, so the app can persist that, show it, and
  * pick the work up again rather than starting over every launch.
+ *
+ * Prices, when the Labyrinth relay is deployed, ride the same refresh: one
+ * request to the relay, which serves every client the identical cached
+ * answer, so no price service ever sees a phone. With no relay, or a relay
+ * that does not answer, `centsPerUnit` stays at its last known value or at
+ * zero, and zero means unknown: `hasPrice` in core/units.ts is what keeps a
+ * screen from reading it as "$0.00".
  */
 
 import { openWatch, type BtcWallet } from '@vault/keys/bitcoin';
@@ -66,6 +73,8 @@ import { live, type Transport } from '../net/http';
 import { moneroBroadcastGate } from './moneroreadiness';
 import * as esplora from '../net/esplora';
 import * as monerod from '../net/monerod';
+import { fetchPrices } from '../net/prices';
+import { SWAP_PROXY, swapConfigured } from '../net/swapproxy';
 
 export interface WatcherNodes {
   btc: NodeConfig | null;
@@ -189,9 +198,12 @@ export function historyFrom(
       txid: tx.txid,
       blockHeight: tx.height,
       at: tx.time !== null ? tx.time * 1000 : Date.now(),
-      /* Null, not zero. This wallet has no price source, and a fiat value of
-       * nothing renders as nothing while a zero renders as "$0.00", which is a
-       * claim about what somebody's money was worth. */
+      /* Null, not zero, and null even now that live prices exist. A history
+       * row happened at its own moment, and pricing it at today's rate would
+       * put a number on the screen that was never true of the transaction.
+       * The relay serves the current price only, so the honest value for a
+       * past payment is no value, which renders as nothing rather than as
+       * "$0.00". */
       fiatCents: null,
     });
   }
@@ -444,9 +456,19 @@ export class NodeWatcher implements Watcher {
   constructor(
     private readonly nodes: WatcherNodes,
     zpub: string | null,
-    private readonly transports: { btc: Transport | null; xmr: Transport | null } = {
+    private readonly transports: {
+      btc: Transport | null;
+      xmr: Transport | null;
+      /* Where a price comes from: the Labyrinth relay, the same deployment
+       * string that turns the swap on, because the whole point is that the
+       * price source sees our relay on a timer and never a phone. Absent by
+       * default until the relay is deployed, and absent means the app renders
+       * coin amounts, which `hasPrice` in units.ts already makes honest. */
+      prices?: Transport | null;
+    } = {
       btc: nodes.btc ? live(nodes.btc.url) : null,
       xmr: nodes.xmr ? live(nodes.xmr.url) : null,
+      prices: swapConfigured() ? live(SWAP_PROXY) : null,
     },
     now: number = Date.now(),
     monero: MoneroWatch | null = null,
@@ -496,10 +518,24 @@ export class NodeWatcher implements Watcher {
       else assets.XMR = result.view;
     }
 
+    /* Prices ride the same refresh, from the relay, when there is one. A
+     * failure keeps the last known figures rather than zeroing them: sixty
+     * seconds ago's price is the price every other client is being served,
+     * while a sudden zero would flip every screen to coin display mid-glance.
+     * It is also not a `problems` entry, because that list names chains that
+     * did not answer about somebody's money, and a missing convenience number
+     * does not belong in it. */
+    let centsPerUnit = this.snap.centsPerUnit;
+    if (this.transports.prices) {
+      const priced = await fetchPrices(this.transports.prices);
+      if (priced.ok) centsPerUnit = priced.centsPerUnit;
+    }
+
     const ok = problems.length === 0;
     this.snap = {
       ...this.snap,
       assets,
+      centsPerUnit,
       /* One list, both chains, newest first. Each chain's history is only
        * replaced by its own successful refresh, so a Bitcoin failure does not
        * empty the Monero rows or the other way around. */
