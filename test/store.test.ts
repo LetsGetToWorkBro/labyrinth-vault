@@ -120,6 +120,42 @@ describe('the listings say what the code does', () => {
     expect(readFileSync('wallet/src/screens/Home.tsx', 'utf8')).toMatch(/DEMO DATA/);
   });
 
+  it('the wallet claims a Monero scan only while the scanner exists', () => {
+    /* This guard pointed the other way for months: the listing said scanning
+     * was not finished while `core/moneroscan.ts` walked blocks, proved
+     * amounts against their commitments and settled spends through the key
+     * image book, all under test. The listing says so now, and this holds the
+     * claim and the capability together the same way the vault's Monero
+     * guard does: if the scan or the round trip ever leaves the code, the
+     * sentences selling them have to leave the listing in the same commit. */
+    const scanner = readFileSync('wallet/src/core/moneroscan.ts', 'utf8');
+    expect(scanner).toMatch(/export async function scan\(/);
+    const watcher = readFileSync('wallet/src/core/watcher.ts', 'utf8');
+    expect(watcher).toMatch(/importKeyImages\(/);
+    const description = read('store/wallet/description.txt');
+    expect(description).toMatch(/scans on the device/i);
+    expect(description).toMatch(/key image round trip/i);
+    const notes = read('store/wallet/review-notes.md');
+    expect(notes).toMatch(/scans on the device/i);
+  });
+
+  it('the wallet prices nothing it has no price for', () => {
+    /* The listing now says live balances are shown in coin because the app
+     * has no price feed. That is a claim about the screens: with a real node
+     * `centsPerUnit` is zero, zero means unknown, and a screen that rendered
+     * it anyway would print "$0.00" under somebody's actual money. The gate
+     * is `hasPrice`, and the two components every fiat line goes through have
+     * to ask it. */
+    const description = read('store/wallet/description.txt');
+    expect(description).toMatch(/no price feed/i);
+    const units = readFileSync('wallet/src/core/units.ts', 'utf8');
+    expect(units).toMatch(/export function hasPrice/);
+    const money = readFileSync('wallet/src/components/money.tsx', 'utf8');
+    expect(money).toMatch(/if \(!hasPrice\(centsPerUnit\)\) return null;/);
+    const home = readFileSync('wallet/src/screens/Home.tsx', 'utf8');
+    expect(home).toMatch(/hasPrice\(/);
+  });
+
   it('the wallet review notes explain the stand-in before a reviewer finds it', () => {
     /* A signer using a published seed, discovered by a reviewer who was not
      * told, is a rejection. Told in advance, it is a demonstration. */
@@ -141,6 +177,18 @@ describe('the listings say what the code does', () => {
     expect(standin).toMatch(/if \(!DEMO\) return null;/);
     const send = readFileSync('wallet/src/screens/Send.tsx', 'utf8');
     expect(send).toMatch(/\{DEMO && \(/);
+    /* Every screen that offers a stand-in lever gates it the same way, or a
+     * release build grows a button that acts on nothing. The grep is for the
+     * label because that is what a person would tap: a STAND-IN control in a
+     * screen that never reads the DEMO flag is the regression. */
+    for (const screen of readdirSync('wallet/src/screens')) {
+      const code = readFileSync(`wallet/src/screens/${screen}`, 'utf8');
+      if (/STAND-IN/.test(code)) {
+        expect(code, `${screen} offers a stand-in control without the DEMO gate`).toMatch(
+          /import \{[^}]*\bDEMO\b[^}]*\} from '\.\.\/demo\/standin'/,
+        );
+      }
+    }
   });
 
   it('both privacy policies are served at the URL the runbook tells you to paste', () => {

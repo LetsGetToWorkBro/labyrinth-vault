@@ -52,7 +52,7 @@ import { Journey, Link } from '../labyrinth/glyphs';
 import { QrCanvas } from '../qr/QrCanvas';
 import { CheckIcon, CrossIcon, ScanIcon } from '../components/icons';
 import { assetColor, color, radius, space } from '../design/tokens';
-import { elide, fiatCents, formatFeeRate, formatFiat, parseAmount } from '../core/units';
+import { elide, fiatCents, formatFeeRate, formatFiat, hasPrice, parseAmount } from '../core/units';
 import { maxSendable } from '../core/build';
 import { checkAddress, readPaymentUri } from '../core/addresses';
 import { frameEstimate, FRAME_MS } from '../core/wire';
@@ -219,7 +219,13 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
         <Gap size={space.snug} />
         <Small tone={parsed.ok || !session.compose.amountText ? color.slate : color.warn}>
           {parsed.ok
-            ? formatFiat(fiatCents(parsed.atoms!, asset, snapshot.centsPerUnit[asset]))
+            ? /* The line under a valid amount is its dollar figure when a
+               * price is known and what remains spendable when none is, which
+               * is every live-node session. The second is the more useful
+               * sentence anyway; the first only exists where it can be true. */
+              hasPrice(snapshot.centsPerUnit[asset])
+              ? formatFiat(fiatCents(parsed.atoms!, asset, snapshot.centsPerUnit[asset]))
+              : `Available ${view.spendable === view.balance ? '' : 'to spend '}${formatAvailable(view.spendable, asset)}`
             : session.compose.amountText
               ? /* Typing nine decimal places into a chain that has eight is not
                  * an error worth a red field, but silence leaves somebody
@@ -398,9 +404,11 @@ function Review({ onBack }: { onBack: () => void }) {
         <Label>SENDING</Label>
         <Gap size={space.snug} />
         <Amount atoms={draft.amount} asset={draft.asset} size="readout" />
-        <Small tone={color.ash} style={{ marginTop: 6 }}>
-          {formatFiat(fiatCents(draft.amount, draft.asset, store.snapshot.centsPerUnit[draft.asset]))}
-        </Small>
+        {hasPrice(store.snapshot.centsPerUnit[draft.asset]) ? (
+          <Small tone={color.ash} style={{ marginTop: 6 }}>
+            {formatFiat(fiatCents(draft.amount, draft.asset, store.snapshot.centsPerUnit[draft.asset]))}
+          </Small>
+        ) : null}
 
         <Gap size={space.section} />
         <Label style={{ marginBottom: space.snug }}>TO</Label>

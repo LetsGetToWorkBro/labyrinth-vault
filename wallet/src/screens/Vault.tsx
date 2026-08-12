@@ -36,6 +36,7 @@ import { Link, Mark } from '../labyrinth/glyphs';
 import { color, space } from '../design/tokens';
 import { useState } from 'react';
 import { elide, sessionTime } from '../core/units';
+import { DEMO } from '../demo/standin';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
@@ -115,12 +116,22 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
                 <>
                   <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
                   <Gap size={space.snug} />
-                  <Action
-                    label="SYNC WITH THE STAND-IN (DEMO)"
-                    quiet
-                    onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
-                  />
-                  <Gap size={space.snug} />
+                  {/* The stand-in's lever renders only where the stand-in can
+                      act. In a release build the signer behind this is
+                      compiled out, and a control whose only possible answer
+                      is "this does not exist here" is chrome pretending to be
+                      a feature. Same gate, same reasoning, as the stand-in
+                      vault controls on the send flow. */}
+                  {DEMO ? (
+                    <>
+                      <Action
+                        label="SYNC WITH THE STAND-IN (DEMO)"
+                        quiet
+                        onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
+                      />
+                      <Gap size={space.snug} />
+                    </>
+                  ) : null}
                 </>
               )}
               {syncNote ? (
@@ -246,15 +257,25 @@ export function PairScreen({ navigation }: Nav<'Pair'>) {
 
           <Gap size={space.section} />
           <Action label="OPEN CAMERA" onPress={() => navigation.navigate('Scan')} />
-          <Gap size={space.snug} />
-          <Action
-            label="PAIR WITH A STAND-IN (DEMO)"
-            quiet
-            onPress={() => {
-              store.pairVault('VAULT · iPhone 11');
-              navigation.goBack();
-            }}
-          />
+          {/* Development builds get a second lever that pairs with the
+              stand-in, through the same acceptance path a scanned export
+              takes. In release the stand-in is compiled out and this button
+              would pair with nothing, silently, which reads as a broken app
+              rather than as a build without a second device; the camera above
+              is the whole of pairing there. */}
+          {DEMO ? (
+            <>
+              <Gap size={space.snug} />
+              <Action
+                label="PAIR WITH A STAND-IN (DEMO)"
+                quiet
+                onPress={() => {
+                  store.pairVault('VAULT · iPhone 11');
+                  navigation.goBack();
+                }}
+              />
+            </>
+          ) : null}
 
           <Gap size={space.section} />
           <Notice title="WHAT CROSSES">

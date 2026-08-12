@@ -22,7 +22,7 @@
 import { View } from 'react-native';
 import { Body, Label, Mono, Small } from '../design/text';
 import { assetColor, color, space, tabular, type } from '../design/tokens';
-import { fiatCents, formatFiat, group, splitAmount } from '../core/units';
+import { fiatCents, formatFiat, group, hasPrice, splitAmount } from '../core/units';
 import type { Asset, Atoms } from '../core/model';
 import { Text } from 'react-native';
 
@@ -107,6 +107,12 @@ export function FiatLine({
     stale?: boolean | undefined;
     align?: 'left' | 'right' | undefined;
 }) {
+  /* No price, no line. A zero here means no price source is configured, which
+   * is every live-node session, and "$0.00" under a real balance would be a
+   * statement that somebody's money is worthless. The crypto amount above this
+   * line is the fact; this line is a convenience that only exists when it can
+   * be true. See `hasPrice` in core/units.ts for the whole argument. */
+  if (!hasPrice(centsPerUnit)) return null;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
       <Body tone={color.ash}>{formatFiat(fiatCents(atoms, asset, centsPerUnit))}</Body>
@@ -128,19 +134,26 @@ export function AssetLine({
   balance: Atoms;
   centsPerUnit: number;
 }) {
+  /* With no price the row keeps its shape and loses its claims: the name and
+   * the balance are facts, the per-unit price and the fiat value are not, so
+   * the ticker stands in where the dollar figure would have been and nothing
+   * on the row says what the coins are worth. */
+  const priced = hasPrice(centsPerUnit);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: space.gap, gap: space.gap }}>
       <View style={{ width: 3, height: 34, borderRadius: 2, backgroundColor: assetColor(asset) }} />
       <View style={{ flex: 1 }}>
         <Label tone={color.bone}>{asset === 'BTC' ? 'BITCOIN' : 'MONERO'}</Label>
-        <Small tone={color.slate} style={{ marginTop: 4 }}>
-          {formatFiat(centsPerUnit)} per {asset}
-        </Small>
+        {priced ? (
+          <Small tone={color.slate} style={{ marginTop: 4 }}>
+            {formatFiat(centsPerUnit)} per {asset}
+          </Small>
+        ) : null}
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         <Amount atoms={balance} asset={asset} size="strong" ticker={false} />
         <Small tone={color.ash} style={{ marginTop: 4 }}>
-          {formatFiat(fiatCents(balance, asset, centsPerUnit))}
+          {priced ? formatFiat(fiatCents(balance, asset, centsPerUnit)) : asset}
         </Small>
       </View>
     </View>

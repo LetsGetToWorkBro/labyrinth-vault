@@ -5,10 +5,13 @@ Two facts decide this review, so they lead.
 **1. With no node configured this build shows fixture data, and every screen
 that shows a number labels it.** A reviewer who assumes the balances are real
 will reasonably conclude the app is not doing what it says. They are marked
-`DEMO DATA` on screen. Set a Bitcoin node on the Nodes screen and it reads a
-real chain; there is deliberately no default node, and the Nodes screen
+`DEMO DATA` on screen. Set a node on the Nodes screen and both chains read
+real data; there is deliberately no default node, and the Nodes screen
 explains why (a public node learns every address in the account) and presents
-running your own as the ordinary choice.
+running your own as the ordinary choice. With a node set there is one more
+honest absence: live balances are shown in coin, with no dollar figures,
+because the app has no price feed. The fiat numbers in the demo come from the
+fixture and are labeled with it.
 
 **2. This is the online half of a two-device wallet, and the second device
 signs.** The whole flow up to the airgap handoff runs on this phone alone. You
@@ -57,10 +60,16 @@ we are glad to provide a development build on request.
 
 ## Monero
 
-Monero can reach a node and broadcast through it. Scanning for received outputs
-is not finished, so a Monero balance is labeled *not scanned* rather than shown
-as a misleading zero. Monero mainnet broadcast is gated behind a recorded live
-acceptance and refuses until then; stagenet and testnet are open.
+Monero scans on the device: the node serves blocks, the view key does the
+arithmetic on the phone, and every amount found is proved against the
+commitment on the chain before it is counted. A first scan from the wallet's
+birth height takes time and the screen shows the percentage climbing; that is
+the scan working, not the app hanging. A view key alone cannot see spending,
+so until the paired vault answers a key image round trip the number is labeled
+as what arrived, and afterwards spends are subtracted and the sentence under
+the balance says where the answer came from. Monero mainnet broadcast is gated
+behind a recorded live acceptance and refuses until then, with the reason on
+screen; stagenet and testnet are open.
 
 ## Why the camera permission
 

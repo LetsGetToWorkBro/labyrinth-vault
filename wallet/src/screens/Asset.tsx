@@ -21,7 +21,7 @@ import { Amount, FiatLine } from '../components/money';
 import { Empty, TxRow } from '../components/tx';
 import { ReceiveIcon, SendIcon } from '../components/icons';
 import { assetColor, color, space } from '../design/tokens';
-import { elide, formatFiat } from '../core/units';
+import { elide, formatFiat, hasPrice } from '../core/units';
 import { TICKER_NAME } from '../core/model';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
@@ -124,8 +124,17 @@ export function AssetScreen({ navigation, route }: Nav<'Asset'>) {
             </>
           )}
           <FactRow label="SETTLES AT">{`${view.confirmationTarget} blocks`}</FactRow>
-          <FactRow label="CHAIN TIP">{view.height.toLocaleString('en-US')}</FactRow>
-          <FactRow label="PRICE" last>{formatFiat(store.snapshot.centsPerUnit[asset])}</FactRow>
+          {/* The price row exists only when a price does. With no source the
+              row would read "$0.00", which is not a fact about the coin, and a
+              fact list is the last place to put a number that is not one. */}
+          {hasPrice(store.snapshot.centsPerUnit[asset]) ? (
+            <>
+              <FactRow label="CHAIN TIP">{view.height.toLocaleString('en-US')}</FactRow>
+              <FactRow label="PRICE" last>{formatFiat(store.snapshot.centsPerUnit[asset])}</FactRow>
+            </>
+          ) : (
+            <FactRow label="CHAIN TIP" last>{view.height.toLocaleString('en-US')}</FactRow>
+          )}
 
           {asset === 'BTC' ? (
             <>

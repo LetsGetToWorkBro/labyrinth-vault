@@ -28,16 +28,20 @@
  * already spent.
  *
  * Every wallet in this situation solves it the same way: the spending wallet
- * exports its key images and the watching wallet imports them. The vault
- * already recognizes that file, `Monero key image export`, as one of the six
- * wallet2 containers in `keys/monerotx.ts`. Until that round trip is built and
- * tested, the number this module produces is **received**, it is labeled
- * received on every screen that shows it, and it is never called a balance.
+ * exports its key images and the watching wallet imports them. That round trip
+ * is built and tested here. The wallet lists what it found as an XMROUTPUTS
+ * payload, the vault re-proves ownership of every output and answers with
+ * XMRKEYIMAGES, and `core/keyimages.ts` keeps the book: spends the walk sees
+ * are subtracted live, and newly imported images get one backward look via
+ * `is_key_image_spent`, whose privacy cost is written up where the call is
+ * made.
  *
- * A wallet that printed a received total under the word BALANCE would be
- * telling somebody who has spent money that they still have it. The whole
- * point of the airgap is that this app is the half that is allowed to be
- * wrong about the network and not about somebody's money.
+ * Until that round trip has run, the number this module produces is
+ * **received**, and the sentence under it says so on every screen. A wallet
+ * that printed a received total under the word BALANCE would be telling
+ * somebody who has spent money that they still have it. The whole point of
+ * the airgap is that this app is the half that is allowed to be wrong about
+ * the network and not about somebody's money.
  *
  * ## Why the amounts are trustworthy even though nothing here has vectors
  *

@@ -15,6 +15,7 @@ import {
   formatAmount,
   formatFiat,
   group,
+  hasPrice,
   inGroups,
   parseAmount,
   relativeTime,
@@ -102,6 +103,21 @@ describe('fiat', () => {
     expect(formatFiat(btc)).toBe('$56,904.33');
     expect(formatFiat(xmr)).toBe('$3,822.47');
     expect(formatFiat(btc + xmr)).toBe('$60,726.80');
+  });
+
+  it('knows the difference between a price and the absence of one', () => {
+    /* Zero is what `centsPerUnit` holds in every live-node session, because
+     * this wallet has no price feed. It means unknown, and every fiat line in
+     * the app asks this before rendering, because "$0.00" under a real
+     * balance is a claim that the money is worthless. The pathological values
+     * count as absent too: a NaN that slipped through would otherwise render
+     * as "$NaN". */
+    expect(hasPrice(11_788_000)).toBe(true);
+    expect(hasPrice(1)).toBe(true);
+    expect(hasPrice(0)).toBe(false);
+    expect(hasPrice(-1)).toBe(false);
+    expect(hasPrice(Number.NaN)).toBe(false);
+    expect(hasPrice(Number.POSITIVE_INFINITY)).toBe(false);
   });
 });
 

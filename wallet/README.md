@@ -12,21 +12,29 @@ screenshot; this app has never been compiled, so there are no real ones yet.
 
 <br clear="right">
 
-> ### This is a frontend, and there is no chain behind it
+> ### There is a chain behind it now, when you point it at one
 >
-> Every balance, price, fee estimate and confirmation count in the running app
-> comes from `src/core/demo.ts`, which is a fixture. There is no node client
-> yet. The app says `DEMO DATA` on the home screen for exactly as long as that
-> is true.
+> With no node set, every number comes from `src/core/demo.ts`, which is a
+> fixture, and the app says `DEMO DATA` on the home screen for exactly as long
+> as that is true. Set a node and the numbers are real: Bitcoin discovery,
+> coins, history, fees and broadcast against any Esplora server
+> (`src/core/discover.ts`, `src/core/watcher.ts`), and a Monero view-key scan
+> that walks blocks on the device, proves every found amount against its
+> on-chain commitment, and subtracts spends once the vault has answered a key
+> image round trip (`src/core/moneroscan.ts`, `src/core/keyimages.ts`). There
+> is deliberately no default node and no price feed, so the app never talks to
+> a server nobody chose, and fiat figures appear only in the demo.
 >
-> There is also no second phone. So that the screens after the handoff could be
-> designed rather than imagined, the send flow can sign for itself with the seed
+> In a development build the send flow can also sign for itself with the seed
 > phrase published in BIP84, the one every wallet's tests use, which controls
 > nothing. It lives in `src/demo/standin.ts`, behind a control labeled
-> `STAND-IN VAULT`, and that file explains at length what keeps it from becoming
-> the thing this whole product exists to prevent.
+> `STAND-IN VAULT`, compiled out of release, and that file explains at length
+> what keeps it from becoming the thing this whole product exists to prevent.
 >
-> Do not put money on this.
+> A Monero spend signs and verifies end to end, and mainnet broadcast stays
+> refused until a live stagenet acceptance is recorded
+> (`src/core/moneroreadiness.ts`). Treat the whole thing as unaudited: do not
+> put money on this yet.
 
 ## The two halves
 
