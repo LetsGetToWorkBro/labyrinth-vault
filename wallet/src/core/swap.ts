@@ -80,36 +80,173 @@ import type { Asset } from './model';
 // Coins
 
 /** Which chain an address belongs to, which is all that is needed to check one. */
-export type AddressFamily = 'xmr' | 'btc' | 'evm' | 'sol' | 'tron';
+export type AddressFamily = 'xmr' | 'btc' | 'evm' | 'sol' | 'tron' | 'ton';
+
+/**
+ * The chain a coin actually lives on, named once, in our words.
+ *
+ * Every provider has its own spelling for the same chain, and those spellings
+ * belong to them: Polygon is `MATIC` at both exchanges today and Avalanche
+ * C-Chain is `AVAXC`, but neither is a promise. The catalog names chains here
+ * and each provider gets a translation table, so a rename upstream is one
+ * entry to fix rather than a column to migrate.
+ */
+export type ChainId =
+  | 'bitcoin'
+  | 'monero'
+  | 'ethereum'
+  | 'arbitrum'
+  | 'optimism'
+  | 'base'
+  | 'polygon'
+  | 'avalanche'
+  | 'bsc'
+  | 'solana'
+  | 'tron'
+  | 'ton';
 
 export interface SwapCoin {
-  /** Unique per coin *and* network: USDT on Tron is not USDT on Ethereum. */
+  /** Unique per coin *and* chain: USDT on Tron is not USDT on Ethereum. */
   id: string;
-  /** The currency as the providers name it, shared across a coin's networks. */
+  /** The currency as the providers name it, shared across a coin's chains. */
   ticker: string;
   label: string;
-  /** Network as Exolix names it. */
-  network: string;
-  /** Network as Godex names it. Godex happens to use the same codes Exolix
-   *  does, and it is written out separately anyway: two providers agreeing
-   *  today is not a promise, and the coin that breaks the coincidence would
-   *  send somebody's USDT down the wrong chain. */
-  gxNetwork: string;
+  /** Where it actually lives. Translated per provider, never sent as-is. */
+  chain: ChainId;
   family: AddressFamily;
   /** Set when this wallet watches the coin, so a payout can be derived rather
    *  than typed. This is the field the whole module is arranged around. */
   ours: Asset | null;
 }
 
+/**
+ * What this wallet will trade: the five assets that carry essentially all
+ * swap volume, each on the chains people actually use.
+ *
+ * Deliberately not every coin every exchange lists. A catalog of thousands is
+ * a catalog nobody has checked, and the failure it invites is the expensive
+ * one: a token whose chain was guessed, paid to an address on a chain that
+ * cannot receive it. Everything here was read from the providers' own live
+ * currency endpoints.
+ *
+ * Wrapped assets are excluded on purpose. Both exchanges list "BTC on
+ * Ethereum" and "XMR on Solana" under the native ticker; those are somebody
+ * else's IOU, not the coin, and offering them under the same name is how a
+ * person ends up holding a token they did not mean to buy.
+ */
 export const SWAP_COINS: SwapCoin[] = [
-  { id: 'btc', ticker: 'btc', label: 'Bitcoin', network: 'BTC', gxNetwork: 'BTC', family: 'btc', ours: 'BTC' },
-  { id: 'xmr', ticker: 'xmr', label: 'Monero', network: 'XMR', gxNetwork: 'XMR', family: 'xmr', ours: 'XMR' },
-  { id: 'usdttrc', ticker: 'usdt', label: 'USDT on Tron', network: 'TRX', gxNetwork: 'TRX', family: 'tron', ours: null },
-  { id: 'usdteth', ticker: 'usdt', label: 'USDT on Ethereum', network: 'ETH', gxNetwork: 'ETH', family: 'evm', ours: null },
-  { id: 'eth', ticker: 'eth', label: 'Ethereum', network: 'ETH', gxNetwork: 'ETH', family: 'evm', ours: null },
-  { id: 'usdc', ticker: 'usdc', label: 'USDC on Ethereum', network: 'ETH', gxNetwork: 'ETH', family: 'evm', ours: null },
-  { id: 'usdcsol', ticker: 'usdc', label: 'USDC on Solana', network: 'SOL', gxNetwork: 'SOL', family: 'sol', ours: null },
+  { id: 'btc', ticker: 'btc', label: 'Bitcoin', chain: 'bitcoin', family: 'btc', ours: 'BTC' },
+  { id: 'xmr', ticker: 'xmr', label: 'Monero', chain: 'monero', family: 'xmr', ours: 'XMR' },
+
+  { id: 'eth', ticker: 'eth', label: 'Ethereum', chain: 'ethereum', family: 'evm', ours: null },
+  { id: 'eth-arbitrum', ticker: 'eth', label: 'Ethereum on Arbitrum', chain: 'arbitrum', family: 'evm', ours: null },
+  { id: 'eth-optimism', ticker: 'eth', label: 'Ethereum on Optimism', chain: 'optimism', family: 'evm', ours: null },
+  { id: 'eth-base', ticker: 'eth', label: 'Ethereum on Base', chain: 'base', family: 'evm', ours: null },
+
+  { id: 'usdt-tron', ticker: 'usdt', label: 'USDT on Tron', chain: 'tron', family: 'tron', ours: null },
+  { id: 'usdt-eth', ticker: 'usdt', label: 'USDT on Ethereum', chain: 'ethereum', family: 'evm', ours: null },
+  { id: 'usdt-bsc', ticker: 'usdt', label: 'USDT on BNB Chain', chain: 'bsc', family: 'evm', ours: null },
+  { id: 'usdt-arbitrum', ticker: 'usdt', label: 'USDT on Arbitrum', chain: 'arbitrum', family: 'evm', ours: null },
+  { id: 'usdt-optimism', ticker: 'usdt', label: 'USDT on Optimism', chain: 'optimism', family: 'evm', ours: null },
+  { id: 'usdt-polygon', ticker: 'usdt', label: 'USDT on Polygon', chain: 'polygon', family: 'evm', ours: null },
+  { id: 'usdt-avalanche', ticker: 'usdt', label: 'USDT on Avalanche', chain: 'avalanche', family: 'evm', ours: null },
+  { id: 'usdt-solana', ticker: 'usdt', label: 'USDT on Solana', chain: 'solana', family: 'sol', ours: null },
+  { id: 'usdt-ton', ticker: 'usdt', label: 'USDT on TON', chain: 'ton', family: 'ton', ours: null },
+
+  { id: 'usdc-eth', ticker: 'usdc', label: 'USDC on Ethereum', chain: 'ethereum', family: 'evm', ours: null },
+  { id: 'usdc-bsc', ticker: 'usdc', label: 'USDC on BNB Chain', chain: 'bsc', family: 'evm', ours: null },
+  { id: 'usdc-arbitrum', ticker: 'usdc', label: 'USDC on Arbitrum', chain: 'arbitrum', family: 'evm', ours: null },
+  { id: 'usdc-optimism', ticker: 'usdc', label: 'USDC on Optimism', chain: 'optimism', family: 'evm', ours: null },
+  { id: 'usdc-base', ticker: 'usdc', label: 'USDC on Base', chain: 'base', family: 'evm', ours: null },
+  { id: 'usdc-polygon', ticker: 'usdc', label: 'USDC on Polygon', chain: 'polygon', family: 'evm', ours: null },
+  { id: 'usdc-avalanche', ticker: 'usdc', label: 'USDC on Avalanche', chain: 'avalanche', family: 'evm', ours: null },
+  { id: 'usdc-solana', ticker: 'usdc', label: 'USDC on Solana', chain: 'solana', family: 'sol', ours: null },
 ];
+
+/**
+ * How each provider spells the chain a coin sits on.
+ *
+ * One table per provider rather than one column per coin: adding an exchange
+ * adds a table instead of widening every row, and a coin missing from a table
+ * is simply a coin that exchange does not trade. `quoteAll` reads that as no
+ * quote from that provider, which is the truth, rather than as an error.
+ *
+ * The gaps here are real and were read from the live endpoints, not assumed.
+ * Godex lists USDC on Ethereum and USDT on Avalanche as inactive, so neither
+ * appears below; asking it for them would earn a refusal at order time, after
+ * a person had already chosen.
+ */
+const EXOLIX_CHAIN: Record<string, string> = {
+  btc: 'BTC',
+  xmr: 'XMR',
+  eth: 'ETH',
+  'eth-arbitrum': 'ARBITRUM',
+  'eth-optimism': 'OPTIMISM',
+  'eth-base': 'BASE',
+  'usdt-tron': 'TRX',
+  'usdt-eth': 'ETH',
+  'usdt-bsc': 'BSC',
+  'usdt-arbitrum': 'ARBITRUM',
+  'usdt-optimism': 'OPTIMISM',
+  'usdt-polygon': 'MATIC',
+  'usdt-avalanche': 'AVAXC',
+  'usdt-solana': 'SOL',
+  'usdt-ton': 'TON',
+  'usdc-eth': 'ETH',
+  'usdc-bsc': 'BSC',
+  'usdc-arbitrum': 'ARBITRUM',
+  'usdc-optimism': 'OPTIMISM',
+  'usdc-base': 'BASE',
+  'usdc-polygon': 'MATIC',
+  'usdc-avalanche': 'AVAXC',
+  'usdc-solana': 'SOL',
+};
+
+const GODEX_CHAIN: Record<string, string> = {
+  btc: 'BTC',
+  xmr: 'XMR',
+  eth: 'ETH',
+  'eth-arbitrum': 'ARBITRUM',
+  'eth-optimism': 'OPTIMISM',
+  'eth-base': 'BASE',
+  'usdt-tron': 'TRX',
+  'usdt-eth': 'ETH',
+  'usdt-bsc': 'BSC',
+  'usdt-arbitrum': 'ARBITRUM',
+  'usdt-optimism': 'OPTIMISM',
+  'usdt-polygon': 'MATIC',
+  'usdt-solana': 'SOL',
+  'usdt-ton': 'TON',
+  'usdc-bsc': 'BSC',
+  'usdc-arbitrum': 'ARBITRUM',
+  'usdc-optimism': 'OPTIMISM',
+  'usdc-base': 'BASE',
+  'usdc-polygon': 'MATIC',
+  'usdc-avalanche': 'AVAXC',
+  'usdc-solana': 'SOL',
+};
+
+/** Every provider's chain table, so a lookup is one indexed read. */
+export const PROVIDER_CHAINS: Record<ProviderId, Record<string, string>> = {
+  exolix: EXOLIX_CHAIN,
+  godex: GODEX_CHAIN,
+};
+
+/**
+ * What this provider calls the chain, or null when it does not trade the coin.
+ *
+ * Null is a real answer and callers must handle it: it is the difference
+ * between "this exchange has no rate right now" and "this exchange cannot
+ * send that coin to that chain at all".
+ */
+export function providerChain(provider: ProviderId, coin: SwapCoin): string | null {
+  return PROVIDER_CHAINS[provider][coin.id] ?? null;
+}
+
+/** True when the provider trades both sides of the pair. */
+export function providerHandles(provider: ProviderId, pair: SwapPair): boolean {
+  return providerChain(provider, pair.from) !== null && providerChain(provider, pair.to) !== null;
+}
 
 export function swapCoin(id: string): SwapCoin | null {
   return SWAP_COINS.find((c) => c.id === String(id ?? '')) ?? null;
@@ -183,6 +320,8 @@ const ADDRESS_SHAPES: Record<AddressFamily, RegExp[]> = {
   evm: [/^0x[0-9a-fA-F]{40}$/],
   sol: [/^[1-9A-HJ-NP-Za-km-z]{32,44}$/],
   tron: [/^T[1-9A-HJ-NP-Za-km-z]{33}$/],
+  // Bounceable and non-bounceable user-friendly forms, base64url.
+  ton: [/^(EQ|UQ)[A-Za-z0-9_-]{46}$/],
 };
 
 /**
@@ -199,13 +338,42 @@ export function addressLooksRight(family: AddressFamily, text: string): boolean 
   return ADDRESS_SHAPES[family].some((shape) => shape.test(address));
 }
 
+/**
+ * What a correct payout address for this coin looks like, in a person's words.
+ *
+ * The EVM chains name themselves, because that is where the real mistake
+ * lives now. Every one of them accepts the same 0x address shape, so nothing
+ * in the string says which chain it belongs to, and a check that passes on
+ * Arbitrum for an address the person keeps on Base cannot tell them apart.
+ * Naming the chain in the hint is the only warning available before the money
+ * moves.
+ */
 export function addressHint(coin: SwapCoin): string {
   switch (coin.family) {
     case 'xmr': return 'a mainnet Monero address, starting 4 or 8';
     case 'btc': return 'a Bitcoin address, starting bc1, 1 or 3';
-    case 'evm': return 'an Ethereum address, starting 0x';
+    case 'evm': return `an address starting 0x, on ${chainName(coin.chain)}`;
     case 'sol': return 'a Solana address';
     case 'tron': return 'a Tron address, starting T';
+    case 'ton': return 'a TON address, starting EQ or UQ';
+  }
+}
+
+/** The chain in a person's words, for the one place it has to be read. */
+export function chainName(chain: ChainId): string {
+  switch (chain) {
+    case 'bitcoin': return 'Bitcoin';
+    case 'monero': return 'Monero';
+    case 'ethereum': return 'Ethereum';
+    case 'arbitrum': return 'Arbitrum';
+    case 'optimism': return 'Optimism';
+    case 'base': return 'Base';
+    case 'polygon': return 'Polygon';
+    case 'avalanche': return 'Avalanche';
+    case 'bsc': return 'BNB Chain';
+    case 'solana': return 'Solana';
+    case 'tron': return 'Tron';
+    case 'ton': return 'TON';
   }
 }
 
@@ -478,9 +646,9 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
 export function exolixRate(pair: SwapPair, amount: number): HttpRequest {
   const query = new URLSearchParams({
     coinFrom: pair.from.ticker.toUpperCase(),
-    networkFrom: pair.from.network,
+    networkFrom: providerChain('exolix', pair.from) ?? pair.from.chain,
     coinTo: pair.to.ticker.toUpperCase(),
-    networkTo: pair.to.network,
+    networkTo: providerChain('exolix', pair.to) ?? pair.to.chain,
     amount: String(amount),
     rateType: 'float',
   });
@@ -517,9 +685,9 @@ export function exolixCreate(request: SwapRequest): HttpRequest {
     url: 'https://exolix.com/api/v2/transactions',
     body: {
       coinFrom: request.pair.from.ticker.toUpperCase(),
-      networkFrom: request.pair.from.network,
+      networkFrom: providerChain('exolix', request.pair.from) ?? request.pair.from.chain,
       coinTo: request.pair.to.ticker.toUpperCase(),
-      networkTo: request.pair.to.network,
+      networkTo: providerChain('exolix', request.pair.to) ?? request.pair.to.chain,
       amount: request.amount,
       withdrawalAddress: request.payoutAddress,
       refundAddress: request.refundAddress,
@@ -577,8 +745,8 @@ export function godexRate(pair: SwapPair, amount: number): HttpRequest {
       from: pair.from.ticker.toUpperCase(),
       to: pair.to.ticker.toUpperCase(),
       amount: String(amount),
-      coin_from_network: pair.from.gxNetwork,
-      coin_to_network: pair.to.gxNetwork,
+      coin_from_network: providerChain('godex', pair.from) ?? pair.from.chain,
+      coin_to_network: providerChain('godex', pair.to) ?? pair.to.chain,
     },
   };
 }
@@ -617,8 +785,8 @@ export function godexCreate(request: SwapRequest): HttpRequest {
       deposit_amount: String(request.amount),
       withdrawal: request.payoutAddress,
       return: request.refundAddress,
-      coin_from_network: request.pair.from.gxNetwork,
-      coin_to_network: request.pair.to.gxNetwork,
+      coin_from_network: providerChain('godex', request.pair.from) ?? request.pair.from.chain,
+      coin_to_network: providerChain('godex', request.pair.to) ?? request.pair.to.chain,
     },
   };
 }
@@ -700,10 +868,16 @@ export async function quoteAll(
 ): Promise<SwapQuote[]> {
   return Promise.all(
     PROVIDERS.map(async ({ id }) => {
+      /* Not every exchange trades every chain, and the gaps are real: Godex
+       * lists USDC on Ethereum as inactive. Saying so costs one lookup and
+       * saves a request that could only ever come back refused. */
+      if (!providerHandles(id, pair)) {
+        return { provider: id, ok: false as const, reason: 'Does not trade that pair.' };
+      }
       try {
         return PARSE_RATE[id](await transport.send(RATE[id](pair, amount)));
       } catch (error) {
-        return { provider: id, ok: false, reason: (error as Error)?.message ?? 'No answer.' };
+        return { provider: id, ok: false as const, reason: (error as Error)?.message ?? 'No answer.' };
       }
     }),
   );

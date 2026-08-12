@@ -63,6 +63,7 @@ import {
   PRIVACY_NOTE,
   PROVIDERS,
   SWAP_COINS,
+  chainName,
   addressHint,
   buildRequest,
   createOrder,
@@ -413,8 +414,18 @@ function ReceiveReadout({
 
 // ------------------------------------------------------------------ the coins
 
-/** The coin selector: the same chip vocabulary as everywhere, with the chosen
- *  coin carrying its asset color when it has one and bone when it does not. */
+/**
+ * The coin selector: the asset first, then the chain it sits on.
+ *
+ * Two rows rather than one, and not only because every coin on every chain in
+ * a single row is a wall of chips. USDC is one idea to a person and eight
+ * addresses to a network, and the chain is the half that loses the money:
+ * every EVM chain accepts the same 0x address, so nothing downstream can tell
+ * Arbitrum from Base once the wrong one is chosen here. Splitting the choice
+ * makes the chain something somebody picked rather than a suffix they skimmed.
+ * An asset that lives on one chain shows no second row, because there is no
+ * decision to make about Bitcoin.
+ */
 function CoinRow({
   coins,
   selected,
@@ -426,26 +437,59 @@ function CoinRow({
   onSelect: (id: string) => void;
   neutral?: boolean;
 }) {
+  /* Catalog order, so what a person reads is the order the catalog was written
+   * in rather than whatever order a Set happened to keep. */
+  const tickers = useMemo(() => {
+    const seen: string[] = [];
+    for (const coin of coins) if (!seen.includes(coin.ticker)) seen.push(coin.ticker);
+    return seen;
+  }, [coins]);
+
+  const current = useMemo(() => coins.find((c) => c.id === selected) ?? null, [coins, selected]);
+  const activeTicker = current?.ticker ?? '';
+  const chains = useMemo(() => coins.filter((c) => c.ticker === activeTicker), [coins, activeTicker]);
+
+  const fillFor = (coin: SwapCoin | undefined, active: boolean) =>
+    !active ? 'transparent' : coin?.ours && !neutral ? assetColor(coin.ours) : color.bone;
+
   return (
-    <View style={styles.presetRow}>
-      {coins.map((coin) => {
-        const active = coin.id === selected;
-        const fill = !active
-          ? 'transparent'
-          : coin.ours && !neutral
-            ? assetColor(coin.ours)
-            : color.bone;
-        return (
-          <Chip
-            key={coin.id}
-            onPress={() => onSelect(coin.id)}
-            tone={active ? color.void : color.slate}
-            fill={fill}
-          >
-            {coin.label.toUpperCase()}
-          </Chip>
-        );
-      })}
+    <View>
+      <View style={styles.presetRow}>
+        {tickers.map((ticker) => {
+          const active = ticker === activeTicker;
+          /* Choosing an asset lands on its first chain in catalog order, which
+           * is the one that carries the volume. */
+          const first = coins.find((c) => c.ticker === ticker)!;
+          return (
+            <Chip
+              key={ticker}
+              onPress={() => onSelect(first.id)}
+              tone={active ? color.void : color.slate}
+              fill={fillFor(first, active)}
+            >
+              {ticker.toUpperCase()}
+            </Chip>
+          );
+        })}
+      </View>
+
+      {chains.length > 1 ? (
+        <View style={[styles.presetRow, { marginTop: 8 }]}>
+          {chains.map((coin) => {
+            const active = coin.id === selected;
+            return (
+              <Chip
+                key={coin.id}
+                onPress={() => onSelect(coin.id)}
+                tone={active ? color.void : color.slate}
+                fill={fillFor(coin, active)}
+              >
+                {chainName(coin.chain).toUpperCase()}
+              </Chip>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }

@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+  PROVIDER_CHAINS,
   PROVIDERS,
   PRIVACY_NOTE,
   RATE_TOLERANCE,
@@ -36,6 +37,8 @@ import {
   parseGodexRate,
   parseGodexStatus,
   parsePair,
+  providerChain,
+  providerHandles,
   quoteAll,
   readStatus,
   swapCoin,
@@ -90,8 +93,8 @@ function orderFor(request: SwapRequest, overrides: Partial<SwapOrder> = {}): Swa
 describe('what a swap is allowed to be', () => {
   it('starts from a coin this wallet holds', () => {
     expect(parsePair('btc', 'xmr').ok).toBe(true);
-    expect(parsePair('xmr', 'usdttrc').ok).toBe(true);
-    const notOurs = parsePair('usdttrc', 'eth');
+    expect(parsePair('xmr', 'usdt-tron').ok).toBe(true);
+    const notOurs = parsePair('usdt-tron', 'eth');
     expect(notOurs.ok).toBe(false);
     expect((notOurs as { problem: string }).problem).toMatch(/wallet holds/);
   });
@@ -106,8 +109,8 @@ describe('what a swap is allowed to be', () => {
     /* USDT on Tron and USDT on Ethereum share a ticker and are different
      * coins. Treating them as one is how somebody's money goes down a chain
      * their wallet cannot read. */
-    const tron = swapCoin('usdttrc')!;
-    const ethereum = swapCoin('usdteth')!;
+    const tron = swapCoin('usdt-tron')!;
+    const ethereum = swapCoin('usdt-eth')!;
     expect(tron.ticker).toBe(ethereum.ticker);
     expect(tron.id).not.toBe(ethereum.id);
     expect(tron.family).not.toBe(ethereum.family);
@@ -155,7 +158,7 @@ describe('the payout address is derived, never accepted', () => {
   });
 
   it('accepts a typed address only for a coin it cannot derive, and says so', () => {
-    const pair = parsePair('xmr', 'usdttrc') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const pair = parsePair('xmr', 'usdt-tron') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
     const built = buildRequest({
       provider: 'exolix',
       pair: pair.pair,
@@ -169,7 +172,7 @@ describe('the payout address is derived, never accepted', () => {
   });
 
   it('refuses a typed address of the wrong shape for its chain', () => {
-    const pair = parsePair('xmr', 'usdttrc') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const pair = parsePair('xmr', 'usdt-tron') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
     const built = buildRequest({
       provider: 'exolix',
       pair: pair.pair,
@@ -339,7 +342,7 @@ describe('the provider adapters', () => {
   it('carry the network, not just the ticker', () => {
     /* USDT is a ticker on four chains. An order that names the ticker and not
      * the network is an order that can be filled on the wrong one. */
-    const pair = parsePair('xmr', 'usdttrc') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const pair = parsePair('xmr', 'usdt-tron') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
     const built = buildRequest({
       provider: 'exolix',
       pair: pair.pair,
@@ -514,5 +517,116 @@ describe('a swap deposit is an ordinary payment, checked by reading the source',
 
   it('says the quotes are a fixture, because they are', () => {
     expect(screen).toMatch(/DEMO DATA/);
+  });
+});
+
+describe('the coin catalog, and the chain tables that translate it', () => {
+  /* The catalog is small on purpose and every entry was read from a provider's
+   * own live currency endpoint. These are the checks that keep it that way:
+   * a typo in a chain table is a request for a network the exchange has never
+   * heard of, and the honest failure mode for that is an order that cannot be
+   * filled after somebody has already chosen. */
+
+  it('names every coin once', () => {
+    const ids = SWAP_COINS.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('covers the five assets that carry the volume, and nothing invented', () => {
+    const tickers = new Set(SWAP_COINS.map((c) => c.ticker));
+    expect([...tickers].sort()).toEqual(['btc', 'eth', 'usdc', 'usdt', 'xmr']);
+  });
+
+  it('holds only native Bitcoin and native Monero', () => {
+    /* Both exchanges list wrapped BTC and wrapped XMR under the native
+     * ticker. They are somebody else's IOU, and a person choosing "Monero"
+     * must not be able to land on a Solana token by that name. */
+    const btc = SWAP_COINS.filter((c) => c.ticker === 'btc');
+    const xmr = SWAP_COINS.filter((c) => c.ticker === 'xmr');
+    expect(btc.map((c) => c.chain)).toEqual(['bitcoin']);
+    expect(xmr.map((c) => c.chain)).toEqual(['monero']);
+  });
+
+  it('is the only thing the wallet itself holds', () => {
+    const ours = SWAP_COINS.filter((c) => c.ours !== null).map((c) => c.id);
+    expect(ours.sort()).toEqual(['btc', 'xmr']);
+  });
+
+  it('every chain table names coins that exist', () => {
+    /* The check that catches a typo. An id in a provider table that is not in
+     * the catalog is dead weight at best and a mistranslated chain at worst. */
+    const known = new Set(SWAP_COINS.map((c) => c.id));
+    for (const [provider, table] of Object.entries(PROVIDER_CHAINS)) {
+      for (const id of Object.keys(table)) {
+        expect(known.has(id), `${provider} names unknown coin ${id}`).toBe(true);
+      }
+    }
+  });
+
+  it('every chain table gives a non-empty code', () => {
+    for (const [provider, table] of Object.entries(PROVIDER_CHAINS)) {
+      for (const [id, code] of Object.entries(table)) {
+        expect(code.length, `${provider}:${id} has an empty network code`).toBeGreaterThan(0);
+        expect(code.trim(), `${provider}:${id} is untrimmed`).toBe(code);
+      }
+    }
+  });
+
+  it('trades the two coins this wallet holds on every provider', () => {
+    /* A provider that cannot send or receive Bitcoin and Monero has no
+     * business on this screen, because those are the only coins a swap can
+     * start from. */
+    for (const { id } of PROVIDERS) {
+      expect(providerChain(id, swapCoin('btc')!), `${id} btc`).not.toBeNull();
+      expect(providerChain(id, swapCoin('xmr')!), `${id} xmr`).not.toBeNull();
+    }
+  });
+
+  it('says plainly when a provider does not trade a chain', () => {
+    /* Read from Godex's live coin list: USDC on Ethereum and USDT on
+     * Avalanche are both listed inactive. The catalog records the gap rather
+     * than asking and being refused later. */
+    expect(providerChain('godex', swapCoin('usdc-eth')!)).toBeNull();
+    expect(providerChain('godex', swapCoin('usdt-avalanche')!)).toBeNull();
+    expect(providerChain('exolix', swapCoin('usdc-eth')!)).toBe('ETH');
+    expect(providerChain('exolix', swapCoin('usdt-avalanche')!)).toBe('AVAXC');
+  });
+
+  it('refuses a pair a provider cannot serve, without asking it', () => {
+    const pair = parsePair('xmr', 'usdc-eth') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    expect(pair.ok).toBe(true);
+    expect(providerHandles('godex', pair.pair)).toBe(false);
+    expect(providerHandles('exolix', pair.pair)).toBe(true);
+  });
+
+  it('gives a quote answer for every provider even when one cannot serve it', async () => {
+    const pair = parsePair('xmr', 'usdc-eth') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const transport = { send: async () => ({ toAmount: 5, minAmount: 1, maxAmount: 9 }) };
+    const quotes = await quoteAll(transport, pair.pair, 1);
+    expect(quotes).toHaveLength(PROVIDERS.length);
+    const godex = quotes.find((q) => q.provider === 'godex')!;
+    expect(godex.ok).toBe(false);
+    expect(godex.ok === false && godex.reason).toMatch(/does not trade/i);
+  });
+
+  it('checks a TON address by shape, and tells the two EVM chains apart in words', () => {
+    expect(addressLooksRight('ton', 'EQ' + 'A'.repeat(46))).toBe(true);
+    expect(addressLooksRight('ton', 'UQ' + 'B'.repeat(46))).toBe(true);
+    expect(addressLooksRight('ton', 'ZZ' + 'A'.repeat(46))).toBe(false);
+
+    /* Every EVM chain shares one address shape, so the shape check cannot
+     * tell Arbitrum from Base. The hint is the only place the difference is
+     * stated before the money moves, so it has to name the chain. */
+    const evm = '0x' + 'a'.repeat(40);
+    expect(addressLooksRight('evm', evm)).toBe(true);
+    expect(addressHint(swapCoin('usdc-arbitrum')!)).toMatch(/Arbitrum/);
+    expect(addressHint(swapCoin('usdc-base')!)).toMatch(/Base/);
+    expect(addressHint(swapCoin('usdc-arbitrum')!)).not.toBe(addressHint(swapCoin('usdc-base')!));
+  });
+
+  it('has a readable hint for every coin it lists', () => {
+    for (const coin of SWAP_COINS) {
+      expect(addressHint(coin).length, coin.id).toBeGreaterThan(8);
+    }
   });
 });
