@@ -138,6 +138,11 @@ a { color: inherit; text-decoration: none; }
 .airgap dl { margin: 0; border-top: 1px solid var(--lab-line); }
 .airgap dl div { display: grid; grid-template-columns: 1fr auto; padding: 20px 0; border-bottom: 1px solid var(--lab-line); font: 11px/1 var(--lab-mono); }
 .airgap dt { color: var(--lab-muted); }
+.airgap-group + .airgap-group { margin-top: 46px; }
+.airgap-group h3 { margin: 0 0 2px; color: var(--lab-red); font: 10px/1 var(--lab-mono); letter-spacing: 0.16em; }
+/* The second group is not a readout, it is an instruction, and it is toned
+   down so the page cannot be skim-read as six things the app measured. */
+.airgap-yours dd { color: var(--lab-muted); }
 .airgap dd { margin: 0; color: var(--lab-ink); }
 
 .qr-language { position: relative; min-height: 120dvh; display: grid; align-items: center; }

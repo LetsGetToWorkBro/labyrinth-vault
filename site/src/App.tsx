@@ -72,7 +72,7 @@ export default function LabyrinthSite() {
       <section className="hero-journey" aria-label="Phone to Vault transformation">
         <ScrollScrub scenes={scrollScrubScenes} theme={scrollScrubTheme} />
         <div className="hero-ctas"><a href="#vault">EXPLORE VAULT</a><a href="#wallet">EXPLORE WALLET</a></div>
-        <p className="hero-truth">The Vault never connects to the internet.</p>
+        <p className="hero-truth">The Vault has no networking code. Not disabled &mdash; absent.</p>
       </section>
 
       <section className="idea-section section-pad">
@@ -114,8 +114,27 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="airgap section-pad">
-        <div><h2>NOTHING<br />TO CONNECT.</h2><p>The absence is inspectable. The Vault target contains no network code.</p></div>
-        <dl><div><dt>NETWORK</dt><dd>NONE</dd></div><div><dt>WI-FI</dt><dd>OFF</dd></div><div><dt>BLUETOOTH</dt><dd>OFF</dd></div><div><dt>CELLULAR</dt><dd>OFF</dd></div><div><dt>CLOUD</dt><dd>NONE</dd></div><div><dt>ACCOUNT</dt><dd>NONE</dd></div></dl>
+        <div><h2>NOTHING<br />TO CONNECT.</h2><p>The absence is inspectable. The Vault target contains no network code, and the app says so rather than claiming to read your radios &mdash; seeing those would need the very frameworks it refuses to link.</p></div>
+        <div className="airgap-facts">
+          <div className="airgap-group">
+            <h3>THIS BUILD, AS FACT</h3>
+            <dl>
+              <div><dt>NETWORK CODE IN BINARY</dt><dd>NONE</dd></div>
+              <div><dt>NETWORK PERMISSION</dt><dd>NOT REQUESTED</dd></div>
+              <div><dt>CLOUD CONTAINER</dt><dd>NONE</dd></div>
+              <div><dt>ACCOUNT</dt><dd>NONE</dd></div>
+            </dl>
+          </div>
+          <div className="airgap-group airgap-yours">
+            <h3>YOURS TO KEEP TRUE</h3>
+            <dl>
+              <div><dt>WI-FI</dt><dd>CHECK IN SETTINGS</dd></div>
+              <div><dt>BLUETOOTH</dt><dd>CHECK IN SETTINGS</dd></div>
+              <div><dt>CELLULAR</dt><dd>CHECK IN SETTINGS</dd></div>
+              <div><dt>SIM</dt><dd>THE TRAY, NOT A SETTING</dd></div>
+            </dl>
+          </div>
+        </div>
       </section>
 
       <section className="qr-language section-pad">
@@ -144,7 +163,7 @@ export default function LabyrinthSite() {
 
       <section className="drawer-section">
         <img src="https://d2ol7oe51mr4n9.cloudfront.net/user_3G6IWM0skAyzTF8nCKum7QWXTD0/78e6a072-d281-4e32-9305-f470042af322.png" alt="An old iPhone resting in a dark drawer" />
-        <div><h2>GIVE THE PHONE<br />IN YOUR DRAWER<br />A NEW JOB.</h2><ol><li>Pick it up.</li><li>Install Labyrinth.</li><li>Disable radios.</li><li>Verify airgap.</li><li>Generate keys.</li></ol><strong>LABYRINTH VAULT</strong></div>
+        <div><h2>GIVE THE PHONE<br />IN YOUR DRAWER<br />A NEW JOB.</h2><ol><li>Pick it up.</li><li>Install Labyrinth.</li><li>Turn the radios off.</li><li>Check the build&rsquo;s half.</li><li>Generate keys.</li></ol><strong>LABYRINTH VAULT</strong></div>
       </section>
 
       <section className="manifesto section-pad">
