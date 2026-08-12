@@ -52,6 +52,7 @@ import {
   outputKey,
   progressFraction,
   scan,
+  toSpendable,
   totalReceived,
   SPEND_BLINDNESS,
   type MoneroAccount,
@@ -59,6 +60,8 @@ import {
   type ScanState,
   type SpendEvent,
 } from './moneroscan';
+import { parseAddress } from '@vault/keys/monero';
+import type { MoneroSpendMaterials } from './monerodraft';
 import { live, type Transport } from '../net/http';
 import { moneroBroadcastGate } from './moneroreadiness';
 import * as esplora from '../net/esplora';
@@ -432,6 +435,9 @@ export class NodeWatcher implements Watcher {
    *  where, so it moves the balance and cannot make a history row. */
   private readonly spendEvents = new Map<string, SpendEvent>();
   private moneroStatus: MoneroStatus | null = null;
+  /** The node's fee estimate from the last refresh, piconero per byte. Null
+   *  until a refresh has asked, and a send refuses rather than guesses. */
+  private moneroFeePerByte: bigint | null = null;
   private xmrHistory: Transaction[] = [];
   private btcHistory: Transaction[] = [];
 
@@ -572,6 +578,78 @@ export class NodeWatcher implements Watcher {
     return [...this.found.values()];
   }
 
+  /**
+   * The coins a send may select: fully known, image-covered, and available.
+   *
+   * `toSpendable` already refuses an output missing its global index or
+   * commitment and excludes spent or in-flight coins. The extra filter here
+   * is the image-coverage rule: an output the vault has never answered a key
+   * image for has an unknowable spent status, and offering it to a spend
+   * would plan transactions the network may reject. The screens surface that
+   * as "import key images", not as a smaller number with no explanation.
+   */
+  private moneroSpendable() {
+    const covered = [...this.found.values()].filter(
+      (entry) => this.book.imageFor(entry.key) !== null,
+    );
+    return toSpendable(covered, this.book);
+  }
+
+  /**
+   * Everything planning a spend needs, or the sentence naming what is
+   * missing. Gathered here because this class is the one place that holds
+   * the transport, the scan, the book, and the node's fee estimate together.
+   */
+  moneroSpendMaterials(
+    uniform: () => number,
+  ): { ok: true; materials: MoneroSpendMaterials } | { ok: false; problem: string } {
+    const transport = this.transports.xmr;
+    if (!transport) return { ok: false, problem: 'No Monero node is set, so a spend cannot be planned.' };
+    const watch = this.monero;
+    if (!watch) return { ok: false, problem: 'No Monero account has been paired with this wallet yet.' };
+    if (this.moneroFeePerByte === null) {
+      return { ok: false, problem: 'The node has not quoted a fee yet. Refresh, then try again.' };
+    }
+    const owned = this.moneroSpendable();
+    if (owned.length === 0) {
+      return {
+        ok: false,
+        problem:
+          "No spendable coins are covered by key images. Scan the vault's key image reply first: " +
+          'without it, which coins are already spent cannot be known.',
+      };
+    }
+    const network = parseAddress(watch.account.address).network ?? 'mainnet';
+    return {
+      ok: true,
+      materials: {
+        transport,
+        ownAddress: watch.account.address,
+        network,
+        owned,
+        feePerByte: this.moneroFeePerByte,
+        uniform,
+      },
+    };
+  }
+
+  /** Lock coins a just-broadcast spend used, until the scan confirms them. */
+  markMoneroPending(oneTimeKeys: readonly string[]): void {
+    this.book.markPending(oneTimeKeys);
+  }
+
+  /** The key images the vault reported for these coins, in book order.
+   *  A coin the book has no image for contributes nothing, and the caller
+   *  treats the shortfall as unverifiable rather than as a pass. */
+  moneroImagesFor(oneTimeKeys: readonly string[]): string[] {
+    const images: string[] = [];
+    for (const key of oneTimeKeys) {
+      const image = this.book.imageFor(key);
+      if (image !== null) images.push(image);
+    }
+    return images;
+  }
+
   /** The XMROUTPUTS payload listing everything found, or why not. */
   keyImageRequest(): ReturnType<typeof buildOutputsRequest> {
     return buildOutputsRequest(this.moneroOutputs());
@@ -661,6 +739,13 @@ export class NodeWatcher implements Watcher {
        * import, said by the caveat. */
     }
 
+    /* The fee estimate rides on the same refresh: it costs one request, and
+     * caching it means a send can be planned without a fresh network round
+     * trip at compose time. A failed estimate leaves null, and the send path
+     * refuses with a sentence rather than substituting a guess. */
+    const feeReply = await monerod.feeEstimate(transport);
+    this.moneroFeePerByte = feeReply.ok ? feeReply.value : null;
+
     const all = [...this.found.values()];
     const total = totalReceived(all);
     const balance = settle(all, this.book);
@@ -682,11 +767,12 @@ export class NodeWatcher implements Watcher {
       view: {
         ...this.snap.assets.XMR,
         balance: balance.balance,
-        /* Zero, and not because the scan is incomplete. Building a Monero
-         * spend needs key images and ring members, neither of which this half
-         * of the product has. A non-zero spendable here would put a send
-         * button in front of somebody it cannot serve. */
-        spendable: 0n,
+        /* Real, and deliberately narrower than the balance: only outputs the
+         * vault has answered a key image for are counted, because an output
+         * whose spent status is unknowable cannot honestly be offered to a
+         * send screen. Before the first key-image round trip this is zero,
+         * and the caveat under the balance says why. */
+        spendable: this.moneroSpendable().reduce((sum, output) => sum + output.amount, 0n),
         addresses: [{ address: watch.account.address, path: null, used: true }],
         height: tip,
         caveat: moneroCaveat(status, total.unknown, {

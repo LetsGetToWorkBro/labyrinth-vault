@@ -295,7 +295,7 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
             <Gap size={space.step} />
             <Action label="CONNECT YOUR VAULT" onPress={() => navigation.navigate('Pair')} />
             <Gap size={space.step} />
-            <Action label="BUILD IT ANYWAY" quiet disabled={!ready} onPress={() => setProblem(store.prepareDraft())} />
+            <Action label="BUILD IT ANYWAY" quiet disabled={!ready} onPress={() => void store.prepareDraft().then(setProblem)} />
             <Gap size={space.step} />
             <Body tone={color.slate} style={{ textAlign: 'center' }}>
               A transaction can be prepared now and shown to a vault later. Nothing about it is secret.
@@ -306,7 +306,7 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
             <Action
               label="REVIEW TRANSACTION"
               disabled={!ready}
-              onPress={() => setProblem(store.prepareDraft())}
+              onPress={() => void store.prepareDraft().then(setProblem)}
             />
             <Gap size={space.step} />
             <Body tone={color.slate} style={{ textAlign: 'center' }}>
@@ -415,7 +415,15 @@ function Review({ onBack }: { onBack: () => void }) {
           <Amount atoms={total} asset={draft.asset} size="strong" />
         </FactRow>
         <FactRow label="FEE RATE">{formatFeeRate(draft.feeRate, draft.asset)}</FactRow>
-        <FactRow label="COINS SPENT">{`${draft.inputs.length}`}</FactRow>
+        <FactRow label="COINS SPENT">
+          {`${draft.asset === 'XMR' ? draft.spentKeys?.length ?? 0 : draft.inputs.length}`}
+        </FactRow>
+        {draft.asset === 'XMR' ? (
+          /* The ring is stated here because this device chose the decoys.
+             Privacy, not custody: a bad ring cannot move money, and the vault
+             will say the same thing in the same words. */
+          <FactRow label="RING">{'16 members · 15 decoys per coin'}</FactRow>
+        ) : null}
         <FactRow label="TRANSFER" last>{`${estimate.frames} codes · about ${estimate.seconds}s`}</FactRow>
 
         <Gap size={space.section} />

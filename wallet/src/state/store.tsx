@@ -20,6 +20,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { prepare, verifySigned } from '../core/build';
+import { prepareMoneroDraft, verifySignedMonero } from '../core/monerodraft';
 import type { ChainSnapshot, FeeOption } from '../core/chain';
 import { DemoWatcher, DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
@@ -81,8 +82,10 @@ export interface Store {
   setAsset(asset: Asset): void;
   send(event: SessionEvent): void;
   /** Build the transaction from what has been composed. Returns the problem,
-   *  or null when it worked and the session moved on. */
-  prepareDraft(): string | null;
+   *  or null when it worked and the session moved on. Asynchronous because a
+   *  Monero draft is planned against the node (decoys, ring members, fee);
+   *  Bitcoin resolves immediately. */
+  prepareDraft(): Promise<string | null>;
   beginTransmit(): void;
   handOver(): void;
   readBack(): void;
@@ -353,9 +356,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [snapshot, asset],
   );
 
-  const prepareDraft = useCallback((): string | null => {
+  const prepareDraft = useCallback(async (): Promise<string | null> => {
     const parsed = parseAmount(session.compose.amountText, asset);
     if (!parsed.ok || parsed.atoms === undefined) return parsed.problem ?? 'Enter an amount.';
+
+    if (asset === 'XMR') {
+      /* Planned against the node: decoys from the real distribution, coins
+       * from the scan plus the vault's key images, the node's fee estimate.
+       * The uniform source is the platform CSPRNG; decoy choice is a privacy
+       * property, and Math.random would be a privacy property built on a
+       * PRNG nobody chose for it. */
+      if (!(watcher instanceof NodeWatcher)) {
+        return 'A Monero payment needs a real node. The demo watcher cannot plan one.';
+      }
+      const uniform = () => {
+        const word = new Uint32Array(1);
+        crypto.getRandomValues(word);
+        return word[0]! / 0x100000000;
+      };
+      const materials = watcher.moneroSpendMaterials(uniform);
+      if (!materials.ok) return materials.problem;
+      const planned = await prepareMoneroDraft(materials.materials, {
+        recipient: session.compose.recipient.trim(),
+        amount: parsed.atoms,
+        multiplier: feeOption(session.compose.feeKey).rate,
+        now: Date.now(),
+      });
+      if (!planned.ok) return planned.problem;
+      dispatch({ type: 'prepared', draft: planned.draft, at: Date.now() });
+      return null;
+    }
 
     const view = snapshot.assets[asset];
     const result = prepare({
@@ -378,7 +408,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     changeIndex.current += 1;
     dispatch({ type: 'prepared', draft: result.draft, at: Date.now() });
     return null;
-  }, [session.compose, asset, snapshot, feeOption, accountKey]);
+  }, [session.compose, asset, snapshot, feeOption, accountKey, watcher]);
 
   const beginTransmit = useCallback(() => {
     const draft: Draft | null = session.draft;
@@ -424,7 +454,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
         return;
       }
-      const verdict = verifySigned(draft, raw);
+      const verdict =
+        draft.asset === 'XMR' && watcher instanceof NodeWatcher
+          ? verifySignedMonero(draft, raw, watcher.moneroImagesFor(draft.spentKeys ?? []))
+          : verifySigned(draft, raw);
       if (verdict.ok) arrived();
       else refused();
       dispatch({ type: 'returned', verified: verdict, at: Date.now() });
@@ -442,16 +475,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             },
       );
     },
-    [session.draft],
+    [session.draft, watcher],
   );
 
   const broadcast = useCallback(() => {
     const verified = session.verified;
     if (!verified || !verified.ok) return;
     dispatch({ type: 'broadcast', at: Date.now() });
-    void watcher.broadcast(asset, verified.raw).then((result) => {
+    /* The signed transaction names its network and its id; the chokepoint
+     * gates on the first and returns the second, since monerod's reply
+     * carries no id of its own. */
+    const options =
+      asset === 'XMR' ? { network: verified.network ?? 'mainnet', txid: verified.txid } : undefined;
+    void watcher.broadcast(asset, verified.raw, options).then((result) => {
       if (result.ok && result.txid) {
         confirmed();
+        /* Lock the spent coins until the scan confirms them, so a second
+         * payment started before the next refresh cannot double-spend. */
+        const spent = session.draft?.spentKeys;
+        if (asset === 'XMR' && spent && watcher instanceof NodeWatcher) {
+          watcher.markMoneroPending(spent);
+        }
         dispatch({ type: 'published', txid: result.txid, at: Date.now() });
       } else {
         refused();
@@ -462,7 +506,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       }
     });
-  }, [session.verified, asset]);
+  }, [session.verified, session.draft, asset, watcher]);
 
   /**
    * Where a swap pays out to.

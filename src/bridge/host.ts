@@ -77,7 +77,7 @@ import { describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
 import { calibrateKdf, looksSealed, seal, unseal, type KdfParams } from '../keys/seal';
 import { wipe } from '../keys/wipe';
 import { allChecksPass, selfTest } from '../selftest';
-import { toWire } from './summary';
+import { moneroToWire, toWire } from './summary';
 
 // ---------------------------------------------------------------------------
 // Bytes and hex, the only two things that cross
@@ -490,29 +490,33 @@ export const api = {
    * the set that gets signed, not merely equal-looking.
    */
   moneroDescribe: guarded('moneroDescribe', (payloadHex: string) => {
-    requireSession();
+    const open = requireSession();
     const payload = fromHex(payloadHex);
     if (!payload || payload.length === 0) return fail('That is not an unsigned Monero transaction set.');
     const parsed = parseUnsignedSet(payload);
     if (!parsed.ok) return fail(parsed.problem);
+    /* The change-swap defense, Monero edition. `change: true` in the set is a
+     * claim, and the signer downstream uses it only for address-math
+     * classification — nothing checks it against anything. So it is checked
+     * here, against this vault's own address, before a screen ever renders
+     * the words "returning to you": a set whose claimed change pays anywhere
+     * else has been caught lying, and nothing else it says can be trusted.
+     * Same reasoning, same refusal code, as the PSBT reader's. */
+    for (const output of parsed.set.outputs) {
+      if (output.change && output.address !== open.xmr.address) {
+        return failCoded(
+          'output-path-mismatch',
+          "An output claims to be this wallet's change but pays a different address. Signing refused.",
+        );
+      }
+    }
     const digest = toHex(keccak_256(payload));
     lastMoneroDescribed = { digest, set: parsed.set };
-    const paying = parsed.set.outputs
-      .filter((output) => !output.change)
-      .reduce((sum, output) => sum + BigInt(output.amount), 0n);
-    return done({
-      digest,
-      network: parsed.set.network,
-      fee: parsed.set.fee,
-      paying: paying.toString(),
-      inputCount: parsed.set.inputs.length,
-      ringSize: parsed.set.ringSize,
-      outputs: parsed.set.outputs.map((output) => ({
-        address: output.address,
-        amount: output.amount,
-        change: output.change,
-      })),
-    });
+    /* The shape lives in summary.ts beside the Bitcoin one, mirrored field
+     * for field by MoneroSummary.swift, with the amounts formatted here — in
+     * the one place per chain that knows what a piconero is worth — and the
+     * randomness requirement stated by the side that owns the formula. */
+    return done({ ...moneroToWire(parsed.set, digest) });
   }),
 
   /**

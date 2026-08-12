@@ -21,6 +21,7 @@
 import CryptoKit
 import Foundation
 import JavaScriptCore
+import Security
 
 /// What the bundle answered, before it means anything.
 private struct Envelope: Decodable {
@@ -203,6 +204,16 @@ final class Engine {
         let payload: String?
     }
     struct DescribeReply: Decodable { let summary: TxSummary }
+    /// Equatable because `Route.xmrSigned` carries it, same as `SignReply`.
+    /// The reply also carries the outputs for the record; the screen renders
+    /// the summary a person approved, not a re-statement of it, so they are
+    /// deliberately not decoded here.
+    struct MoneroSignReply: Decodable, Equatable {
+        let txid: String
+        let network: String
+        let keyImages: [String]
+        let frames: [String]
+    }
     /// Equatable because `Route` carries it and `Route` is Equatable: the
     /// screens compare routes for their animation identity, and a reply that
     /// was not comparable would make the enum uncompilable rather than merely
@@ -276,6 +287,33 @@ final class Engine {
     /// description it produced.
     func sign(psbtHex: String, approvedDigest: String) throws -> SignReply {
         try call("sign", [psbtHex, approvedDigest])
+    }
+
+    /// Read an unsigned Monero set. The engine parses, re-derives the change
+    /// against the vault's own keys, remembers the digest, and answers with
+    /// the summary the confirmation screen renders. Same describe-then-approve
+    /// contract as `describe`/`sign`.
+    func moneroDescribe(payloadHex: String) throws -> MoneroSummary {
+        try call("moneroDescribe", [payloadHex])
+    }
+
+    /// Sign the described set, quoting the digest that was on screen and
+    /// handing over exactly the randomness the description asked for. The
+    /// engine re-checks the digest against what it described; a stale or
+    /// altered approval fails there rather than signing.
+    func moneroSign(approvedDigest: String, randomHex: String) throws -> MoneroSignReply {
+        try call("moneroSign", [approvedDigest, randomHex])
+    }
+
+    /// Fresh platform randomness, hex-encoded, for the entropy arguments the
+    /// engine takes. `SecRandomCopyBytes` is the platform CSPRNG; a failure —
+    /// which documented practice treats as effectively impossible — returns
+    /// nil rather than weaker bytes, and the caller refuses to proceed.
+    static func freshRandomHex(bytes count: Int) -> String? {
+        var bytes = [UInt8](repeating: 0, count: count)
+        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else { return nil }
+        defer { for i in bytes.indices { bytes[i] = 0 } }
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Key images for outputs the companion's scan found.

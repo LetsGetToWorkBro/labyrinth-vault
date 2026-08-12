@@ -58,6 +58,22 @@
     txid:    'c1d0a4f7e2b95836aa41c07d9e3f5b28d6407e1ac83b95f2e0d7461bc9a35f80'
   };
 
+  /* The Monero counterpart. Twelve decimals because that is the unit; the
+     fee is explicit in a Monero transaction set rather than left over, which
+     changes what the vault can honestly claim to have checked; and the ring
+     hides this wallet's input among decoys the companion chose — a privacy
+     property, not a safety one, and the copy is careful not to blur that. */
+  var XTX = {
+    send:    '14.732810450000',
+    fee:     '0.000091240000',
+    to:      '48jrXvfpjGbSypdJXQ5iM4jzTvKUDCwkFSHtsnREsERtwETYVpq4jSo4VvwSRnD8K6KSKEHCDSwrVp763YBeHcVefEqAbgb',
+    ringSize: 16,
+    inputs:  2,
+    outputs: 2,
+    digest:  'b7e4d9021f8a63c5',
+    txhash:  'e9c31b7a40d8f256bb04a17c92e5d3f8'
+  };
+
   var VAULT = {
     id: '•••• •••• 7F21',
     fingerprint: '7F21A9C4',
@@ -545,7 +561,7 @@
               '<div class="asset__s">SIGNING · READY</div></div>' +
             '<div class="asset asset--xmr"><div class="asset__bar"></div>' +
               '<div class="asset__t">MONERO <span style="color:var(--paper-faint);font-weight:400">XMR</span></div>' +
-              '<div class="asset__s">KEYS ONLY · SIGNING NOT INSTALLED</div></div>' +
+              '<div class="asset__s">SCREENS READY · READER PENDING</div></div>' +
           '</div>' +
           '<div class="pad" style="padding-top:20px;padding-bottom:24px">' +
             '<div class="field" style="border-bottom:0;padding-bottom:6px">' +
@@ -608,13 +624,19 @@
             field('PRIMARY ADDRESS', 'DERIVED') +
             field('PRIVATE VIEW KEY', 'AVAILABLE FOR EXPORT') +
             field('SPEND KEY', 'NEVER LEAVES DEVICE') +
-            field('TRANSACTION SIGNING', 'NOT INSTALLED', 'field__v--dim') +
+            field('CONFIRMATION SCREENS', 'BUILT', 'field__v--good') +
+            field('WALLET2 READER', 'INSTALLED', 'field__v--good') +
           '</div>' +
           '<div style="margin-top:26px;padding:20px;border:1px solid var(--rule)">' +
-            '<div class="label" style="color:var(--paper)">WHAT THIS BUILD CANNOT DO</div>' +
-            '<p class="prose" style="margin-top:10px;font-size:13.5px">Monero keys, addresses and ' +
-            'view-key export work. Signing an unsigned transaction set does not exist yet, so the ' +
-            'vault will refuse an XMR payload rather than appear to handle one.</p>' +
+            '<div class="label" style="color:var(--paper)">WHERE THIS STANDS</div>' +
+            '<p class="prose" style="margin-top:10px;font-size:13.5px">Keys, addresses, view-key ' +
+            'export, the unsigned-set reader and the full signing flow — read, verify, attest, ' +
+            'hold — are built. An output claiming to be change is checked against this vault’s ' +
+            'own address before the screen exists, and a set that lies about it is refused, ' +
+            'not displayed.</p>' +
+          '</div>' +
+          '<div style="margin-top:12px">' +
+            control('WALK THE SIGNING FLOW', 'SPEC', 'xmrconfirm', 'control--quiet') +
           '</div>' +
           '<div style="height:24px"></div>' +
         '</div>' +
@@ -913,11 +935,15 @@
         '</div>' +
       '</div>';
     },
-    mount: function (root) {
-      /* STOP → VERIFY → SIGN is not a progress bar with three labels. The
-         signing route does not open until the document has physically passed
-         the reader's eyes, because the only defence this product has is that
-         somebody looked. */
+    mount: confirmMount('attest')
+  };
+
+  /* STOP → VERIFY → SIGN is not a progress bar with three labels. The signing
+     route does not open until the document has physically passed the reader's
+     eyes, because the only defence this product has is that somebody looked.
+     Shared by both assets; `next` is the attest screen it unlocks. */
+  function confirmMount(next) {
+    return function (root) {
       var scroll = $('[data-scroll]', root);
       var marks  = $$('[data-g]', root);
       var btn    = $('[data-proceed]', root);
@@ -940,22 +966,23 @@
           armed = true;
           btn.disabled = false;
           hint.textContent = 'CONTINUE';
-          btn.addEventListener('click', function () { go('attest'); });
+          btn.addEventListener('click', function () { go(next); });
         }
       }
       scroll.addEventListener('scroll', update, { passive: true });
       update();
-    }
-  };
+    };
+  }
 
-  S.destination = {
-    group: 'Signing', name: 'Destination verification',
-    render: function () {
-      var chunks = TX.to.match(/.{1,4}/g) || [];
+  /* Character-by-character comparison, shared by both assets: the attack it
+     defends against is the same regardless of chain. */
+  function destinationScreen(addr, backId) {
+    return function () {
+      var chunks = addr.match(/.{1,4}/g) || [];
       return '<div class="screen">' +
         '<header class="statusbar" style="border-bottom:1px solid var(--rule)">' +
           '<div class="label" style="color:var(--paper)">DESTINATION</div>' +
-          '<button class="linkline" data-go="confirm">CLOSE</button>' +
+          '<button class="linkline" data-go="' + backId + '">CLOSE</button>' +
         '</header>' +
         '<div class="body pad">' +
           '<p class="prose" style="margin:22px 0 26px">Read it against the address on your ' +
@@ -970,13 +997,18 @@
           '</div>' +
           '<div style="margin-top:24px;padding:18px;border:1px solid var(--rule)">' +
             '<div class="label">FULL STRING</div>' +
-            '<div class="mono" style="margin-top:10px;font-size:12.5px;line-height:1.7;word-break:break-all">' + TX.to + '</div>' +
+            '<div class="mono" style="margin-top:10px;font-size:12.5px;line-height:1.7;word-break:break-all">' + addr + '</div>' +
           '</div>' +
           '<div style="height:28px"></div>' +
         '</div>' +
-        '<div class="foot">' + primary('BACK TO TRANSACTION', '', 'confirm') + '</div>' +
+        '<div class="foot">' + primary('BACK TO TRANSACTION', '', backId) + '</div>' +
       '</div>';
-    }
+    };
+  }
+
+  S.destination = {
+    group: 'Signing', name: 'Destination verification',
+    render: destinationScreen(TX.to, 'confirm')
   };
 
   S.attest = {
@@ -1013,7 +1045,14 @@
         '</div>' +
       '</div>';
     },
-    mount: function (root) {
+    mount: attestMount('signed')
+  };
+
+  /* The attest-and-hold behaviour, shared by both assets: four attestations
+     unlock the control, the hold is the decision, releasing early does not
+     sign and says so. `next` is where a completed signature lands. */
+  function attestMount(next) {
+    return function (root) {
       var need = 4, done = 0;
       var hold = $('[data-hold]', root), fill = $('[data-fill]', root);
       var label = $('[data-holdlabel]', root), stage = $('[data-stage]', root);
@@ -1031,8 +1070,6 @@
         });
       });
 
-      /* A press is a keystroke. A hold is a decision. Releasing early does not
-         sign, and says so. */
       var DUR = 2400, t0 = 0, raf = null;
       var STAGES = [
         [0.00, 'VERIFYING DIGEST'],
@@ -1051,7 +1088,7 @@
         label.textContent = 'SIGNED';
         stage.textContent = 'SIGNATURE COMPLETE';
         if (navigator.vibrate) navigator.vibrate([12, 40, 26]);
-        after(function () { go('signed'); }, 700);
+        after(function () { go(next); }, 700);
       }
 
       function start(e) {
@@ -1073,8 +1110,8 @@
       hold.addEventListener('pointercancel', stop);
       hold.addEventListener('pointerleave', stop);
       root.addEventListener('screen:exit', function () { if (raf) cancelAnimationFrame(raf); });
-    }
-  };
+    };
+  }
 
   S.signed = {
     group: 'Signing', name: 'Signature created',
@@ -1141,6 +1178,231 @@
     }
   };
 
+  /* --- the Monero flow ----------------------------------------------------- */
+  /* The same architecture as Bitcoin's — read, verify, attest, hold — with
+     the claims changed to what a Monero transaction set actually supports:
+     the fee is explicit rather than left over, change returns to an address
+     re-derived from our own keys, and the ring is a privacy property the
+     screen names without pretending it is a safety one. The wallet2 reader
+     that feeds this screen is the library's next milestone; until it lands
+     the vault refuses XMR payloads, and these screens are what it refuses
+     into existence. */
+
+  S.xmrconfirm = {
+    group: 'Monero', name: 'XMR confirmation',
+    render: function () {
+      return '<div class="screen">' +
+        '<header class="statusbar" style="border-bottom:1px solid var(--rule);padding-bottom:12px">' +
+          '<div class="gate" data-gate>' +
+            '<span class="is-live" data-g="0">STOP</span><i>/</i>' +
+            '<span data-g="1">VERIFY</span><i>/</i>' +
+            '<span data-g="2">SIGN</span>' +
+          '</div>' +
+          '<div class="label" data-progress>0%</div>' +
+        '</header>' +
+        '<div class="body" data-scroll>' +
+          '<div class="pad">' +
+            '<div style="padding:30px 0 26px">' +
+              '<h1 class="statement" style="font-size:34px;line-height:1">READ BEFORE<br>SIGNING</h1>' +
+              '<p class="prose" style="margin-top:16px">This came from a device the vault does not ' +
+              'trust. Everything below was decoded here, on this phone, from the set itself.</p>' +
+            '</div>' +
+            '<hr class="rule rule--heavy">' +
+            '<div style="padding:30px 0 8px">' +
+              '<div class="eyebrow">SENDING</div>' +
+              '<div class="readout" style="margin-top:16px;font-size:clamp(30px,9.5vw,42px)">' + XTX.send + '</div>' +
+              '<div style="font-size:20px;font-weight:600;letter-spacing:.1em;color:var(--xmr);margin-top:12px">XMR</div>' +
+              '<div class="label" style="margin-top:14px;line-height:1.5">NO PRICE SHOWN · THIS DEVICE<br>HAS NO NETWORK TO ASK</div>' +
+            '</div>' +
+            '<div style="height:26px"></div>' +
+          '</div>' +
+
+          '<div class="pad">' +
+            '<div class="zone">' +
+              '<span class="zone__tag eyebrow" style="color:var(--paper)">DESTINATION</span>' +
+              '<div class="addr" style="font-size:15px">' + address(XTX.to) + '</div>' +
+              '<hr class="rule" style="margin:24px 0 18px">' +
+              '<div class="field" style="border-bottom:0;padding:0">' +
+                '<span class="field__k">TYPE</span><span class="field__v field__v--dim">STANDARD ADDRESS · NOT YOURS</span></div>' +
+              '<div style="margin-top:18px">' +
+                '<button class="control control--quiet" data-go="xmrdest" style="min-height:52px">' +
+                  '<span style="font-size:13px">COMPARE CHARACTER BY CHARACTER</span>' +
+                  '<span class="control__hint">OPEN</span></button>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+
+          '<div class="pad">' +
+            '<div style="padding:34px 0 6px"><div class="eyebrow">FEE</div>' +
+              '<div class="readout" style="font-size:30px;margin-top:12px">' + XTX.fee + ' <span style="font-size:15px;color:var(--paper-faint)">XMR</span></div>' +
+            '</div>' +
+            '<div class="stack" style="margin-top:14px">' +
+              field('STATED IN THE SET', 'YES', 'field__v--good') +
+              field('CHECKED AGAINST WEIGHT', 'MATCHES', 'field__v--good') +
+              field('PRIORITY', 'NORMAL') +
+            '</div>' +
+            '<p class="prose" style="margin-top:16px;font-size:13.5px">A Monero fee is written ' +
+            'into the transaction set rather than left over. The vault reads it and checks it ' +
+            'against the set’s own weight, instead of trusting the companion’s arithmetic.</p>' +
+
+            '<div style="padding:34px 0 6px"><div class="eyebrow">CHANGE RETURNING TO YOU</div></div>' +
+            '<div class="mono" style="font-size:12.5px;line-height:1.7;word-break:break-all;color:var(--paper-dim);margin-top:8px">' + VAULT.xmrAddress + '</div>' +
+            '<div class="stack" style="margin-top:14px">' +
+              field('ADDRESS RE-DERIVED HERE', 'MATCHES', 'field__v--good') +
+              field('FROM', 'OWN SPEND + VIEW KEY') +
+            '</div>' +
+            '<p class="prose" style="margin-top:16px;font-size:13.5px">The set claims this output ' +
+            'returns to you. The vault rebuilt the address from its own keys and the two agree, ' +
+            'so it does.</p>' +
+
+            '<div style="padding:34px 0 0"><div class="eyebrow">PRIVACY</div></div>' +
+            '<div class="stack" style="margin-top:14px">' +
+              field('RING SIZE', String(XTX.ringSize)) +
+              field('DECOYS PER INPUT', String(XTX.ringSize - 1)) +
+              field('PAYMENT ID', 'NONE') +
+            '</div>' +
+            '<p class="prose" style="margin-top:16px;font-size:13.5px">Your inputs hide among ' +
+            'decoys the companion chose. Decoy choice affects privacy, never custody: a bad ring ' +
+            'cannot move money, so it is listed here and not among the safety checks.</p>' +
+
+            '<div style="padding:34px 0 0"><div class="eyebrow">STRUCTURE</div></div>' +
+            '<div class="stack" style="margin-top:14px">' +
+              field('INPUTS', String(XTX.inputs)) +
+              field('OUTPUTS', String(XTX.outputs)) +
+              field('UNLOCK TIME', 'NONE', 'field__v--good') +
+            '</div>' +
+
+            '<div style="padding:34px 0 0"><div class="eyebrow">WHAT THE VAULT CHECKED</div></div>' +
+            '<div class="checks" style="margin-top:14px">' +
+              '<div class="check is-on"><span class="check__mark">✓</span>CHANGE ADDRESS RE-DERIVED FROM OWN KEYS</div>' +
+              '<div class="check is-on"><span class="check__mark">✓</span>FEE READ FROM THE SET, CHECKED AGAINST WEIGHT</div>' +
+              '<div class="check is-on"><span class="check__mark">✓</span>UNLOCK TIME ABSENT</div>' +
+              '<div class="check is-on"><span class="check__mark">✓</span>SET DIGEST MATCHED</div>' +
+            '</div>' +
+
+            '<p class="prose" style="margin:30px 0 10px;color:var(--paper)">The vault has checked ' +
+            'everything a machine can check. It cannot check whether this is the person you meant ' +
+            'to pay. Only you can do that, and only by reading the destination above.</p>' +
+            '<div style="height:40px"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="foot">' +
+          '<button class="control control--primary" data-proceed disabled>' +
+            '<span>I HAVE READ THIS</span>' +
+            '<span class="control__hint" data-phint>SCROLL</span></button>' +
+        '</div>' +
+      '</div>';
+    },
+    mount: confirmMount('xmrattest')
+  };
+
+  S.xmrdest = {
+    group: 'Monero', name: 'XMR destination verification',
+    render: destinationScreen(XTX.to, 'xmrconfirm')
+  };
+
+  S.xmrattest = {
+    group: 'Monero', name: 'XMR attest & hold to sign',
+    render: function () {
+      var lines = ['THE DESTINATION', 'THE AMOUNT', 'THE FEE', 'THE CHANGE'];
+      return '<div class="screen">' + bar('quiet') +
+        '<div class="body pad">' +
+          '<div style="padding:26px 0 22px">' +
+            '<div class="eyebrow" style="color:var(--signal)">TRANSACTION VERIFIED</div>' +
+            '<h1 class="statement" style="margin-top:14px;font-size:36px">I HAVE<br>VERIFIED</h1>' +
+          '</div>' +
+          '<div class="checks">' + lines.map(function (l) {
+            return '<label class="check" data-attest style="cursor:pointer;padding:17px 0;font-size:13px;letter-spacing:.1em">' +
+              '<span class="check__mark">✓</span>' + l + '</label>';
+          }).join('') + '</div>' +
+          '<div class="stack" style="margin-top:26px">' +
+            field('AMOUNT', XTX.send + ' XMR') +
+            field('TO', '…' + XTX.to.slice(-10)) +
+            field('FEE', XTX.fee + ' XMR') +
+            field('SET DIGEST', XTX.digest.slice(0, 12).toUpperCase()) +
+          '</div>' +
+          '<p class="prose" style="margin:20px 0;font-size:13.5px">The signatures will be taken ' +
+          'over this set and no other. If anything below this screen differs from what you just ' +
+          'read, signing fails rather than proceeds.</p>' +
+          '<div style="height:20px"></div>' +
+        '</div>' +
+        '<div class="foot">' +
+          '<div class="holdstage" data-stage>&nbsp;</div>' +
+          '<button class="hold" data-hold disabled style="margin-top:12px;opacity:.35">' +
+            '<span class="hold__fill" data-fill></span>' +
+            '<span class="hold__label" data-holdlabel>CONFIRM ALL FOUR ABOVE</span>' +
+          '</button>' +
+        '</div>' +
+      '</div>';
+    },
+    mount: attestMount('xmrsigned')
+  };
+
+  S.xmrsigned = {
+    group: 'Monero', name: 'XMR signature created',
+    render: function () {
+      return '<div class="screen">' + bar() +
+        '<div class="body pad" style="display:flex;flex-direction:column;justify-content:center">' +
+          '<div class="enter">' +
+            '<div class="eyebrow" style="color:var(--signal)">COMPLETE</div>' +
+            '<h1 class="statement statement--mega" style="margin:16px 0 8px">SIGNED</h1>' +
+            '<div class="statement" style="font-size:30px;color:var(--paper-faint)">NOT BROADCAST</div>' +
+            '<hr class="rule rule--heavy" style="margin:30px 0 0">' +
+            '<div class="stack">' +
+              field('KIND', 'XMRSIGNED') +
+              field('SIGNATURES', XTX.inputs + ' OF ' + XTX.inputs + ' · CLSAG') +
+              field('TX HASH', XTX.txhash.slice(0, 16).toUpperCase() + '…') +
+              field('SENT ANYWHERE', 'NO', 'field__v--good') +
+            '</div>' +
+            '<p class="prose" style="margin-top:24px">Nothing has left this device and nothing ' +
+            'will. The vault has no way to reach the network — carrying this to the chain is the ' +
+            'companion’s job, and only if you show it the code.</p>' +
+          '</div>' +
+        '</div>' +
+        '<div class="foot">' + primary('SHOW SIGNED SET', 'QR', 'xmrsignedqr') + '</div>' +
+      '</div>';
+    }
+  };
+
+  S.xmrsignedqr = {
+    group: 'Monero', name: 'XMR signed set QR',
+    render: function () {
+      return '<div class="screen">' + bar() +
+        '<div class="body pad">' +
+          '<div style="padding:20px 0 18px">' +
+            '<div class="eyebrow">SIGNED TRANSACTION SET</div>' +
+            '<h1 class="statement" style="margin-top:10px;font-size:32px">SHOW THIS TO YOUR<br>COMPANION DEVICE</h1>' +
+          '</div>' +
+          '<div class="aperture" data-qr>' + qr('XMRSIGNED:' + XTX.txhash + ':1', 49) +
+            '<svg class="aperture__frame" viewBox="0 0 100 100" preserveAspectRatio="none">' +
+              '<rect x="0.5" y="0.5" width="99" height="99"/></svg>' +
+          '</div>' +
+          '<div class="stack" style="margin-top:22px">' +
+            field('KIND', 'XMRSIGNED') +
+            field('FRAME', '<span data-frame>1 / 18</span>') +
+            field('DIGEST', XTX.digest.slice(0, 8).toUpperCase()) +
+          '</div>' +
+          '<div style="margin-top:24px;padding:18px;border:1px solid var(--rule-strong)">' +
+            '<div class="prose" style="color:var(--paper);font-size:14px">THE VAULT WILL NOT ' +
+            'BROADCAST THIS TRANSACTION.</div>' +
+            '<div class="prose" style="margin-top:8px;font-size:13px">A Monero set is larger than ' +
+            'a Bitcoin one, so there are more frames. Hold steady; order does not matter.</div>' +
+          '</div>' +
+          '<div style="height:24px"></div>' +
+        '</div>' +
+        '<div class="foot">' + control('DONE', 'RETURN TO VAULT', 'home', 'control--quiet') + '</div>' +
+      '</div>';
+    },
+    mount: function (root) {
+      var n = 18, i = 1;
+      every(function () {
+        i = i % n + 1;
+        $('[data-qr]', root).firstChild.outerHTML = qr('XMRSIGNED:' + XTX.txhash + ':' + i, 49);
+        $('[data-frame]', root).textContent = i + ' / ' + n;
+      }, 700);
+    }
+  };
+
   /* --- refusals ------------------------------------------------------------ */
   /* Three of these, matching the three fatal conditions in src/keys/psbt.ts.
      Each has exactly one control. There is deliberately no route onward: an
@@ -1163,6 +1425,27 @@
       '<div class="foot">' + primary(opts.label || 'SCAN AGAIN', '', opts.act || 'scanner') + '</div>' +
     '</div>';
   }
+
+  /* Monero's own fail-closed case: a nonzero unlock time. The field is
+     deprecated on the network, no honest wallet sets it, and money sent under
+     one arrives frozen — legitimate-looking today, unspendable until a block
+     height the screen would have to explain. There is nothing to warn about;
+     there is only a transaction the confirmation screen cannot honestly
+     summarise, and those do not get signed. */
+  S.refuseunlock = {
+    group: 'Refusal', name: 'XMR unlock time set',
+    render: function () {
+      return refusal('CANNOT<br>SIGN',
+        'THIS TRANSACTION SETS<br>AN UNLOCK TIME.',
+        'The set asks for the money to arrive frozen until a future block height. No current ' +
+        'wallet does that on purpose, the field is deprecated on the network, and a summary ' +
+        'that omitted it would be lying about when this money can move again. The vault does ' +
+        'not sign what it cannot honestly describe.',
+        '<div class="check is-bad"><span class="check__mark">×</span>UNLOCK TIME · BLOCK 3 412 780</div>' +
+        '<div class="check is-bad"><span class="check__mark">×</span>NO HONEST SUMMARY EXISTS</div>' +
+        '<div class="check is-on"><span class="check__mark">✓</span>NO SIGNATURE PRODUCED</div>');
+    }
+  };
 
   /* The self-test failing is the one refusal that precedes everything else:
      a machine that cannot prove its own hash does not get to show a home
@@ -1361,7 +1644,8 @@
     'home', 'btcsetup', 'xmrsetup',
     'export', 'scanner', 'receiving', 'received',
     'confirm', 'destination', 'attest', 'signed', 'signedqr',
-    'refusechange', 'refusefee', 'refuseframes', 'selftestfail',
+    'xmrconfirm', 'xmrdest', 'xmrattest', 'xmrsigned', 'xmrsignedqr',
+    'refusechange', 'refusefee', 'refuseframes', 'refuseunlock', 'selftestfail',
     'security', 'settings', 'keys'
   ];
 

@@ -34,6 +34,8 @@
  */
 
 import { formatBtc, type BtcWallet } from '../keys/bitcoin';
+import { formatXmr } from '../keys/monero';
+import { signingRandomCount, type VaultUnsignedSet } from '../keys/monerobuild';
 import { describePsbt, type DescribeOptions, type PsbtSummary, type PsbtWarning } from '../keys/psbt';
 
 /** One previous output being spent. */
@@ -169,6 +171,81 @@ export function toWire(summary: PsbtSummary): WireSummary {
     warnings: summary.warnings.map(wireWarning),
     signable: summary.signable,
     refusal: fatal ? fatal.code : null,
+  };
+}
+
+// ---------------------------------------------------------------- monero
+
+/**
+ * One output of a Monero set, as the confirmation screen renders it. The raw
+ * piconero string rides along with the formatted amount because the signed
+ * set that comes back is compared in raw units, and a comparison that had to
+ * re-parse a display string would be a comparison with a parser in it.
+ */
+export interface WireMoneroOutput {
+  position: number;
+  address: string;
+  amount: string;
+  amountFormatted: string;
+  change: boolean;
+  /** A zero-amount self-output added only to satisfy the two-output consensus
+   *  rule. Listed in the structure, never as a payee. */
+  dummy: boolean;
+}
+
+/**
+ * What the Monero confirmation screen is allowed to know. The counterpart of
+ * `WireSummary`, shaped by what a Monero set actually supports: the fee is
+ * stated in the set rather than left over, there is no per-input address to
+ * show, and the ring is a privacy property the screen names without
+ * pretending it is a safety one.
+ */
+export interface WireMoneroSummary {
+  /** keccak of the payload bytes. Carried from review to approval to signing. */
+  digest: string;
+  network: string;
+  inputCount: number;
+  ringSize: number;
+  outputs: WireMoneroOutput[];
+  /** Piconero strings, and the same numbers formatted, from one formatter. */
+  paying: string;
+  payingFormatted: string;
+  fee: string;
+  feeFormatted: string;
+  /**
+   * Exactly how many bytes of fresh platform randomness `moneroSign` needs
+   * for this set. Stated by the engine, which knows the formula, so the Swift
+   * side never re-derives it and cannot drift from it.
+   */
+  randomBytes: number;
+}
+
+/** Convert a parsed unsigned set into the shape the screen renders. */
+export function moneroToWire(set: VaultUnsignedSet, digest: string): WireMoneroSummary {
+  /* A dummy output leaves the paying sum only when it genuinely carries
+   * nothing; a "dummy" that carries money is counted as a payment, which is
+   * the safe direction to be wrong in — it overstates what is leaving. */
+  const paying = set.outputs
+    .filter((output) => !output.change && !(output.dummy === true && BigInt(output.amount) === 0n))
+    .reduce((sum, output) => sum + BigInt(output.amount), 0n);
+  return {
+    digest,
+    network: set.network,
+    inputCount: set.inputs.length,
+    ringSize: set.ringSize,
+    outputs: set.outputs.map((output, i) => ({
+      position: i + 1,
+      address: output.address,
+      amount: output.amount,
+      amountFormatted: formatXmr(BigInt(output.amount)),
+      change: output.change,
+      dummy: output.dummy === true && BigInt(output.amount) === 0n,
+    })),
+    paying: paying.toString(),
+    payingFormatted: formatXmr(paying),
+    fee: set.fee,
+    feeFormatted: formatXmr(BigInt(set.fee)),
+    randomBytes: signingRandomCount(set.inputs.length, set.ringSize, set.outputs.length) * 32,
   };
 }
 

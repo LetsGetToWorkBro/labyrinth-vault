@@ -125,15 +125,25 @@ describe('moneroDescribe and moneroSign over the bridge', () => {
       ok: boolean;
       digest: string;
       paying: string;
+      payingFormatted: string;
       fee: string;
+      feeFormatted: string;
       network: string;
-      outputs: { address: string; change: boolean }[];
+      randomBytes: number;
+      outputs: { address: string; change: boolean; amountFormatted: string }[];
     };
     expect(described.ok).toBe(true);
     expect(described.paying).toBe(PAYMENT.toString());
     expect(described.fee).toBe(FEE.toString());
     expect(described.network).toBe('mainnet');
     expect(described.outputs.filter((o) => o.change)).toHaveLength(1);
+    /* The screen-facing fields: formatted by the engine, in the one place per
+     * chain that knows what a piconero is worth, and the randomness the sign
+     * step will demand, stated by the side that owns the formula. */
+    expect(described.payingFormatted).toBe('0.6');
+    expect(described.feeFormatted).toBe('0.00072');
+    expect(described.randomBytes).toBe(signingRandomCount(1, 16, 2) * 32);
+    expect(described.outputs.find((o) => !o.change)!.amountFormatted).toBe('0.6');
 
     const signed = JSON.parse(api.moneroSign(described.digest, randomHexFor())) as {
       ok: boolean;
@@ -159,6 +169,28 @@ describe('moneroDescribe and moneroSign over the bridge', () => {
     expect(parsed['txid']).toBe(signed.txid);
     expect(parsed['hex']).toMatch(/^[0-9a-f]{400,}$/);
     expect(parsed['keyImages']).toEqual(signed.keyImages);
+  });
+
+  it('refuses a set whose claimed change pays somewhere else', () => {
+    /* The change-swap attack, Monero edition: the set marks an output as
+     * change and points it at the attacker. The Bitcoin reader re-derives;
+     * here the vault checks the claim against its own address, and a lie is
+     * fatal at describe time — the screen never renders "returning to you"
+     * over somebody else's address. */
+    const { xmrAddress } = openSession();
+    const set = setFor(xmrAddress) as { outputs: { address: string; change: boolean }[] };
+    const receiver = set.outputs.find((o) => !o.change)!;
+    const change = set.outputs.find((o) => o.change)!;
+    change.address = receiver.address;
+
+    const described = JSON.parse(api.moneroDescribe(asPayloadHex(set))) as {
+      ok: boolean;
+      code?: string;
+      problem?: string;
+    };
+    expect(described.ok).toBe(false);
+    expect(described.code).toBe('output-path-mismatch');
+    expect(described.problem).toMatch(/change/i);
   });
 
   it('refuses a signature for a digest that is not the described set', () => {

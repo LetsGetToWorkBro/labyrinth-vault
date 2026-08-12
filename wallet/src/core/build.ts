@@ -22,7 +22,7 @@
  * compromised, and a malicious wallet could simply ignore what the vault
  * returned and publish something else it prepared earlier.
  *
- * It could. `verifySigned` does not stop a hostile build of this app — nothing
+ * It could. `verifySigned` does not stop a hostile build of this app: nothing
  * inside a hostile app stops a hostile app. What it stops is the honest build
  * from broadcasting something that quietly changed: a misread frame that
  * assembled into a different valid transaction, two send flows open at once,
@@ -31,8 +31,8 @@
  * somewhere nobody chose.
  *
  * So the rule is: the wallet compares the returned transaction against the
- * *intent it recorded before the vault ever saw it* — recipient, amount, fee,
- * and the exact set of outputs — and refuses to broadcast a mismatch. Not a
+ * *intent it recorded before the vault ever saw it*: recipient, amount, fee,
+ * and the exact set of outputs: and refuses to broadcast a mismatch. Not a
  * warning to scroll past. The screen for this state exists and it has no
  * "broadcast anyway" button, which is a design decision made here, in the
  * type: `verifySigned` returns either a `Ready` or a `Mismatch`, and nothing
@@ -284,57 +284,20 @@ export function prepare(params: PrepareParams): Prepared {
 }
 
 /**
- * Monero, and what is not finished.
+ * Monero is not prepared here, and the reason is a node round-trip.
  *
- * Monero's unsigned transaction is `wallet2`'s own serialized set, and this
- * repository does not speak it yet — the README says so, in the list of what
- * comes next, and it is still true. What exists is the transport that would
- * carry it (`XMRUNSIGNED` on the wire, animated in BC-UR frames the way
- * Cupcake does it) and everything in this application above the transport.
- *
- * So this builds a *provisional* payload: the intent, canonically encoded, so
- * that every screen in the send flow is real, the frames on the QR screen are
- * real frames of real bytes, and the digest that binds the two halves together
- * is a real digest. What it is not is something a Monero vault can sign today.
- *
- * The draft is tagged `provisional` and the interface says so where a person
- * can see it. The alternative — a send flow that looks identical to the
- * Bitcoin one and fails at the far end with a parse error — is the kind of
- * polish that costs somebody an evening and their confidence in the whole
- * device.
+ * A Bitcoin draft is pure arithmetic over coins this function already holds.
+ * A Monero draft needs the chain: the output distribution to draw decoys
+ * from, the ring members fetched and checked, the node's fee estimate. That
+ * lives in `monerodraft.ts` / `moneroplan.ts`, is asynchronous, and produces
+ * the real unsigned set the vault's `moneroDescribe` reads: the provisional
+ * stand-in that used to be built here is gone. This branch exists so a caller
+ * that reaches the wrong preparer gets a sentence instead of a stack trace.
  */
-function prepareMonero(params: PrepareParams): Prepared {
-  const { recipient, amount, rate, balance, now } = params;
-  /* Monero's fee is not a function of a vbyte count we can see from here; the
-   * daemon quotes a base rate and the ring size does the rest. The fixture
-   * quotes it, and this scales it by the priority multiplier, which is what
-   * the real client will do too. */
-  const fee = BigInt(Math.round(30_000_000 * rate));
-  if (amount + fee > balance) {
-    return { ok: false, problem: 'That is more than this wallet holds once the fee is counted.' };
-  }
-
-  const intent = new TextEncoder().encode(
-    JSON.stringify({ v: 1, kind: 'XMRUNSIGNED-PROVISIONAL', to: recipient, amount: amount.toString(), fee: fee.toString(), at: now }),
-  );
-
+function prepareMonero(_params: PrepareParams): Prepared {
   return {
-    ok: true,
-    selection: { chosen: [], fee, change: 0n, changeToFee: false, problem: null },
-    draft: {
-      asset: 'XMR',
-      recipient,
-      amount,
-      fee,
-      feeRate: rate,
-      unsigned: intent,
-      digest: digestOf(intent),
-      createdAt: now,
-      inputs: [],
-      inputTotal: amount + fee,
-      changeAddresses: [],
-      provisional: true,
-    },
+    ok: false,
+    problem: 'A Monero payment is planned against the node. Use prepareMoneroDraft.',
   };
 }
 
@@ -353,7 +316,17 @@ export interface OutputFact {
 }
 
 export type Verified =
-  | { ok: true; txid: string; raw: Uint8Array; outputs: OutputFact[]; fee: Atoms }
+  | {
+      ok: true;
+      txid: string;
+      raw: Uint8Array;
+      outputs: OutputFact[];
+      fee: Atoms;
+      /** Monero only: the network the signed transaction names, which the
+       *  broadcast chokepoint gates on. Bitcoin's raw bytes carry no such
+       *  field, so it is absent there. */
+      network?: 'mainnet' | 'stagenet' | 'testnet';
+    }
   | { ok: false; reasons: string[]; outputs: OutputFact[] };
 
 /**
@@ -375,12 +348,14 @@ export function verifySigned(draft: Draft, raw: Uint8Array): Verified {
   const reasons: string[] = [];
 
   if (draft.asset === 'XMR') {
-    /* Nothing to parse yet, for the reason in prepareMonero. Refuse rather
-     * than wave it through: a stub that returns ok is a stub that ships. */
+    /* Monero verification needs the key image book, which this pure function
+     * does not hold. The store routes XMR returns to `verifySignedMonero`;
+     * reaching this branch is a caller bug, and it fails closed rather than
+     * waving anything through. */
     return {
       ok: false,
       outputs: [],
-      reasons: ['Monero signing is not finished in this build. The vault cannot return a signed set yet.'],
+      reasons: ['A signed Monero set is checked by verifySignedMonero, with the key image book. Nothing was verified.'],
     };
   }
 

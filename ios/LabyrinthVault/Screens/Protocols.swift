@@ -64,13 +64,16 @@ struct MoneroView: View {
                         FieldRow(label: "PRIMARY ADDRESS", value: "DERIVED")
                         FieldRow(label: "PRIVATE VIEW KEY", value: "EXPORTABLE")
                         FieldRow(label: "SPEND KEY", value: "NEVER LEAVES DEVICE", tone: .verified)
-                        FieldRow(label: "TRANSACTION SIGNING", value: "NOT INSTALLED", tone: .dim)
+                        FieldRow(label: "TRANSACTION SIGNING", value: "INSTALLED · CLSAG", tone: .verified)
 
                         VStack(alignment: .leading, spacing: 10) {
-                            Eyebrow("WHAT THIS BUILD CANNOT DO", color: Ink.paper)
-                            Text("Monero keys, addresses and view-key export work. Signing an " +
-                                 "unsigned transaction set does not exist yet, so the vault will " +
-                                 "refuse an XMR payload rather than appear to handle one.")
+                            Eyebrow("WHAT THE VAULT CHECKS", color: Ink.paper)
+                            Text("An unsigned set is read and rendered in full before anything " +
+                                 "is signed: every destination, the stated fee, and the claim " +
+                                 "that change returns here — checked against this vault's own " +
+                                 "address, and refused outright when the claim lies. The ring " +
+                                 "signature, range proof and balance are proven during signing; " +
+                                 "a set that fails any of them fails instead of signing.")
                                 .font(Type.body(13.5))
                                 .lineSpacing(4)
                                 .foregroundStyle(Ink.paperDim)

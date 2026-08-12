@@ -75,6 +75,22 @@ export function fromHex(hex: string): Uint8Array {
   return out;
 }
 
+export const PICONERO_PER_XMR = 1_000_000_000_000n;
+
+/**
+ * Format piconero as an XMR string, trailing zeros trimmed — the same shape
+ * `formatBtc` gives satoshi, and for the same reason: amounts are formatted in
+ * exactly one place per chain, because a second implementation of what a
+ * piconero is worth is how two screens come to disagree about a number.
+ */
+export function formatXmr(piconero: bigint): string {
+  const negative = piconero < 0n;
+  const value = negative ? -piconero : piconero;
+  const whole = value / PICONERO_PER_XMR;
+  const frac = (value % PICONERO_PER_XMR).toString().padStart(12, '0').replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${frac ? '.' + frac : ''}`;
+}
+
 /** Little-endian, because that is how Monero stores a scalar. */
 function toBigIntLE(bytes: Uint8Array): bigint {
   let n = 0n;

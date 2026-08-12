@@ -47,7 +47,7 @@ struct HomeView: View {
                             HStack(alignment: .top, spacing: 0) {
                                 protocolCell(.btc, status: "SIGNING · READY") { vault.go(.bitcoin) }
                                 Rectangle().fill(Ink.rule).frame(width: 1)
-                                protocolCell(.xmr, status: "KEYS ONLY · SIGNING NOT INSTALLED") { vault.go(.monero) }
+                                protocolCell(.xmr, status: "SIGNING · READY") { vault.go(.monero) }
                             }
                             .overlay(alignment: .top) { Hairline() }
                             .overlay(alignment: .bottom) { Hairline() }

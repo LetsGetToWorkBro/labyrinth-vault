@@ -13390,6 +13390,14 @@ zoo`.split("\n"));
     for (let i = 0; i < out.length; i++) out[i] = parseInt(clean3.slice(i * 2, i * 2 + 2), 16);
     return out;
   }
+  var PICONERO_PER_XMR = 1000000000000n;
+  function formatXmr(piconero) {
+    const negative = piconero < 0n;
+    const value = negative ? -piconero : piconero;
+    const whole = value / PICONERO_PER_XMR;
+    const frac = (value % PICONERO_PER_XMR).toString().padStart(12, "0").replace(/0+$/, "");
+    return `${negative ? "-" : ""}${whole}${frac ? "." + frac : ""}`;
+  }
   function toBigIntLE(bytes) {
     let n = 0n;
     for (let i = bytes.length - 1; i >= 0; i--) n = n << 8n | BigInt(bytes[i]);
@@ -17424,6 +17432,28 @@ zoo`.split("\n"));
       refusal: fatal ? fatal.code : null
     };
   }
+  function moneroToWire(set, digest) {
+    const paying = set.outputs.filter((output) => !output.change && !(output.dummy === true && BigInt(output.amount) === 0n)).reduce((sum, output) => sum + BigInt(output.amount), 0n);
+    return {
+      digest,
+      network: set.network,
+      inputCount: set.inputs.length,
+      ringSize: set.ringSize,
+      outputs: set.outputs.map((output, i) => ({
+        position: i + 1,
+        address: output.address,
+        amount: output.amount,
+        amountFormatted: formatXmr(BigInt(output.amount)),
+        change: output.change,
+        dummy: output.dummy === true && BigInt(output.amount) === 0n
+      })),
+      paying: paying.toString(),
+      payingFormatted: formatXmr(paying),
+      fee: set.fee,
+      feeFormatted: formatXmr(BigInt(set.fee)),
+      randomBytes: signingRandomCount(set.inputs.length, set.ringSize, set.outputs.length) * 32
+    };
+  }
 
   // src/bridge/host.ts
   function toHex2(bytes) {
@@ -17683,27 +17713,22 @@ zoo`.split("\n"));
      * the set that gets signed, not merely equal-looking.
      */
     moneroDescribe: guarded("moneroDescribe", (payloadHex) => {
-      requireSession();
+      const open = requireSession();
       const payload = fromHex2(payloadHex);
       if (!payload || payload.length === 0) return fail("That is not an unsigned Monero transaction set.");
       const parsed = parseUnsignedSet(payload);
       if (!parsed.ok) return fail(parsed.problem);
+      for (const output of parsed.set.outputs) {
+        if (output.change && output.address !== open.xmr.address) {
+          return failCoded(
+            "output-path-mismatch",
+            "An output claims to be this wallet's change but pays a different address. Signing refused."
+          );
+        }
+      }
       const digest = toHex2(keccak_256(payload));
       lastMoneroDescribed = { digest, set: parsed.set };
-      const paying = parsed.set.outputs.filter((output) => !output.change).reduce((sum, output) => sum + BigInt(output.amount), 0n);
-      return done({
-        digest,
-        network: parsed.set.network,
-        fee: parsed.set.fee,
-        paying: paying.toString(),
-        inputCount: parsed.set.inputs.length,
-        ringSize: parsed.set.ringSize,
-        outputs: parsed.set.outputs.map((output) => ({
-          address: output.address,
-          amount: output.amount,
-          change: output.change
-        }))
-      });
+      return done({ ...moneroToWire(parsed.set, digest) });
     }),
     /**
      * Sign the described Monero set, given the approved digest and fresh

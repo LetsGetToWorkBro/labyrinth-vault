@@ -248,29 +248,26 @@ describe('checking what the vault hands back', () => {
   });
 
   /**
-   * Monero, and a test that used to assert a bug.
+   * Monero, which is no longer prepared here at all.
    *
-   * The old version of this test said a Monero payment could not be prepared,
-   * and it passed. It passed because `prepareMonero` was reading the balance
-   * off the unspent-output list, which is empty for Monero: a view key does
-   * not enumerate outputs the way an extended public key enumerates addresses.
-   * So every Monero payment, of any size, was "more than this wallet holds",
-   * and a test written from the observed behavior locked that in.
-   *
-   * What should be true is below. A Monero draft builds, because composing a
-   * payment is this device's job and it can do it. It is tagged `provisional`,
-   * because the payload it produces is not `wallet2`'s format yet. And the
-   * refusal happens at `verifySigned`, which is where an unfinished format
-   * should stop being waved through, rather than at a balance check that was
-   * wrong for an unrelated reason.
+   * An earlier version built a provisional stand-in payload in this file, and
+   * before that, a balance-reading bug made every Monero payment impossible.
+   * Both are gone for the same reason: a real Monero draft is planned against
+   * the node - decoys from the distribution, ring members fetched and
+   * checked, the node's own fee estimate - which is asynchronous and lives
+   * in monerodraft.ts, tested there with a fake node. What this file owes
+   * Monero is exactly two refusals with directions on them, so a caller that
+   * reaches the wrong function gets a sentence instead of a stack trace or,
+   * worse, a quiet pass.
    */
-  describe('Monero, which is composable and not yet signable', () => {
+  describe('Monero, which is planned elsewhere', () => {
     const MONERO = '4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRj5UzqtReoS44qo9mtmXCqY45DJ852K5Jv2684Rge';
-    const monero = (amount: bigint) =>
-      prepare({
+
+    it('points a prepare() caller at the planner', () => {
+      const result = prepare({
         asset: 'XMR',
         recipient: MONERO,
-        amount,
+        amount: 1_000_000_000_000n,
         rate: 2.4,
         utxos: [],
         balance: 14_381_000_000_000n,
@@ -278,27 +275,28 @@ describe('checking what the vault hands back', () => {
         change: { index: 0 },
         now: NOW,
       });
-
-    it('prepares a payment the wallet can afford', () => {
-      const result = monero(1_000_000_000_000n);
-      expect(result.ok, result.ok ? '' : result.problem).toBe(true);
-      if (result.ok) {
-        expect(result.draft.provisional).toBe(true);
-        expect(result.draft.amount).toBe(1_000_000_000_000n);
-        expect(result.draft.fee).toBeGreaterThan(0n);
-      }
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.problem).toMatch(/prepareMoneroDraft/);
     });
 
-    it('refuses one it cannot', () => {
-      expect(monero(20_000_000_000_000n).ok).toBe(false);
-    });
-
-    it('will not verify a signature for it, because there is nothing to verify yet', () => {
-      const result = monero(1_000_000_000_000n);
-      if (!result.ok) throw new Error(result.problem);
-      const verdict = verifySigned(result.draft, new Uint8Array([1, 2, 3]));
+    it('points a verifySigned() caller at the Monero verifier, and passes nothing', () => {
+      const draft = {
+        asset: 'XMR' as const,
+        recipient: MONERO,
+        amount: 1_000_000_000_000n,
+        fee: 720_000_000n,
+        feeRate: 1,
+        unsigned: new Uint8Array([1]),
+        digest: 'ab'.repeat(32),
+        createdAt: NOW,
+        inputs: [],
+        inputTotal: 1_000_720_000_000n,
+        changeAddresses: [],
+        spentKeys: ['a'.repeat(64)],
+      };
+      const verdict = verifySigned(draft, new Uint8Array([1, 2, 3]));
       expect(verdict.ok).toBe(false);
-      if (!verdict.ok) expect(verdict.reasons[0]).toMatch(/not finished/);
+      if (!verdict.ok) expect(verdict.reasons[0]).toMatch(/verifySignedMonero/);
     });
   });
 });

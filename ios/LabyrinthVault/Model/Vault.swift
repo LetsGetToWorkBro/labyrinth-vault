@@ -135,6 +135,16 @@ enum Route: Equatable {
     /// the txid come from the engine, not from a fixture.
     case signed(TxSummary, Engine.SignReply)
     case signedQR(TxSummary, Engine.SignReply)
+    /// The Monero flow, one case per face, mapping onto the *same* route
+    /// kinds as the Bitcoin flow — `Flow.allowed` does not know which chain a
+    /// summary describes, and must not: the rules about what may precede a
+    /// signature are chain-independent, and two tables would be two chances
+    /// for one of them to be wrong.
+    case xmrReview(MoneroSummary)
+    case xmrDestination(MoneroSummary, MoneroOutput)
+    case xmrApprove(MoneroSummary, reviewedDigest: String)
+    case xmrSigned(MoneroSummary, Engine.MoneroSignReply)
+    case xmrSignedQR(MoneroSummary, Engine.MoneroSignReply)
     /// The answer to a companion's key image request: how many were
     /// computed, how many refused, and the frames to show back.
     case keyImages(Engine.KeyImagesReply)
@@ -299,6 +309,26 @@ final class Vault: ObservableObject {
             return
         }
 
+        if reply.kind == "XMRUNSIGNED" {
+            do {
+                let summary = try engine.moneroDescribe(payloadHex: payload)
+                Haptic.tick()
+                go(.xmrReview(summary))
+            } catch EngineError.refusedAs(let code, _) {
+                Haptic.refuse()
+                go(.refused(Refusal(code: code)))
+            } catch {
+                /* parseUnsignedSet speaks in sentences, not codes: a claimed
+                 * change that does not re-derive, a ring whose real member is
+                 * missing, a malformed amount. Each is fatal and none carries
+                 * an override, so they all land on the refusal screen with
+                 * the engine's own words. */
+                Haptic.refuse()
+                go(.refused(.unreadable))
+            }
+            return
+        }
+
         pendingPsbtHex = payload
         do {
             let summary = try engine.describe(psbtHex: payload)
@@ -352,6 +382,11 @@ final class Vault: ObservableObject {
         case .approve: .approve
         case .signed: .signed
         case .signedQR: .signedQR
+        case .xmrReview: .review
+        case .xmrDestination: .destination
+        case .xmrApprove: .approve
+        case .xmrSigned: .signed
+        case .xmrSignedQR: .signedQR
         case .keyImages: .keyImages
         case .refused: .refused
         case .settings: .settings
@@ -383,6 +418,39 @@ final class Vault: ObservableObject {
             let signed = try engine.sign(psbtHex: psbt, approvedDigest: reviewedDigest)
             Haptic.signed()
             go(.signed(tx, signed))
+        } catch {
+            Haptic.refuse()
+            go(.refused(.digestMismatch))
+        }
+    }
+
+    /// Sign the Monero set, same double check as the Bitcoin path: the shell
+    /// compares the digest it carried against the summary it is about to
+    /// sign, and the engine compares that digest against the set it described.
+    ///
+    /// The randomness is drawn here, at the call site, in exactly the amount
+    /// the description stated — the engine owns the formula and refuses any
+    /// other length. If the platform CSPRNG fails (which documented practice
+    /// treats as impossible), nothing weaker is substituted: the signing
+    /// simply does not happen.
+    func completeMoneroSigning(_ tx: MoneroSummary, reviewedDigest: String) {
+        guard reviewedDigest == tx.digest else {
+            Haptic.refuse()
+            go(.refused(.digestMismatch))
+            return
+        }
+        guard let engine, let randomHex = Engine.freshRandomHex(bytes: tx.randomBytes) else {
+            Haptic.refuse()
+            go(.refused(.unreadable))
+            return
+        }
+        do {
+            let signed = try engine.moneroSign(approvedDigest: reviewedDigest, randomHex: randomHex)
+            Haptic.signed()
+            go(.xmrSigned(tx, signed))
+        } catch EngineError.refusedAs(let code, _) {
+            Haptic.refuse()
+            go(.refused(Refusal(code: code)))
         } catch {
             Haptic.refuse()
             go(.refused(.digestMismatch))

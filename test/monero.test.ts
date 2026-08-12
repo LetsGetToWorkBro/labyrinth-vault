@@ -638,3 +638,16 @@ describe('secrets are bytes, and bytes can be wiped', () => {
     expect(toHex(restored.viewSecret)).toBe(toHex(wallet.viewSecret));
   });
 });
+
+describe('formatting piconero', () => {
+  it('formats whole, fractional and mixed amounts, zeros trimmed', async () => {
+    const { formatXmr } = await import('../src/keys/monero');
+    expect(formatXmr(0n)).toBe('0');
+    expect(formatXmr(1_000_000_000_000n)).toBe('1');
+    expect(formatXmr(600_000_000_000n)).toBe('0.6');
+    expect(formatXmr(720_000_000n)).toBe('0.00072');
+    expect(formatXmr(14_732_810_450_000n)).toBe('14.73281045');
+    expect(formatXmr(1n)).toBe('0.000000000001');
+    expect(formatXmr(-600_000_000_000n)).toBe('-0.6');
+  });
+});

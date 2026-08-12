@@ -500,7 +500,8 @@ describe('the screen model matches the wire, field for field', () => {
    * still earns its place alongside that one: `Decodable` ignores a field it
    * has never heard of, so a wire field Swift silently drops would decode
    * cleanly and show nothing. Only comparing the lists catches that. */
-  const swift = readFileSync('ios/LabyrinthVault/Model/TxSummary.swift', 'utf8');
+  const swift = readFileSync('ios/LabyrinthVault/Model/TxSummary.swift', 'utf8') +
+    readFileSync('ios/LabyrinthVault/Model/MoneroSummary.swift', 'utf8');
 
   /**
    * TypeScript types, translated into the Swift they must be written as.
@@ -519,6 +520,7 @@ describe('the screen model matches the wire, field for field', () => {
     'WireInput[]': '[TxInput]',
     'WireOutput[]': '[TxOutput]',
     'WireWarning[]': '[TxWarning]',
+    'WireMoneroOutput[]': '[MoneroOutput]',
   };
 
   /** `name: SwiftType` for every field of a TypeScript interface. */
@@ -554,6 +556,8 @@ describe('the screen model matches the wire, field for field', () => {
     ['WireOutput', 'TxOutput'],
     ['WireInput', 'TxInput'],
     ['WireWarning', 'TxWarning'],
+    ['WireMoneroSummary', 'MoneroSummary'],
+    ['WireMoneroOutput', 'MoneroOutput'],
   ];
 
   it('found both sides, so a pass means something', () => {

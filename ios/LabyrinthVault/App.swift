@@ -51,6 +51,11 @@ struct RootView: View {
         case .approve(let tx, let digest): ApproveView(tx: tx, reviewedDigest: digest)
         case .signed(let tx, let result): SignedView(tx: tx, result: result)
         case .signedQR(let tx, let result): SignedQRView(tx: tx, result: result)
+        case .xmrReview(let tx): XmrReviewView(tx: tx)
+        case .xmrDestination(let tx, let out): XmrDestinationView(tx: tx, output: out)
+        case .xmrApprove(let tx, let digest): XmrApproveView(tx: tx, reviewedDigest: digest)
+        case .xmrSigned(let tx, let result): XmrSignedView(tx: tx, result: result)
+        case .xmrSignedQR(let tx, let result): XmrSignedQRView(tx: tx, result: result)
         case .keyImages(let result): KeyImagesView(result: result)
         case .refused(let refusal): RefusalView(refusal: refusal)
         case .settings: SettingsView()
@@ -76,6 +81,11 @@ struct RootView: View {
         case .approve: "approve"
         case .signed: "signed"
         case .signedQR: "signedqr"
+        case .xmrReview: "xmrreview"
+        case .xmrDestination: "xmrdestination"
+        case .xmrApprove: "xmrapprove"
+        case .xmrSigned: "xmrsigned"
+        case .xmrSignedQR: "xmrsignedqr"
         case .keyImages: "keyimages"
         case .refused(let r): "refused-\(r.headline.joined())"
         case .settings: "settings"

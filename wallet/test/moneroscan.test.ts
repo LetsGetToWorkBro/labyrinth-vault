@@ -57,6 +57,8 @@ import {
 } from '../src/core/moneroscan';
 import { transactions } from '../src/net/monerod';
 import { NodeWatcher } from '../src/core/watcher';
+import { buildOutputsRequest } from '../src/core/keyimages';
+import { computeKeyImages, encodeKeyImageReply } from '@vault/keys/keyimages';
 
 // ---------------------------------------------------------------------------
 // The recipient. A wallet whose seed is on the next line, deliberately.
@@ -633,24 +635,40 @@ describe('what a view key cannot do', () => {
 
 describe('the watcher that drives it', () => {
   const nodes = { btc: null, xmr: { kind: 'monerod' as const, url: 'https://node.example', label: 'x', mine: false } };
+
+  /* The vault's half of the key-image trip, as the real code the vault runs,
+   * so "spendable after images" is proved with a genuine reply rather than a
+   * hand-typed one. Same helper as keyimages.test.ts. */
+  const vaultReplyFor = (found: readonly ReturnType<NodeWatcher['moneroOutputs']>[number][]): Uint8Array => {
+    const request = buildOutputsRequest(found);
+    if (!request.ok) throw new Error(request.problem);
+    const parsed = JSON.parse(new TextDecoder().decode(request.payload)) as Parameters<typeof computeKeyImages>[1];
+    return encodeKeyImageReply(computeKeyImages(recipient, parsed));
+  };
   const watch = (chain: FakeChain, scanFrom: { birth: number; height: number }) =>
     new NodeWatcher(nodes, null, { btc: null, xmr: fakeNode(chain) }, 1_700_000_000_000, {
       account,
       scan: scanFrom,
     });
 
-  it('puts what arrived into the balance, and never into spendable', async () => {
+  it('puts what arrived into the balance, and into spendable only after key images', async () => {
     const watcher = watch({ blocks: { 10: [payTo([4_000_000_000_000n])] }, tip: 10 }, { birth: 10, height: 10 });
     await watcher.refresh(1_700_000_000_000);
 
     const view = watcher.snapshot().assets.XMR;
     expect(view.balance).toBe(4_000_000_000_000n);
-    /* Zero, and not because the scan is behind. Building a Monero spend needs
-     * key images and ring members, and this half of the product has neither.
-     * A non-zero spendable would put a send button in front of somebody it
-     * cannot serve. */
+    /* Zero, and not because the scan is behind. An output the vault has not
+     * answered a key image for has an unknowable spent status, so it cannot
+     * honestly be offered to a send screen. The rule is coverage, not a
+     * missing feature: the moment the vault's reply is scanned, the same
+     * output counts, which the next assertion proves. */
     expect(view.spendable).toBe(0n);
     expect(view.height).toBe(10);
+
+    const found = watcher.moneroOutputs();
+    watcher.importKeyImages(vaultReplyFor(found));
+    await watcher.refresh(1_700_000_000_001);
+    expect(watcher.snapshot().assets.XMR.spendable).toBe(4_000_000_000_000n);
   });
 
   it('never shows a Monero balance without the sentence that qualifies it', async () => {

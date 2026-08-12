@@ -1,8 +1,8 @@
 /**
  * What the wallet knows.
  *
- * The online half is allowed to know a great deal — balances, addresses,
- * history, fee markets — and none of it is a secret. That is the whole reason
+ * The online half is allowed to know a great deal: balances, addresses,
+ * history, fee markets: and none of it is a secret. That is the whole reason
  * this half can be an everyday phone with a network on it. There is exactly
  * one thing missing from every type in this file, and its absence is the
  * product: nothing here holds a private key, and nothing here can be turned
@@ -43,7 +43,7 @@ export const TICKER_NAME: Record<Asset, string> = { BTC: 'BITCOIN', XMR: 'MONERO
  * For Bitcoin that is an extended public key: enough to derive every address
  * the vault will ever use, and no help at all in spending from them. For
  * Monero it is the private *view* key and the primary address, which is the
- * equivalent trade — the view key reads incoming payments and cannot author an
+ * equivalent trade: the view key reads incoming payments and cannot author an
  * outgoing one.
  */
 export interface WatchOnlyAccount {
@@ -142,7 +142,7 @@ export interface Transaction {
 // ------------------------------------------------------------- draft + wire
 
 /**
- * A payment being built. Unsigned by construction — there is nowhere to put a
+ * A payment being built. Unsigned by construction: there is nowhere to put a
  * signature, and nothing in this package can produce one.
  */
 export interface Draft {
@@ -160,7 +160,7 @@ export interface Draft {
 
   /* The three fields below are the *intent*, recorded before the vault sees
    * anything, and they are what a returned signature gets compared against.
-   * They are never re-read from what comes back — a record that updates itself
+   * They are never re-read from what comes back: a record that updates itself
    * from the thing it is supposed to be checking is not a record. */
 
   /** Exactly which coins this spends. Order-insensitive on comparison. */
@@ -171,9 +171,11 @@ export interface Draft {
   /** Our own change addresses in this transaction. Any output that is neither
    *  the recipient nor one of these is somebody else being paid. */
   changeAddresses: string[];
-  /** True for a payload whose format is a stand-in rather than the real one.
-   *  Monero, today. Shown on screen; never silently true. */
-  provisional?: boolean;
+  /** Monero only: the one-time keys of the coins this draft plans to spend.
+   *  The Monero record of intent, playing the role `inputs` plays for
+   *  Bitcoin: the returned signature's key images are compared against
+   *  these, through the book the vault itself populated. */
+  spentKeys?: string[];
 }
 
 /** What came back from the camera, before anybody has decided to trust it. */
@@ -197,7 +199,7 @@ export interface SignedReturn {
  * There is no socket, no pairing radio and no session key. "Connected" here
  * means this wallet holds a watch-only account the vault exported, and knows
  * how to render frames the vault can read. The vault does not know this device
- * exists, and cannot be reached — the wallet can only put a QR on the screen
+ * exists, and cannot be reached: the wallet can only put a QR on the screen
  * and hope a person is holding the other phone.
  *
  * Naming that honestly matters, because a user who believes there is a live

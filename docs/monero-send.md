@@ -176,16 +176,38 @@ prints the accepted transaction id. That id and the node that accepted it are
 what fill in the section below, in the same commit that flips the constant. The
 script refuses mainnet; the gate is not its to lift.
 
-## What is not built: the in-app screens
+## The in-app screens
 
-Everything above is built and tested. What is not is the presentation layer on
-the two devices: the wallet's screen for composing a Monero spend and animating
-the unsigned set across as QR, and the vault's screen for rendering the
-destination and amount from `moneroDescribe`, taking the approval, and showing
-the signed frames from `moneroSign`. The functions those screens call all
-exist and are tested at the boundary Swift and React Native reach them through;
-what remains is the pixels and the camera, which need a device and a person to
-build and to judge, not a test runner.
+Built now, on both devices, on the functions above.
+
+**The wallet's half** is the same send flow Bitcoin uses, with a real plan
+behind it: `prepareMoneroDraft` selects coins the vault has answered key
+images for, draws the ring from the node's distribution, and wraps the exact
+`encodeUnsigned` bytes as the draft, so the digest the wallet displays is the
+digest the vault binds its approval to. The provisional stand-in payload is
+gone. What comes back is checked by `verifySignedMonero` against the three
+facts a watching wallet can verify: the fee to the piconero, the key images
+against the coins that were approved, and the network - and the destination
+is verified where destinations are verifiable, on the vault's screen, by a
+person. The broadcast still passes the chokepoint above; the gate is
+unchanged by any of this.
+
+**The vault's half** renders `moneroDescribe` in full - every payee, the
+stated fee and the balance rule, the change (checked, see below), the ring
+under a PRIVACY heading because decoy choice cannot move money - behind the
+same scroll gate and hold-to-sign the Bitcoin flow uses, and shows the
+XMRSIGNED frames from `moneroSign` under the words NOT BROADCAST.
+
+One check was added to the engine alongside the screens, because building
+them exposed its absence: `change: true` in an unsigned set was a claim
+nothing verified - the signer uses it only for address-math classification.
+`moneroDescribe` now refuses any set whose claimed change pays an address
+other than the vault's own, with the same `output-path-mismatch` code as the
+PSBT reader's change-swap defense, before a screen ever renders the words
+"returning to you".
+
+What still needs a device and a person: exercising the camera loop and the
+screens on real hardware, which no test runner can judge.
 
 ## A known limitation, stated because hiding it would be worse
 
