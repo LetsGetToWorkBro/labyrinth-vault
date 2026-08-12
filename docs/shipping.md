@@ -142,24 +142,39 @@ the BIS report) are the ones to start first.
 
 **Prerequisites, once ever:**
 
-- [ ] **Organization enrollment.** Guideline 3.1.5(b): cryptocurrency wallet
-      apps must come from a developer enrolled as an *organization*, not an
-      individual. If the account is individual today, start the conversion
-      first: it involves a D-U-N-S number and takes days, not minutes.
+- [x] **Organization enrollment. Done.** Guideline 3.1.5(b): cryptocurrency
+      wallet apps must come from a developer enrolled as an *organization*,
+      not an individual. This was the long pole, since it involves a D-U-N-S
+      number and takes days rather than minutes, and it covers both apps
+      because they share one account.
 - [ ] **BIS self-classification report** for the encryption (5D992.c mass
-      market), emailed per the section above. Once, then annually.
-- [ ] **The contact address receives mail.** `info@labyrinthwallet.com` is
-      printed in the privacy policy and in SECURITY.md, which means a reviewer
-      and a security researcher both have it. Cloudflare Email Routing is free
-      and the zone is already there; it forwards, so check a test message
-      actually arrives before either document is published.
-- [ ] **Host the privacy policy.** `store/vault/privacy-policy.md`, at
-      `https://labyrinthwallet.com/vault/privacy`. App Store Connect requires
-      the URL for every app; the document is written and versioned here so the
-      form is a paste. The site is a single page today, so this needs either a
-      route added to it or a static file served beside it before the URL is
-      entered. **Check it resolves before submitting**: a reviewer following a
-      dead privacy-policy link is a rejection with a slow turnaround.
+      market), emailed per the section above. Once, then annually. Not needed
+      for TestFlight; needed before the Store.
+- [x] **The contact address receives mail. Done.**
+      `info@labyrinthwallet.com` is printed in both privacy policies and in
+      SECURITY.md, which means a reviewer and a security researcher both have
+      it, and mail sent to it now arrives.
+- [x] **Host the privacy policy. Done, and rendered rather than copied.**
+      `site/scripts/render-policies.mjs` runs as part of `npm run build` in
+      `site/` and writes both documents into the built site from the markdown
+      in `store/`, so the hosted page cannot drift from the versioned one:
+      `store/vault/privacy-policy.md` to
+      `https://labyrinthwallet.com/vault/privacy`, and the wallet's to
+      `https://labyrinthwallet.com/privacy`.
+
+      **What made this worth doing carefully.** Those URLs did not 404 before.
+      `site/wrangler.jsonc` sets `not_found_handling` to
+      `single-page-application`, so *every* unmatched path answers 200 with
+      the marketing page. A reviewer following the privacy-policy link would
+      have landed on the landing page and concluded there was no policy, and
+      nothing anywhere would have reported an error. A dead link at least
+      looks dead.
+
+      `test/store.test.ts` now holds three things together: the route the
+      build writes, the URL this document tells you to paste, and the file it
+      is rendered from. The renderer also refuses any markdown construct it
+      does not handle rather than rendering around it, because a policy that
+      quietly loses a sentence is worse than a build that stopped.
 
 **In App Store Connect, per the vault app record:**
 
@@ -213,21 +228,20 @@ domain, and carries one review risk the vault does not.
 
 **Prerequisites, once ever:**
 
-- [ ] **Organization enrollment.** The same 3.1.5(b) gate as the vault, and the
-      same account, so doing it for one does it for both. Start it first if the
-      account is still an individual.
-- [ ] **No BIS report for this app.** The wallet is watch-only and answers the
+- [x] **Organization enrollment. Done.** The same 3.1.5(b) gate as the vault
+      and the same account, so doing it once did it for both.
+- [x] **No BIS report for this app.** The wallet is watch-only and answers the
       encryption question `no` (see the export-compliance section above), so the
       5D992.c self-classification the vault needs does not apply here. Nothing
       to file.
-- [ ] **Host the privacy policy.** `store/wallet/privacy-policy.md`, at
-      `https://labyrinthwallet.com/privacy`, the wallet's own domain, now that
-      it exists. App Store Connect requires the URL; the document is written and
-      versioned here so the form is a paste. **Check it resolves before
-      submitting.** A dead privacy-policy link is a slow-turnaround rejection.
-- [ ] **The contact address receives mail.** `info@labyrinthwallet.com` is in
-      the policy; send a test message and confirm it arrives before the URL is
-      entered anywhere.
+- [x] **Host the privacy policy. Done.** `store/wallet/privacy-policy.md` is
+      rendered into the built site at `https://labyrinthwallet.com/privacy` by
+      `site/scripts/render-policies.mjs`, from the markdown rather than a copy
+      of it. See the vault's entry above for why that mattered more than it
+      looks: the URL used to answer 200 with the marketing page rather than
+      404, so a reviewer would have seen a landing page and no error.
+- [x] **The contact address receives mail. Done.**
+      `info@labyrinthwallet.com` is in the policy and mail sent to it arrives.
 
 **In App Store Connect, per the wallet app record:**
 

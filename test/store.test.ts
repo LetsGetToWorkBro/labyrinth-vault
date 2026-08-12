@@ -143,6 +143,35 @@ describe('the listings say what the code does', () => {
     expect(send).toMatch(/\{DEMO && \(/);
   });
 
+  it('both privacy policies are served at the URL the runbook tells you to paste', () => {
+    /* App Store Connect demands a privacy-policy URL per app and a reviewer
+     * follows it. Neither URL served a policy until `site/scripts/render-policies.mjs`,
+     * and the failure was quiet rather than loud: `not_found_handling` is
+     * `single-page-application`, so an unmatched path answers 200 with the
+     * marketing page. A reviewer would have landed on the landing page and
+     * concluded there was no policy, with nothing reporting an error.
+     *
+     * Three things have to agree, and this holds them together: the route the
+     * build writes, the URL `docs/shipping.md` says to paste, and the file
+     * that route is rendered from. Any one of them moving alone is a dead
+     * link that looks alive. */
+    const renderer = readFileSync('site/scripts/render-policies.mjs', 'utf8');
+    const shipping = read('docs/shipping.md');
+    for (const [app, route] of [['vault', 'vault/privacy'], ['wallet', 'privacy']] as const) {
+      const entry = new RegExp(
+        `source:\\s*'store/${app}/privacy-policy\\.md',\\s*route:\\s*'${route}'`,
+      );
+      expect(renderer, `the renderer does not emit /${route} from store/${app}`).toMatch(entry);
+      expect(
+        shipping,
+        `docs/shipping.md does not tell the ${app} submitter to paste labyrinthwallet.com/${route}`,
+      ).toMatch(new RegExp(`labyrinthwallet\\.com/${route}\\b`));
+    }
+    /* And the build has to actually run it, or the routes exist only here. */
+    const build = JSON.parse(readFileSync('site/package.json', 'utf8')).scripts.build;
+    expect(build, 'site build does not render the policies').toMatch(/render-policies\.mjs/);
+  });
+
   it('the privacy policy does not describe a protection this build does not have', () => {
     /* The policy explains the swap proxy and Oblivious HTTP, and both are real
      * arrangements with real code behind them. Neither is switched on: the
