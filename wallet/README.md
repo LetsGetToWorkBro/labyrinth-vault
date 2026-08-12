@@ -1,8 +1,16 @@
 # Labyrinth Wallet
 
+<img src="../docs/images/wallet-home.webp" width="270" align="right" alt="The home screen: total balance, BTC and XMR rows, and send, receive and swap actions">
+
 **The online half. A watch-only Bitcoin and Monero wallet that prepares
 transactions, hands them to an airgapped vault as QR codes, and broadcasts what
 comes back signed.**
+
+The balances on the right are fixtures, and the running app says so on the
+screen itself. The image is the marketing site's recreation rather than a
+screenshot; this app has never been compiled, so there are no real ones yet.
+
+<br clear="right">
 
 > ### This is a frontend, and there is no chain behind it
 >

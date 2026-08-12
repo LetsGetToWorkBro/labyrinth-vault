@@ -64,8 +64,8 @@ describe('the vault is shaped like something that can be uploaded', () => {
   });
 
   it('reaches its fixtures through the accessor that exists in both builds', () => {
-    /* `Bundle.module` is synthesised by SwiftPM for targets that declare
-     * resources. Xcode synthesises nothing, so naming it there is a compile
+    /* `Bundle.module` is synthesized by SwiftPM for targets that declare
+     * resources. Xcode synthesizes nothing, so naming it there is a compile
      * error: "Type 'Bundle' has no member 'module'". It is the same shape of
      * mistake as the module name above, and it fails in the same asymmetric
      * way: green under `swift test`, green in CI, broken at the first ⌘U.

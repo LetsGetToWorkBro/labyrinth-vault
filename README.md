@@ -1,20 +1,22 @@
-# Labyrinth Vault
+# Labyrinth
 
-**An airgapped signing device for Bitcoin and Monero, made out of the phone in
-your drawer.**
+**Two apps that make an airgapped Bitcoin and Monero wallet out of a phone you
+already own, and a spare one from a drawer.**
+
+![The two halves: an offline vault holding keys and an online wallet watching the chain, joined only by QR](docs/images/two-halves.webp)
 
 > ### Do not put money on this yet
 >
 > Nothing here has been independently audited.
 >
-> The vault's engine is tested, its app is wired to it, and the platform-free
-> half of the Swift compiles and passes its own tests. The rest of the iOS
-> target, everything touching SwiftUI and JavaScriptCore, has never been
-> through a compiler: it was written where there is no Apple toolchain.
+> The vault's engine is tested, the app is wired to it, and as of this commit
+> the whole iOS target compiles in Xcode. What that does not mean is that it
+> has been *used*: it has never run against a real transaction on a real phone,
+> and one measurement that decides part of its design is still missing.
 >
-> The wallet is a frontend and there is no chain behind it. Every balance,
+> The wallet is a complete interface with no chain behind it. Every balance,
 > price and fee it shows comes from a fixture, and it says so on screen for
-> exactly as long as that stays true.
+> exactly as long as that stays true. It has never been compiled at all.
 >
 > Tested is not the same as safe to hold your savings.
 >
@@ -23,29 +25,67 @@ your drawer.**
 
 The old phone you stopped using is a computer with a screen, a camera, a
 secure enclave and a battery. Take the SIM out, turn the radios off, install
-this, and it becomes a hardware wallet that cost you nothing and that no
+the vault, and it becomes a hardware wallet that cost you nothing and that no
 courier ever handled.
 
-It is not a wallet in the usual sense. It holds keys and it gives signatures.
-It has no network code in it at all, so there is nothing to misconfigure and
-nothing to leak: the only thing that ever leaves is a QR code you point a
-camera at.
+## The two apps
+
+### Labyrinth Vault, the offline half
+
+<img src="docs/images/vault-review.webp" width="300" align="right" alt="The vault's confirmation screen: amount, destination, fee and change, above a VERIFIED panel">
+
+Runs on the phone with its radios off. It makes the keys, keeps them encrypted
+at rest, reads a transaction handed to it as QR codes, renders it in full, and
+signs only what a person approved.
+
+It is not a wallet in the usual sense: it has no balance, no history and no
+address book, because it never sees a chain. **It has no networking code in it
+at all**, so there is nothing to misconfigure and nothing to leak. The only
+thing that ever leaves is a QR code you point a camera at.
+
+Native Swift and SwiftUI around one compiled TypeScript engine, evaluated on
+device in JavaScriptCore. Source in [`ios/`](ios) and [`src/`](src).
+
+<br clear="right">
+
+### Labyrinth Wallet, the online half
+
+<img src="docs/images/wallet-home.webp" width="300" align="right" alt="The wallet's home screen: total balance, BTC and XMR rows, and send, receive and swap actions">
+
+Runs on the phone you actually carry. It watches Bitcoin and Monero with
+public keys only, builds unsigned payments, shows them to the vault as animated
+QR frames, reads the signed result back through the camera, checks it against
+what was approved, and broadcasts.
+
+**It has never seen a private key and has no screen that would accept one.**
+What it can lose is your privacy, not your coins, which is why it ships with no
+default node and explains why on the screen where you choose one.
+
+React Native and Expo, importing the wire format and address rules from
+[`src/`](src) rather than copying them. Source in [`wallet/`](wallet).
+
+<br clear="right">
+
+### And, because the wallet has to talk to strangers
+
+[`worker/`](worker) is a Cloudflare Worker that stands between the wallet and
+the exchanges and public chain nodes, so they see it instead of your phone. It
+keeps nothing, and that is enforced by a test walking its own source rather
+than promised. [`site/`](site) is the marketing site at
+[labyrinthwallet.com](https://labyrinthwallet.com).
+
+> **About the pictures above.** They are the marketing site's recreations of
+> the two interfaces, built in HTML and CSS in [`site/`](site), not screenshots
+> of the built apps. Real ones need a Mac and a device: the shot list is in
+> [docs/shipping.md](docs/shipping.md), where they are also what App Store
+> Connect wants. They are drawn from the same design system the apps use, so
+> they are accurate about the layout and the words; they are not evidence that
+> anything runs.
 
 ## How it works
 
-Two halves that never touch:
-
-**The vault** (this app, on the offline phone) makes the keys, keeps them, and
-signs what you approve. It asks for no network permission, which means the
-absence is something you can verify in Settings rather than something we
-assert in a README.
-
-**The wallet** (`wallet/` in this repository, or a desktop wallet like Sparrow)
-watches the chain with a watch-only key, builds unsigned transactions, and
-broadcasts the signed ones. It cannot spend anything: it has never seen a
-private key.
-
-They talk in one direction at a time, by showing each other QR codes.
+Two halves that never touch. They talk in one direction at a time, by showing
+each other QR codes.
 
 ```
    vault (offline)                        wallet (online)
@@ -247,15 +287,32 @@ Early. What exists and is tested:
 
 - **The online half** (`wallet/`). Labyrinth Wallet, the everyday app that
   watches the chain, builds the payments, shows them to the vault as QR frames
-  and broadcasts what comes back. A React Native application, and the whole
-  interface exists: the send flow end to end, the vault screen, the security
-  center, and the state that matters most, which is a returned transaction that
-  does not match the one that was approved.
+  and broadcasts what comes back. A React Native application with 513 tests of
+  its own, and the whole interface exists: home, receive, the send flow end to
+  end through the QR handoff, the vault screen, the swap, the node picker, the
+  security center, and the state that matters most, which is a returned
+  transaction that does not match the one that was approved.
 
   It imports the wire and the address rules from `src/` rather than copying
   them, so both halves speak one format by construction. It has its own
   package, because it depends on React Native and the vault's dependency list
-  is a test. There is no node client behind it yet, and it says so on screen.
+  is a test.
+
+  Three things about it are worth knowing before reading the code:
+
+  - **There is no default node, deliberately.** A public Esplora server asked
+    about your addresses learns your whole wallet from one IP, so choosing one
+    is a decision the app makes you make, and running your own is presented as
+    the ordinary choice rather than the advanced one. Nothing is sent anywhere
+    until you have set one.
+  - **The numbers are fixtures until you do.** `src/core/demo.ts` supplies every
+    balance, price, fee estimate and confirmation count, and every screen
+    showing one is marked `DEMO DATA` for exactly as long as that is true.
+  - **The stand-in signer is compiled out of release.** A demo vault that signs
+    with a published seed is the exact failure this product exists to prevent,
+    so both it and the controls that reach it are behind `__DEV__`, and a test
+    holds the store listing's "compiled out" claim to the code.
+
   See [wallet/README.md](wallet/README.md).
 
 - **Swapping** (`wallet/src/core/swap.ts`), which is the one feature in this
@@ -278,24 +335,41 @@ Early. What exists and is tested:
   an order is verified the deposit goes through the ordinary send flow and the
   vault, because that part *is* checkable and must not be routed around.
 
+- **The vault builds** (`ios/project.yml`). Twenty-three files that imported
+  SwiftUI, JavaScriptCore, CryptoKit or CoreImage had only ever been *parsed*,
+  because those frameworks exist nowhere but Apple's platforms. They compiled
+  in Xcode on the first attempt.
+
+  A compiler proves the app is well formed and nothing more. The launch gate
+  evaluates the engine bundle, checks its digest and runs the self-test
+  vectors, and none of that happens until it is on a device.
+
 Next, in order:
 
-1. Build the iOS target in Xcode. The half of the Swift that imports SwiftUI,
-   JavaScriptCore and CryptoKit has only ever been *parsed*, because those
-   frameworks exist nowhere but Apple's platforms. That build is the first real
-   check on it. The other half already compiles and is tested; see below.
-   One measurement is waiting on a real device specifically: whether the key
-   derivation needs to be native. `npm run bench:kdf` says 1554 ms for the default parameters on a
-   server CPU *with* a JIT; JavaScriptCore in an app has no JIT, and how much
-   worse that is on a decade-old phone is a number nobody should guess. See
-   [docs/native-primitives.md](docs/native-primitives.md), which is also the
-   argument for what should and should not ever be ported to Swift.
-2. Monero transaction signing. The primitives are built and pinned to Monero's
-   own vectors; what is left is CryptoNight, a Boost portable-binary-archive
-   reader, wallet2's `unsigned_tx_set` structure and CLSAG with Bulletproofs+.
-   Each is named, in order, in [docs/monero-signing.md](docs/monero-signing.md),
-   along with the reason none of it ships until it can be tested against a real
-   Monero wallet rather than against itself.
+1. **Run it on a real phone.** It compiles; it has not been used. Two things
+   need a device rather than a simulator: the keychain's passcode-bound access
+   class, which is the mechanism behind the screen that tells somebody their
+   vault was deleted because they turned their passcode off, and one
+   measurement. Whether the key derivation needs to be native rests on a single
+   number nobody should guess: `npm run bench:kdf` says 1554 ms for the default
+   parameters on a server CPU *with* a JIT, and JavaScriptCore inside an app
+   has no JIT. See [docs/native-primitives.md](docs/native-primitives.md),
+   which is also the argument for what should and should not ever be ported to
+   Swift.
+2. **Compile the wallet.** `expo prebuild` has been proven on Linux with
+   `--no-install`, so the generated project is a known quantity, but nothing
+   has run CocoaPods or a compiler over it. The vault's first build was clean;
+   that is weak evidence about a different app in a different language.
+3. **A node client for the wallet**, so the numbers stop being fixtures. Until
+   then every screen showing a balance says `DEMO DATA`, and external
+   TestFlight is gated on this rather than on the calendar.
+4. **Monero transaction signing.** The primitives are built and pinned to
+   Monero's own vectors; what is left is CryptoNight, a Boost
+   portable-binary-archive reader, wallet2's `unsigned_tx_set` structure and
+   CLSAG with Bulletproofs+. Each is named, in order, in
+   [docs/monero-signing.md](docs/monero-signing.md), along with the reason none
+   of it ships until it can be tested against a real Monero wallet rather than
+   against itself.
 
 ## Marketing site
 
@@ -329,13 +403,55 @@ npm run ship            # where both apps are
 npm run ship -- --bump  # raise both build numbers together
 ```
 
+## The repository
+
+| | What | Runs where | Its own README |
+| --- | --- | --- | --- |
+| [`src/`](src) | The engine: keys, wire, transaction reading, sealing. TypeScript, compiled to one file the vault evaluates. | both apps | [docs/engine.md](docs/engine.md) |
+| [`ios/`](ios) | Labyrinth Vault. Swift and SwiftUI around the engine. | offline phone | [ios/README.md](ios/README.md) |
+| [`wallet/`](wallet) | Labyrinth Wallet. React Native and Expo. | everyday phone | [wallet/README.md](wallet/README.md) |
+| [`worker/`](worker) | The relay in front of exchanges and chain nodes. Keeps nothing. | Cloudflare | [worker/README.md](worker/README.md) |
+| [`site/`](site) | labyrinthwallet.com. Vite and React. | Cloudflare | [site/README.md](site/README.md) |
+| [`store/`](store) | Every App Store listing field, one file each, version controlled beside the code they describe. | App Store Connect | [store/README.md](store/README.md) |
+| [`test/`](test) | The guards. Most of them hold a sentence somewhere against what the code actually does. | `npm test` | |
+| [`docs/`](docs) | The formats, the threat model, the runbooks. | | |
+
 ## Running the tests
 
 ```sh
 npm install
-npm test
+npm test              # the engine, the guards, the Swift model, the listings
 npm run typecheck
 ```
+
+`npm test` is the whole pipeline rather than a test runner: it rebuilds the
+engine bundle and writes its digest, regenerates the icons from the app's own
+geometry and the Swift fixtures, runs vitest, then compiles the platform-free
+Swift and runs its tests. A build whose regenerated artifacts differ from what
+was committed fails CI, because that means the repository is lying about what
+ships.
+
+The wallet has its own package and its own suite:
+
+```sh
+cd wallet && npm ci && npx vitest run && npx tsc --noEmit
+```
+
+And the two things that need a Mac, once you have one:
+
+```sh
+cd ios && xcodegen generate
+xcodebuild -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
+  -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build   # type-check
+xcodebuild test -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
+  -destination 'platform=iOS Simulator,name=iPhone 17'     # ⌘U
+```
+
+[ios/README.md](ios/README.md) has the traps, and one of them is worth reading
+before the first attempt: **the same Swift sources are built twice under two
+different sets of conventions**, once by SwiftPM and once by Xcode, and every
+place they differ is invisible until somebody sits at a Mac.
 
 ## Design rules
 

@@ -1,8 +1,18 @@
 # Labyrinth Vault: the iOS shell
 
+<img src="../docs/images/vault-review.webp" width="270" align="right" alt="The confirmation screen: amount, destination, fee and change, above a VERIFIED panel">
+
 The native iPhone front end. The README at the repository root promises two
 things next: the iOS shell, and the confirmation screen itself. This directory
 is both.
+
+The screen on the right is the product. Everything else in this directory
+exists to get a transaction onto it accurately, and to make signing impossible
+until somebody has read it. That image is the marketing site's recreation
+rather than a screenshot: real ones need a device, and the shot list is in
+[../docs/shipping.md](../docs/shipping.md).
+
+<br clear="right">
 
 It is SwiftUI, iOS 17, and it follows the same rules as the libraries it will
 sit on top of:
@@ -75,7 +85,7 @@ xcodebuild test -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
 ```
 
 **And `xcodegen generate` after every pull that touches `project.yml`.** The
-`.xcodeproj` is a build artefact of that file and is not committed, so a pull
+`.xcodeproj` is a build artifact of that file and is not committed, so a pull
 alone changes nothing Xcode can see. The symptom is a fix that appears not to
 work, with the identical error as before.
 
@@ -111,7 +121,7 @@ Each of these was found the hard way, in this order, on the first Mac.
 | | SwiftPM | Xcode | If you write only the SwiftPM form |
 | --- | --- | --- | --- |
 | Module name | `LabyrinthVaultCore`, a library target | `LabyrinthVault`, compiled into the app | ⌘U: *Unable to resolve module dependency* |
-| Resource accessor | `Bundle.module`, synthesised | nothing synthesised | ⌘U: *Type 'Bundle' has no member 'module'* |
+| Resource accessor | `Bundle.module`, synthesized | nothing synthesized | ⌘U: *Type 'Bundle' has no member 'module'* |
 | Resource layout | `.copy` keeps `Fixtures/` | resource phase flattens to the bundle root | compiles, then finds no fixture at runtime |
 
 The third is the dangerous one, because it fails later and looks like a broken
@@ -135,7 +145,7 @@ instances:
   from under the test bundle's `TEST_HOST`
 
 A fourth divergence will not be caught by those, because they name three
-specific things. What generalises is the symptom: **if `npm run swift:check`
+specific things. What generalizes is the symptom: **if `npm run swift:check`
 passes and ⌘U does not, suspect a SwiftPM convenience before suspecting the
 code.** Then add the conditional and a fourth guard here.
 
