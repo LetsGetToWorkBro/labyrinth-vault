@@ -36,16 +36,11 @@ describe('both listings are complete and fit', () => {
       const dir = `store/${app}`;
 
       it('has every field App Store Connect asks for', () => {
-        /* The vault also carries its privacy policy, which is not a Connect
-         * form field but a URL the form demands; keeping the document here
-         * keeps it versioned next to the claims it repeats. The wallet gets
-         * one when it is submitted: its policy will differ (it talks to
-         * nodes), and writing it early would mean guessing. */
-        /* Both apps carry their privacy policy now. It is not a Connect form
+        /* Both apps carry their privacy policy. It is not a Connect form
          * field but a URL the form demands, and keeping the document here
-         * versions it next to the claims it repeats. The wallet's waited until
-         * it had a domain to host it and a network story worth being exact
-         * about; it has both now. */
+         * versions it next to the claims it repeats. The wallet's waited
+         * until it had a domain to host it and a network story worth being
+         * exact about; it has both now. */
         const extras = ['review-notes.md', 'privacy-policy.md'];
         const present = readdirSync(dir).sort();
         expect(present).toEqual([...Object.keys(LIMITS), ...extras].sort());
