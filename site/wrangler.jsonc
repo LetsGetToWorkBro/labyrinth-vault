@@ -1,0 +1,31 @@
+{
+  // The site, served as static assets by a Worker with no code in it.
+  //
+  // `name` must match the Workers project this repository is connected to in
+  // the Cloudflare dashboard. `wrangler deploy` deploys *this* name, not the
+  // project you happen to be looking at, so if the project is ever recreated
+  // under a better name, this string moves with it or the deploy quietly
+  // lands somewhere else.
+  "name": "labyrinth-vault",
+  "compatibility_date": "2026-08-01",
+
+  // No `main`. There is no Worker script: every request is answered from the
+  // built directory, which means no code runs on the edge, nothing can be
+  // injected into a response, and there is no runtime to keep patched. For a
+  // page whose argument is that you can check what it does, having nothing to
+  // check is the strongest version of that.
+  "assets": {
+    "directory": "./dist",
+
+    // One page, so anything that is not a built asset is a mistyped URL and
+    // should land on it rather than on a Cloudflare error belonging to
+    // nobody. This is the platform's own mechanism, which is why there is no
+    // catch-all in `_redirects`: a `/* -> /index.html` rule would sit in
+    // front of every asset request as well, and this does not.
+    "not_found_handling": "single-page-application"
+  }
+
+  // `public/_headers` ships inside dist/ and is read from there. It carries
+  // the immutable caching for the content-hashed assets and the CSP. Headers
+  // and redirects both work here; see site/README.md.
+}

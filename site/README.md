@@ -21,14 +21,19 @@ Git**, pick this repository, and set:
 | Field | Value |
 | --- | --- |
 | Production branch | `main` |
-| Framework preset | Vite |
-| Build command | `npm install && npm run build` |
-| Build output directory | `dist` |
 | **Root directory** | `site` |
+| **Build command** | `npm install && npm run build` |
+| Deploy command | `npx wrangler deploy` |
 
-The root directory is the one that catches people. Without it, Cloudflare
-installs the vault's dependencies at the repository root, finds no `dist`, and
-fails in a way that reads like a build error rather than a path error.
+**The root directory is the one that catches people.** Left at `/`, Cloudflare
+installs the vault's dependencies at the repository root and `wrangler deploy`
+finds no configuration there at all, because `wrangler.jsonc` lives in this
+directory. It fails in a way that reads like a build error rather than a path
+error.
+
+`site/wrangler.jsonc` is what `wrangler deploy` reads. Its `name` must match
+the Workers project, or the deploy lands on a different Worker than the one
+the domain points at.
 
 Add one environment variable, to production and preview both:
 
@@ -53,14 +58,16 @@ preview URL, which is worth having for a page this visual.
 - **Security headers**, in the same file. A strict CSP, `frame-ancestors 'none'`,
   no referrer. The page talks to nothing and the header says so, which means a
   script introduced by any future mistake has nowhere to send what it finds.
-- **Routing**, in `public/_redirects`. There is one page; every path lands on it
-  rather than on a Cloudflare error belonging to nobody.
+- **Routing**, in `wrangler.jsonc`. `not_found_handling` is set to
+  `single-page-application`, so any path that is not a built asset lands on the
+  one page there is. Done natively rather than with a `/*` rule in
+  `_redirects`, which would sit in front of every asset request too.
 
 ### Deploying without the dashboard
 
 ```sh
 npm run build
-npx wrangler pages deploy dist --project-name labyrinth-site
+npx wrangler deploy
 ```
 
 Fine for a one-off. The Git connection is better for anything ongoing, because

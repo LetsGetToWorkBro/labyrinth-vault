@@ -1,4 +1,0 @@
-# A single-page app with no client-side router, so there is exactly one page.
-# Anything else is a mistyped URL and should land on it rather than on a
-# Cloudflare error page belonging to nobody.
-/*    /index.html   200
