@@ -63,6 +63,22 @@ but since Xcode 26 the iOS runtime is not bundled, so `-destination
 runtime download before it compiles a line. Worth it when you want to *run* the
 app. Not worth it to read a list of errors.
 
+**To run the tests from the terminal you need a named device, not a generic
+one.** `xcodebuild build` accepts `generic/platform=iOS Simulator`; `xcodebuild
+test` does not, because it has to boot something. Ask what exists rather than
+guessing a model name, which changes with every Xcode:
+
+```sh
+xcrun simctl list devices available
+xcodebuild test -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
+  -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+**And `xcodegen generate` after every pull that touches `project.yml`.** The
+`.xcodeproj` is a build artefact of that file and is not committed, so a pull
+alone changes nothing Xcode can see. The symptom is a fix that appears not to
+work, with the identical error as before.
+
 There are no entitlements beyond camera access; the app asks for exactly one
 permission, because the camera is the only wire it has.
 
