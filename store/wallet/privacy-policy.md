@@ -44,9 +44,16 @@ does not pretend otherwise; the swap screen states it before you start.
 
 When a swap is available in a build, requests are routed through a proxy that
 Labyrinth operates so that the exchange sees that proxy rather than your phone.
-That proxy is built to keep nothing: it has no database, no logs, and no
-analytics, and the one counter it does keep for rate limiting is keyed by an
-irreversible HMAC of an address rather than the address itself. This is a
+The same proxy is where a price comes from, when one is shown: the proxy asks
+a public price source itself, on a timer, and serves every client the identical
+cached answer, so no price service ever learns that you run a wallet or when
+you open it. With no proxy reachable, balances are shown in coin and no price
+is claimed. And if you run this wallet only on your own nodes, it asks the
+proxy for nothing at all, prices included: your traffic touches nobody but
+machines you control, and the app treats that arrangement as worth more than a
+dollar figure. That proxy is built to keep nothing: it has no database, no logs,
+and no analytics, and the one counter it does keep for rate limiting is keyed
+by an irreversible HMAC of an address rather than the address itself. This is a
 structural property enforced by an automated test over the proxy's source, not
 a promise about intentions. Where an independent relay is configured, requests
 are additionally sent under Oblivious HTTP (RFC 9458), so that the party who

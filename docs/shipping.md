@@ -256,9 +256,11 @@ Internal TestFlight takes up to 100 testers who are members of your team and
 requires review.
 
 Ship internal first, for both apps, for a reason that is not only speed: the
-wallet has no node client yet, so every balance and fee it shows is a fixture.
-An external tester who has not read this document will reasonably believe the
-numbers. Internal testers can be told.
+wallet reads real chains only after a tester sets a node, and until then every
+number is a labeled fixture. An external tester who skips the notes will
+believe the fixture or stall at the empty Nodes screen; internal testers can
+be walked through choosing a node and pairing a vault, which is the setup the
+product actually assumes.
 
 ### 6. Submission day, vault
 
@@ -434,29 +436,39 @@ domain, and carries one review risk the vault does not.
    held in reserve.
 2. **Fixture data reads as a broken wallet.** Every number is `DEMO DATA` until
    a node is set, and an external tester who skipped the notes will believe the
-   balances. Ship internal TestFlight first (it skips Beta App Review), and gate
-   external testing on a node client landing.
+   balances. Ship internal TestFlight first (it skips Beta App Review), and
+   open external testing with instructions that lead with the Nodes screen,
+   since setting one is the moment the product becomes real.
 3. **2.1 completeness.** With the stand-in controls now gated on `__DEV__`, a
    release build has no button that does nothing; the receive screen simply
    waits for a vault. If a reviewer still finds a dead end, it is a bug.
 
 ## What is not ready, honestly
 
-**The wallet has no chain behind it.** `src/core/demo.ts` supplies every
-balance, price, fee estimate and confirmation count, and the app says
-`DEMO DATA` on screen for exactly as long as that is true. A tester can walk
-the whole send flow, watch the airgap work, and see a mismatch refused, but
-they cannot watch their own money. This is the gate for external testing, and
-it is a node client rather than a polish pass.
+**The wallet has a chain behind it now, and three named gates in front of
+real money.** With a node set, Bitcoin discovery, coins, history, fees and
+broadcast are live, and the Monero view-key scan proves every found amount
+against the chain and subtracts spends after a key image round trip. What
+still stands between a tester and their own funds: the fixture until a node
+is chosen (`DEMO DATA`, by design, since there is no default node); the
+Monero mainnet broadcast gate, which refuses until a live stagenet acceptance
+is recorded in `wallet/src/core/moneroreadiness.ts`; and the swap, which
+serves labeled fixture quotes until the proxy Worker is deployed and its
+address set in `wallet/src/net/swapproxy.ts`. That one string also turns on
+prices: the Worker serves every client the same cached answer from
+`worker/src/prices.ts`, so no price service ever sees a phone, and until it
+is deployed live balances are shown in coin rather than at a made-up rate.
+The external-testing gate is no longer a missing node client; it is
+recording the stagenet acceptance and deploying the Worker.
 
-**The vault's screens have never been compiled.** Its model layer has, and
-passes twelve tests on any machine with a Swift toolchain, including a Linux
-container: `./scripts/install-swift.sh` fetches one, checks it against the
-Swift project's signature and a pinned digest, and `npm test` picks it up from
-there without any exporting. What no compiler off a Mac can reach is every
-file importing SwiftUI, JavaScriptCore, CryptoKit or CoreImage, which is the
-whole interface and the engine that runs the bundle. Those are parsed and
-nothing more, and Xcode is still the only thing that can say the app builds.
+**The vault compiles and launches; real hardware is the open gate.** The
+state table at the top is the record: built in Xcode, launched in a
+Simulator, self-test green, and two launch-only bugs found and fixed by
+doing it. What a Simulator cannot answer is Argon2id timing on a phone's CPU
+and the passcode-bound keychain class, which is exactly the section above
+titled "why the next run is on metal". On Linux the model layer still
+compiles and passes its tests through `./scripts/install-swift.sh`; the
+SwiftUI layer still needs a Mac, as it always will.
 
 **The vault alone can now walk its whole flow.** A solo tester makes a vault,
 exports a watch-only key, runs the launch self-test, watches it refuse things,

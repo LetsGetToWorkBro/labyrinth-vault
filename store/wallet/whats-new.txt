@@ -2,4 +2,4 @@ First TestFlight build.
 
 The complete interface: send, receive, activity, the vault pairing screen, the swap flow, and the state that matters most, which is a returned transaction that does not match the one that was approved.
 
-Bitcoin reads a real chain now, through an Esplora node you choose. There is no default node, because picking one would be picking who watches your addresses. Monero can reach a node and broadcast; scanning is not finished and the balance says so rather than showing a zero.
+Both chains read real data through a node you choose; there is no default node, because picking one would be picking who watches your addresses. Bitcoin discovers, lists coins and history, and broadcasts through any Esplora server. Monero scans on the device with your view key, proves every found amount against the chain, and subtracts spends once your vault has answered a key image round trip. Dollar figures come only from a price this build actually knows: the labeled fixture in the demo, or Labyrinth's relay, which serves every client one cached answer so no price service ever sees you. Otherwise balances are shown in coin.

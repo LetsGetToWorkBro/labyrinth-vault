@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { SUGGESTIONS } from '../src/core/nodes';
 import type { NodeConfig } from '../src/core/nodes';
-import { RELAYED_HOSTS, routeFor, routeLine, routedTransport } from '../src/net/nodeproxy';
+import { RELAYED_HOSTS, ownNodesOnly, routeFor, routeLine, routedTransport } from '../src/net/nodeproxy';
 import type { Reply, Transport } from '../src/net/http';
 
 const node = (url: string, mine = false): NodeConfig => ({ kind: 'esplora', url, label: 'n', mine });
@@ -17,6 +17,42 @@ const nowhere: Transport = {
     return { ok: true, status: 200, text: 'direct' };
   },
 };
+
+describe('a wallet on its own nodes asks Labyrinth for nothing', () => {
+  /* The person who took the Nodes screen's advice and self-hosted has traffic
+   * that touches nobody but machines they control. The price lookup would
+   * undo that quietly: this app contacting Labyrinth's relay on a timer,
+   * disclosing "this address runs a wallet, right now" to the exact party
+   * they had arranged not to talk to. `ownNodesOnly` is what the watcher asks
+   * before wiring a price transport, and the failure that matters is it
+   * answering false for a fully self-hosted setup. */
+
+  it('is true when every configured node is theirs', () => {
+    expect(ownNodesOnly({ btc: node('http://192.168.1.20:3002', true), xmr: null })).toBe(true);
+    expect(
+      ownNodesOnly({
+        btc: node('http://192.168.1.20:3002', true),
+        xmr: { kind: 'monerod', url: 'http://192.168.1.20:18081', label: 'n', mine: true },
+      }),
+    ).toBe(true);
+  });
+
+  it('is false the moment any configured node is not theirs', () => {
+    /* Mixed setups already talk past the owner's machines, so the price
+     * request discloses nothing new and the convenience is kept. */
+    expect(
+      ownNodesOnly({
+        btc: node('http://192.168.1.20:3002', true),
+        xmr: { kind: 'monerod', url: 'https://xmr-node.cakewallet.com:18081', label: 'n', mine: false },
+      }),
+    ).toBe(false);
+    expect(ownNodesOnly({ btc: node('https://mempool.space/api'), xmr: null })).toBe(false);
+  });
+
+  it('is false with no nodes at all, which is the fixture and not a setup', () => {
+    expect(ownNodesOnly({ btc: null, xmr: null })).toBe(false);
+  });
+});
 
 describe('the three cases', () => {
   it('relays a suggested public node', () => {
