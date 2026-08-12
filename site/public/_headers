@@ -39,7 +39,15 @@
   # This is a static page. It runs its own bundle, loads its own media, and
   # talks to nothing. Saying so in a header means a script injected by any
   # future mistake has nowhere to send what it finds.
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+  #
+  # `blob:` on media-src is load-bearing and easy to delete by mistake. The
+  # hero fetches its clip, wraps it in a Blob and hands the video element an
+  # object URL, which is how it can scrub a downloaded file rather than stream
+  # one. A blob: URL is not covered by 'self', so without it the video errors,
+  # the component removes it, and the hero is a black rectangle with a loader
+  # that never resolves. It grants nothing extra: a blob can only come from
+  # something this page already fetched under connect-src.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY

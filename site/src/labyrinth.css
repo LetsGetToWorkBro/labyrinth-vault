@@ -43,11 +43,25 @@ a { color: inherit; text-decoration: none; }
 
 .hero-journey { position: relative; }
 .hero-journey .scroll-scrub__route { display: none; }
-.hero-journey .scroll-scrub__chapter-pin { padding-top: 10rem; }
-.hero-journey .scroll-scrub__title { max-width: 9ch; font-size: clamp(3.4rem, 7.6vw, 8.5rem); }
+/* The hero copy has to leave room for the calls to action underneath it, and
+ * it was not: measured, the block ran to 626px of a 664px phone viewport and
+ * past the bottom of a 900px desktop one, so the absolutely positioned links
+ * landed on top of the headline. Padded from the top by enough to clear the
+ * nav and no more, and the block below is anchored to the foot of the first
+ * viewport rather than to a guess. */
+.hero-journey .scroll-scrub__chapter-pin { padding-top: 5.5rem; padding-bottom: 12rem; }
+/* Sized against the shorter axis, not just the width. A hero that has to fit
+ * one screen and scales only with viewport width gets taller as the window
+ * gets wider, which is how a 1280x720 laptop ended up with 763px of headline
+ * in a 720px viewport. The vh term is what makes a short window shrink it. */
+.hero-journey .scroll-scrub__title { max-width: 9ch; font-size: clamp(2.8rem, min(7.6vw, 9vh), 8.5rem); }
 .hero-journey .scroll-scrub__body { max-width: 35ch; color: var(--lab-ink); }
 .hero-journey .scroll-scrub__tags li { font-family: var(--lab-mono); letter-spacing: 0.08em; border-radius: 2px; }
-.hero-ctas { position: absolute; z-index: 20; top: min(76vh, 700px); left: clamp(1.25rem, 6vw, 6rem); display: flex; gap: 28px; }
+/* Anchored to the bottom of the first viewport, not to a fraction of it.
+ * `bottom` is measured from the foot of .hero-journey, which is the whole
+ * scroll track and thousands of pixels tall, so the calc walks back up to
+ * one screen height and then insets. */
+.hero-ctas { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100dvh + 4.5rem); left: clamp(1.25rem, 6vw, 6rem); display: flex; gap: 28px; }
 .hero-ctas a { position: relative; padding: 14px 18px; font: 700 11px/1 var(--lab-mono); letter-spacing: 0.08em; }
 .hero-ctas a:first-child { border: 1px solid var(--lab-ink); }
 .hero-ctas a:first-child::before, .hero-ctas a:first-child::after { content: ""; position: absolute; width: 9px; height: 9px; border-color: var(--lab-red); transition: inset 180ms ease; }
@@ -57,7 +71,7 @@ a { color: inherit; text-decoration: none; }
 .hero-ctas a:first-child:hover::after { right: 4px; bottom: 4px; }
 .hero-ctas a:last-child { color: var(--lab-muted); border-bottom: 1px solid var(--lab-muted); }
 .hero-ctas a:last-child:hover { color: var(--lab-ink); border-color: var(--lab-red); }
-.hero-truth { position: absolute; z-index: 20; top: calc(min(76vh, 700px) + 70px); left: clamp(1.25rem, 6vw, 6rem); color: var(--lab-muted); font: 11px/1.5 var(--lab-mono); }
+.hero-truth { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100dvh + 1.75rem); left: clamp(1.25rem, 6vw, 6rem); right: clamp(1.25rem, 6vw, 6rem); color: var(--lab-muted); font: 11px/1.5 var(--lab-mono); }
 
 .idea-section { min-height: 130dvh; display: grid; grid-template-columns: 1.05fr 0.95fr; align-items: center; gap: 6vw; background: var(--lab-bg); }
 .idea-copy h2 { max-width: 8ch; font-size: clamp(4rem, 8.6vw, 9rem); line-height: 0.82; letter-spacing: -0.07em; }
@@ -256,8 +270,12 @@ a { color: inherit; text-decoration: none; }
   .hero-journey .scroll-scrub__chapter-pin { padding-bottom: 11rem; }
   .hero-journey .scroll-scrub__copy { width: 100%; }
   .hero-journey .scroll-scrub__title { font-size: clamp(3rem, 15vw, 5rem); }
-  .hero-ctas { top: auto; bottom: calc(100% - 92dvh); left: 1.25rem; flex-direction: column; gap: 8px; }
-  .hero-truth { display: none; }
+  .hero-journey .scroll-scrub__chapter-pin { padding-top: 4.5rem; }
+  .hero-ctas { bottom: calc(100% - 100dvh + 4rem); left: 1.25rem; right: 1.25rem; flex-direction: row; gap: 10px; }
+  /* Kept, not hidden. It is the one claim on this page a person can check
+   * against the binary, and hiding it on the device most people will read
+   * this on is the wrong half to drop. */
+  .hero-truth { display: block; bottom: calc(100% - 100dvh + 1.25rem); left: 1.25rem; right: 1.25rem; font-size: 10px; }
   .idea-section { min-height: auto; }
   .idea-copy h2 { font-size: clamp(3.4rem, 17vw, 5.8rem); }
   .exploded-phone { height: 540px; transform: scale(0.82); }
