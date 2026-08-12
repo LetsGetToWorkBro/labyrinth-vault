@@ -92,21 +92,31 @@ were a new problem. `ios/project.yml` reads `LABYRINTH_TEAM_ID` instead, so the
 setting survives every regeneration. The ten-character id is in App Store
 Connect under Membership Details.
 
-**To type-check the code, build for the simulator and skip signing entirely:**
+**To type-check the code, turn signing off rather than switching platform:**
 
 ```sh
 cd ios && xcodegen generate
 xcodebuild -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
-  -destination 'generic/platform=iOS Simulator' build 2>&1 \
+  -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 \
   | grep -E "error:" | sort -u
 ```
 
-This is the command to live in while the first errors come out. A device build
-stops at code signing *before the compiler runs*, so a missing team hides every
-compile error behind one line about a development team, and it is easy to read
-that as "the code is fine, only signing is wrong" when nothing has been checked
-at all. The simulator needs no team, type-checks everything, and `sort -u`
-collapses the same error repeated once per file that includes the header.
+This is the command to live in while the first errors come out. It compiles
+against the device SDK, which Xcode already has, and skips the step that would
+otherwise stop it. A device build resolves code signing *before the compiler
+runs*, so without those two flags a missing team hides every compile error
+behind one line about a development team, and it is easy to read that as "the
+code is fine, only signing is wrong" when nothing has been checked at all.
+`sort -u` collapses the same error repeated once per file that includes the
+header, which otherwise makes ten problems look like ninety.
+
+A simulator destination also needs no team and is the obvious-looking answer.
+Since Xcode 26 the iOS runtime is not bundled, so on a fresh install
+`-destination 'generic/platform=iOS Simulator'` spends a multi-gigabyte
+download verifying a runtime before it compiles a line. Worth it when you want
+to *run* the app, and needed for screenshots. Not worth it to read a list of
+errors.
 
 Expect the first build to surface real errors. Everything that imports SwiftUI,
 JavaScriptCore, CryptoKit or CoreImage has only ever been *parsed*, because

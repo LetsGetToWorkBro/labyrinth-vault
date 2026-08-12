@@ -42,18 +42,26 @@ instead. The `.xcodeproj` is regenerated and not committed, so that choice
 disappears at the next `xcodegen generate`, and the build after it fails as
 though signing had never been configured at all.
 
-**To type-check, build for the simulator, which signs with nothing:**
+**To type-check, turn signing off rather than switching platform:**
 
 ```sh
 xcodebuild -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
-  -destination 'generic/platform=iOS Simulator' build 2>&1 \
+  -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 \
   | grep -E "error:" | sort -u
 ```
 
-A device build stops at code signing **before the compiler runs**, so a missing
-team hides every compile error behind one line about a development team. That
-is worth knowing precisely because it looks like good news: nothing was
-checked.
+This compiles against the device SDK, which Xcode already has, and skips the
+signing step that would otherwise stop the build. A device build resolves
+signing **before the compiler runs**, so without those two flags a missing team
+hides every compile error behind one line about a development team, which is
+worth knowing precisely because it looks like good news: nothing was checked.
+
+A simulator destination also needs no team and is the obvious-looking answer,
+but since Xcode 26 the iOS runtime is not bundled, so `-destination
+'generic/platform=iOS Simulator'` on a fresh install triggers a multi-gigabyte
+runtime download before it compiles a line. Worth it when you want to *run* the
+app. Not worth it to read a list of errors.
 
 There are no entitlements beyond camera access; the app asks for exactly one
 permission, because the camera is the only wire it has.
