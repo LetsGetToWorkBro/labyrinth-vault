@@ -60,9 +60,10 @@ let package = Package(
                 "Design",
                 "Screens",
                 "Resources",
-                "Model/Vault.swift",     // SwiftUI, Combine, @MainActor
-                "Support/Engine.swift",  // JavaScriptCore, CryptoKit
-                "Support/QRCode.swift",  // CoreImage
+                "Model/Vault.swift",         // SwiftUI, Combine, @MainActor
+                "Support/Engine.swift",      // JavaScriptCore, CryptoKit
+                "Support/QRCode.swift",      // CoreImage
+                "Support/SealedStore.swift", // Security (the keychain)
             ],
             /* Named one by one rather than by directory. A glob would silently
              * pull in the next file somebody adds — and the next file will

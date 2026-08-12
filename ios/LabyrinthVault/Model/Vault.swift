@@ -118,6 +118,10 @@ enum Fixtures {
 enum Route: Equatable {
     case launch
     case setup(SetupStage)
+    /// A sealed vault exists and the session is locked: the passphrase
+    /// screen. Entered from the launch gate, and by `sleep()` whenever the
+    /// app leaves the foreground with a vault on board.
+    case unlock
     case home
     case airgap
     case export
@@ -156,7 +160,7 @@ enum Route: Equatable {
 }
 
 enum SetupStage: Equatable {
-    case declaration, radios, verify, boundary, entropy, created
+    case declaration, radios, verify, boundary, passphrase, entropy, created
 }
 
 // MARK: - The model
@@ -164,10 +168,54 @@ enum SetupStage: Equatable {
 @MainActor
 final class Vault: ObservableObject {
     @Published private(set) var route: Route = .launch
-    @Published var setupComplete = false
     /// The launch gate's verdict. Nothing else runs until this passes.
     @Published private(set) var checks: [Engine.SelfTestReply.Check] = []
     @Published private(set) var engineProblem: String?
+    /// True once a boot attempt has finished, pass or fail. The launch screen
+    /// waits on this before deciding where to go.
+    @Published private(set) var booted = false
+    private var booting = false
+    /// What boot found at rest, and the one place "does this device have a
+    /// vault" is answered. Four cases because the keychain has four honest
+    /// answers, and each routes somewhere different:
+    ///
+    ///   - `found` carries the sealed blob — ciphertext, never a secret —
+    ///     and routes to the unlock screen.
+    ///   - `none` is a genuinely fresh device and routes into setup.
+    ///   - `vanished` is the passcode-bound class doing its job: iOS deletes
+    ///     the blob when the device passcode is turned off, and the witness
+    ///     item that survives lets this screen say so instead of walking the
+    ///     person silently into setup over their vault's grave.
+    ///   - `unreadable` is a keychain error, and collapsing it into `none`
+    ///     would offer setup on a device whose vault still exists. It gets
+    ///     the same posture as a failed self-test: stop, say why, offer the
+    ///     checks again.
+    enum Stored: Equatable {
+        case none
+        case found(String)
+        case vanished
+        case unreadable(String)
+    }
+    @Published private(set) var stored: Stored = .none
+
+    var hasVault: Bool {
+        if case .found = stored { return true }
+        return false
+    }
+    var sealedHex: String? {
+        if case .found(let hex) = stored { return hex }
+        return nil
+    }
+
+    /// How the setup's create step is going, for the entropy screen.
+    @Published private(set) var creation: Creation = .idle
+    /// True while an unlock's key stretching is running off the main thread.
+    @Published private(set) var opening = false
+
+    enum Creation: Equatable {
+        case idle, working, done
+        case failed(String)
+    }
     /// Frames gathered so far, for the scanner's progress line.
     @Published private(set) var scanProgress: (have: Int, total: Int) = (0, 0)
 
@@ -204,42 +252,182 @@ final class Vault: ObservableObject {
     /// A failure here is terminal by design. There is no "continue anyway":
     /// a device whose derivation no longer matches the published vectors has
     /// one honest behavior, and it is to say so and stop.
+    ///
+    /// The work — evaluating the bundle, running the self-test vectors,
+    /// reading the keychain — happens off the main thread so the power-on
+    /// animation keeps drawing; the verdict lands back on the main actor and
+    /// `booted` flips when it has.
     func boot() {
-        do {
-            let engine = try Engine()
-            self.engine = engine
-            let result = try engine.selfTest()
-            checks = result.checks
-            engineProblem = result.passed ? nil : "The vault failed its own checks."
-        } catch {
-            checks = []
-            engineProblem = error.localizedDescription
+        guard !booting else { return }
+        booting = true
+        booted = false
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var engine: Engine?
+            var checks: [Engine.SelfTestReply.Check] = []
+            var problem: String?
+            do {
+                let made = try Engine()
+                let result = try made.selfTest()
+                engine = made
+                checks = result.checks
+                problem = result.passed ? nil : "The vault failed its own checks."
+            } catch {
+                problem = error.localizedDescription
+            }
+            let stored: Stored
+            switch SealedStore.load() {
+            case .found(let hex): stored = .found(hex)
+            case .unreadable(let sentence): stored = .unreadable(sentence)
+            case .none: stored = SealedStore.witnessExists() ? .vanished : .none
+            }
+            await MainActor.run { [engine, checks, problem, stored] in
+                guard let self else { return }
+                self.engine = engine
+                self.checks = checks
+                self.engineProblem = problem
+                self.stored = stored
+                self.booting = false
+                self.booted = true
+            }
         }
     }
 
     var launchPassed: Bool { engineProblem == nil && !checks.isEmpty && checks.allSatisfy(\.ok) }
 
+    // MARK: - Creating the vault
+
+    /// What host.ts's `create` demands, and refuses any other length of:
+    /// 48 bytes become the two wallet secrets (16 of BIP39 entropy, a
+    /// 32-byte Monero seed, domain-separated) and 40 become the seal's salt
+    /// and nonce. A drift here fails loudly at the bridge, not quietly.
+    private static let createRandomBytes = 48 + 40
+
+    /// The passphrase screen hands over what was typed and the work starts
+    /// here, immediately, while the route moves to the entropy stage that
+    /// renders its progress. Starting now rather than on that screen's
+    /// appearance means the passphrase is never parked in a model property
+    /// between screens: the String lives only inside the running task —
+    /// a String cannot be wiped, so the next best thing is not keeping one —
+    /// and what crosses the bridge is NFKD bytes that `Passphrase.withBytes`
+    /// zeroes behind both calls.
+    ///
+    /// The work itself: fresh platform randomness into the engine's
+    /// `create`, the sealed blob it returns into the keychain, and then an
+    /// immediate `unlock` of what was just stored — so the identity shown on
+    /// the created screen is read back from the same ciphertext a relaunch
+    /// will read, not remembered from a happier code path.
+    ///
+    /// If the CSPRNG fails, nothing weaker is substituted and no keys are
+    /// made. If the keychain refuses the blob, no vault exists. Every failure
+    /// leaves the device exactly as it was: setup can be walked again.
+    func beginCreate(passphrase pass: String) {
+        guard creation != .working && creation != .done else { return }
+        go(.setup(.entropy))
+        guard let engine else {
+            creation = .failed("The vault engine is not loaded.")
+            return
+        }
+        guard !pass.isEmpty else {
+            creation = .failed("No passphrase was chosen. Go back and set one.")
+            return
+        }
+        creation = .working
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var problem: String?
+            var sealed: String?
+            var opened: Engine.UnlockReply?
+            if let randomHex = Engine.freshRandomHex(bytes: Vault.createRandomBytes) {
+                do {
+                    let created = try Passphrase.withBytes(of: pass) { bytes in
+                        try engine.create(randomHex: randomHex, passphrase: bytes)
+                    }
+                    if let storeProblem = SealedStore.save(created.sealed) {
+                        problem = storeProblem
+                    } else if case .found(let storedHex) = SealedStore.load() {
+                        /* Unlock from the read-back, not from the reply: what
+                         * this proves is that the blob at rest opens, which is
+                         * the thing a relaunch depends on. */
+                        opened = try Passphrase.withBytes(of: pass) { bytes in
+                            try engine.unlock(sealedHex: storedHex, passphrase: bytes)
+                        }
+                        sealed = storedHex
+                    } else {
+                        problem = "The keychain accepted the vault and then could not return it."
+                    }
+                } catch {
+                    problem = error.localizedDescription
+                }
+            } else {
+                problem = "The device would not produce randomness. No keys were made."
+            }
+            if problem != nil {
+                /* A half-made vault — stored but unopenable, or unopened —
+                 * must not survive to be found by the next launch. */
+                SealedStore.erase()
+            }
+            await MainActor.run { [problem, sealed, opened] in
+                self?.finishCreate(problem: problem, sealed: sealed, opened: opened)
+            }
+        }
+    }
+
+    private func finishCreate(problem: String?, sealed: String?, opened: Engine.UnlockReply?) {
+        if let problem {
+            creation = .failed(problem)
+            return
+        }
+        guard let sealed, let opened else {
+            creation = .failed("The vault did not open after it was made.")
+            return
+        }
+        stored = .found(sealed)
+        vaultID = Identity.vaultID(fromAccountKey: opened.btcAccount.zpub)
+        fingerprint = Identity.fingerprint(fromFirstAddress: opened.btcAccount.first)
+        creation = .done
+    }
+
     // MARK: - The session
 
-    /// Open the vault.
+    /// Open the vault from the unlock screen.
     ///
     /// The passphrase is turned into bytes and zeroed on the way out, on every
     /// path including the throwing one — see Passphrase.swift for why a
     /// `String` is not good enough here. What the text field itself is holding
     /// is the caller's problem and should be cleared as soon as this returns.
-    func unlock(passphrase: String, sealedHex: String) -> String? {
+    ///
+    /// The key stretching is tuned to cost real time — that is the defense —
+    /// so it runs off the main thread while `opening` is true. On success the
+    /// route moves home and the return is nil; on failure the return is the
+    /// engine's sentence, which deliberately does not distinguish a wrong
+    /// passphrase from a damaged blob (see src/keys/seal.ts).
+    func openVault(passphrase: String) async -> String? {
         guard let engine else { return "The vault engine is not loaded." }
-        do {
-            let opened = try Passphrase.withBytes(of: passphrase) { bytes in
-                try engine.unlock(sealedHex: sealedHex, passphrase: bytes)
+        guard let sealedHex else { return "No vault exists on this device." }
+        guard !opening else { return nil }
+        opening = true
+        defer { opening = false }
+        let outcome: Result<Engine.UnlockReply, Error> = await Task.detached(priority: .userInitiated) {
+            do {
+                let opened = try Passphrase.withBytes(of: passphrase) { bytes in
+                    try engine.unlock(sealedHex: sealedHex, passphrase: bytes)
+                }
+                return .success(opened)
+            } catch {
+                return .failure(error)
             }
+        }.value
+        switch outcome {
+        case .success(let opened):
             // Identity from the account key, so it means something. The
             // formatting lives in Model/Identity.swift, where it is compiled
             // and tested off-device.
             vaultID = Identity.vaultID(fromAccountKey: opened.btcAccount.zpub)
             fingerprint = Identity.fingerprint(fromFirstAddress: opened.btcAccount.first)
+            Haptic.signed()
+            go(.home)
             return nil
-        } catch {
+        case .failure(let error):
+            Haptic.refuse()
             return error.localizedDescription
         }
     }
@@ -251,6 +439,44 @@ final class Vault: ObservableObject {
         scanProgress = (0, 0)
         vaultID = "•••• •••• ••••"
         fingerprint = "········"
+    }
+
+    /// The app left the foreground. Wipe the keys, and if a vault exists put
+    /// the passphrase screen between the next foreground and everything else.
+    ///
+    /// Sets the route directly rather than through `go(_:)`. Locking is the
+    /// one transition that must win from every state — including the ones the
+    /// transition table is strict about, like a refusal or the approve screen
+    /// — because the alternative is a state in which backgrounding leaves
+    /// keys warm. Flow.swift documents the same bypass from the other side.
+    func sleep() {
+        lock()
+        creation = .idle
+        guard hasVault else { return }         // mid-setup: nothing to gate yet
+        if case .launch = route { return }     // still behind the boot gate
+        route = .unlock
+    }
+
+    /// Destroy the vault. The sealed blob leaves the keychain, the session is
+    /// wiped, and the device is back where setup starts. Recovery from here
+    /// is the phrases on paper, in anyone's standard wallet software — there
+    /// is deliberately no copy anywhere this method could miss.
+    func eraseVault() {
+        SealedStore.erase()
+        lock()
+        stored = .none
+        creation = .idle
+        go(.setup(.declaration))
+    }
+
+    /// The tap on the screen that explains a vanished vault. The witness has
+    /// done its one job — the person has been told — so it is cleared and
+    /// the device is, from here on, honestly fresh.
+    func acknowledgeVanished() {
+        SealedStore.forgetWitness()
+        stored = .none
+        creation = .idle
+        go(.setup(.declaration))
     }
 
     // MARK: - Scanning, and what a completed scan becomes
@@ -381,6 +607,7 @@ final class Vault: ObservableObject {
         switch route {
         case .launch: .launch
         case .setup: .setup
+        case .unlock: .unlock
         case .home: .home
         case .airgap: .airgap
         case .export: .export

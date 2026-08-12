@@ -24,6 +24,7 @@ struct LabyrinthVaultApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var vault: Vault
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -33,6 +34,24 @@ struct RootView: View {
                 .transition(.asymmetric(
                     insertion: .opacity.combined(with: .offset(y: 10)),
                     removal: .opacity))
+
+            /* The app switcher's snapshot is taken from whatever is on
+             * screen the moment focus is lost. A confirmation screen or a
+             * recovery phrase must not be what it captures, so anything
+             * short of active gets the void. */
+            if scenePhase != .active {
+                Ink.void.ignoresSafeArea()
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            /* `.background`, not `.inactive`: permission prompts (the
+             * camera's, during a scan) pass through inactive, and locking on
+             * them would wipe the session mid-flow. Leaving the app is the
+             * boundary. `sleep` wipes the keys and gates the return behind
+             * the passphrase whenever a vault exists. */
+            if phase == .background {
+                vault.sleep()
+            }
         }
     }
 
@@ -40,6 +59,7 @@ struct RootView: View {
         switch vault.route {
         case .launch: LaunchView()
         case .setup(let stage): SetupView(stage: stage)
+        case .unlock: UnlockView()
         case .home: HomeView()
         case .airgap: AirgapView()
         case .export: ExportView()
@@ -70,6 +90,7 @@ struct RootView: View {
         switch vault.route {
         case .launch: "launch"
         case .setup(let s): "setup-\(s)"
+        case .unlock: "unlock"
         case .home: "home"
         case .airgap: "airgap"
         case .export: "export"

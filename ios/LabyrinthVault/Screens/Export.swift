@@ -32,6 +32,13 @@ struct ExportView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Eyebrow("EXPORT").padding(.top, 12)
                         Statement("WATCH-ONLY", "KEY", size: 36).padding(.top, 10)
+                        if let problem {
+                            Text(problem)
+                                .font(Type.body(13))
+                                .lineSpacing(4)
+                                .foregroundStyle(Ink.refused)
+                                .padding(.top, 12)
+                        }
                         Text("Your companion device can watch your funds with this. It cannot " +
                              "spend them: no private key has ever been on that device, and this " +
                              "code does not contain one.")
@@ -79,5 +86,10 @@ struct ExportView: View {
                 VaultTabs(current: "EXPORT")
             }
         }
+        /* The call that was designed for and then never made: without it this
+         * screen animated an empty aperture. The frames come from the engine's
+         * live session, so an unlocked vault is a precondition, which the
+         * routes now enforce. */
+        .onAppear { load(vault) }
     }
 }

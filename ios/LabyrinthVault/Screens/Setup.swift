@@ -16,6 +16,7 @@ struct SetupView: View {
         case .radios: RadiosView()
         case .verify: VerifyAirgapView()
         case .boundary: BoundaryView()
+        case .passphrase: PassphraseView()
         case .entropy: EntropyView()
         case .created: CreatedView()
         }
@@ -39,7 +40,7 @@ private struct DeclarationView: View {
                     .lineSpacing(5)
                     .foregroundStyle(Ink.paperDim)
                 Spacer()
-                Lever(title: "BEGIN", hint: "STEP 1 / 5") { vault.go(.setup(.radios)) }
+                Lever(title: "BEGIN", hint: "STEP 1 / 6") { vault.go(.setup(.radios)) }
                     .padding(.bottom, 12)
             }
             .padding(.horizontal, 24)
@@ -172,7 +173,7 @@ private struct VerifyAirgapView: View {
                     Lever(title: "CONTINUE",
                           hint: verdict ? "VERIFIED" : "VERIFYING",
                           enabled: verdict) {
-                        vault.go(vault.setupComplete ? .airgap : .setup(.boundary))
+                        vault.go(vault.hasVault ? .airgap : .setup(.boundary))
                     }
                     .padding(.bottom, 12)
                 }
@@ -222,7 +223,7 @@ private struct BoundaryView: View {
                         .foregroundStyle(Ink.paper)
                         .padding(.top, 14)
                     Spacer()
-                    Lever(title: "GENERATE KEYS", hint: "STEP 4 / 5") { vault.go(.setup(.entropy)) }
+                    Lever(title: "SET PASSPHRASE", hint: "STEP 4 / 6") { vault.go(.setup(.passphrase)) }
                         .padding(.bottom, 12)
                 }
                 .padding(.horizontal, 24)
@@ -231,48 +232,176 @@ private struct BoundaryView: View {
     }
 }
 
-// MARK: 05 — key generation
+// MARK: 05 — the passphrase
+
+private struct PassphraseView: View {
+    @EnvironmentObject private var vault: Vault
+    @State private var chosen = ""
+    @State private var confirmed = ""
+    @FocusState private var field: Field?
+    private enum Field { case chosen, confirmed }
+
+    private var match: Bool { !chosen.isEmpty && chosen == confirmed }
+
+    var body: some View {
+        Screen {
+            VStack(alignment: .leading, spacing: 0) {
+                VaultBar()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Statement("CHOOSE A", "PASSPHRASE.", size: 44).padding(.top, 18)
+                        Text("It is stretched into the key that seals your keys. It is not " +
+                             "stored anywhere, on this device or off it, and there is no " +
+                             "reset: forgetting it means recovering from the words on paper.")
+                            .font(Type.body())
+                            .lineSpacing(5)
+                            .foregroundStyle(Ink.paperDim)
+                            .padding(.top, 14)
+                            .padding(.bottom, 30)
+
+                        Eyebrow("PASSPHRASE", color: Ink.paperFaint)
+                        SecureField("", text: $chosen)
+                            .font(Type.mono(18))
+                            .foregroundStyle(Ink.paper)
+                            .tint(Ink.paper)
+                            .textContentType(.newPassword)
+                            .focused($field, equals: .chosen)
+                            .submitLabel(.next)
+                            .onSubmit { field = .confirmed }
+                            .padding(.vertical, 12)
+                        Hairline(weight: 1, color: field == .chosen ? Ink.ruleHeavy : Ink.rule)
+
+                        Eyebrow("AGAIN", color: Ink.paperFaint).padding(.top, 22)
+                        SecureField("", text: $confirmed)
+                            .font(Type.mono(18))
+                            .foregroundStyle(Ink.paper)
+                            .tint(Ink.paper)
+                            .textContentType(.newPassword)
+                            .focused($field, equals: .confirmed)
+                            .submitLabel(.done)
+                            .padding(.vertical, 12)
+                        Hairline(weight: 1, color: field == .confirmed ? Ink.ruleHeavy : Ink.rule)
+
+                        if !confirmed.isEmpty && !match {
+                            Text("The two entries do not match yet.")
+                                .font(Type.body(13))
+                                .foregroundStyle(Ink.attention)
+                                .padding(.top, 12)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                }
+                Lever(title: "GENERATE KEYS",
+                      hint: "STEP 5 / 6",
+                      enabled: match) {
+                    vault.beginCreate(passphrase: chosen)
+                    chosen = ""
+                    confirmed = ""
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+            }
+        }
+        .onAppear { field = .chosen }
+    }
+}
+
+// MARK: 06 — key generation
 
 private struct EntropyView: View {
     @EnvironmentObject private var vault: Vault
     @State private var began = Date()
     @State private var bits = 0
+    /// The choreography has finished; the engine may still be sealing.
+    @State private var fieldDone = false
+
+    private var failure: String? {
+        if case .failed(let sentence) = vault.creation { return sentence }
+        return nil
+    }
 
     var body: some View {
         Screen {
-            VStack(alignment: .leading, spacing: 0) {
-                Spacer()
-                EntropyField(duration: 5.2) {
-                    Haptic.signed()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        vault.go(.setup(.created))
-                    }
-                }
-                .padding(.horizontal, 24)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Statement("GENERATING", "KEY MATERIAL", size: 32).padding(.top, 30)
-                    FieldRow(label: "ENTROPY COLLECTED", value: "\(bits) / 256 BITS")
-                        .padding(.top, 10)
-                }
-                .padding(.horizontal, 24)
-
-                Spacer()
-                Text("DO NOT LEAVE THIS SCREEN")
-                    .font(Type.mono(10))
-                    .kerning(2.2)
-                    .foregroundStyle(Ink.paper)
-                    .frame(maxWidth: .infinity)
-                    .padding(.bottom, 24)
+            if let failure {
+                failed(failure)
+            } else {
+                working
             }
         }
+        /* The real work — fresh randomness into the engine's create, the
+         * sealed blob into the keychain, an unlock of the stored blob to
+         * prove a relaunch will find a vault that opens — was started by
+         * `beginCreate` before this screen appeared, so the passphrase never
+         * waits in a model property between screens. This screen renders the
+         * progress and moves on when both the drawing and the sealing are
+         * done, whichever finishes last. */
+        .onChange(of: vault.creation) { _ in advance() }
         .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { now in
             bits = min(256, Int(now.timeIntervalSince(began) / 5.2 * 256))
         }
     }
+
+    private func advance() {
+        guard fieldDone, vault.creation == .done else { return }
+        Haptic.signed()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            vault.go(.setup(.created))
+        }
+    }
+
+    private var working: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer()
+            EntropyField(duration: 5.2) {
+                fieldDone = true
+                advance()
+            }
+            .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Statement("GENERATING", "KEY MATERIAL", size: 32).padding(.top, 30)
+                FieldRow(label: "ENTROPY COLLECTED", value: "\(bits) / 256 BITS")
+                    .padding(.top, 10)
+                FieldRow(label: "SEALING",
+                         value: vault.creation == .done ? "COMPLETE" : "ARGON2ID RUNNING",
+                         tone: vault.creation == .done ? .verified : .plain)
+            }
+            .padding(.horizontal, 24)
+
+            Spacer()
+            Text("DO NOT LEAVE THIS SCREEN")
+                .font(Type.mono(10))
+                .kerning(2.2)
+                .foregroundStyle(Ink.paper)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 24)
+        }
+    }
+
+    /// Nothing was kept: every failure path in `createVault` erases whatever
+    /// half-made state it left, so trying again is genuinely from zero.
+    private func failed(_ sentence: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 0) {
+                Eyebrow("NOT CREATED", color: Ink.refused)
+                Statement("NO KEYS", "WERE MADE.", size: 40).padding(.top, 16)
+                Text(sentence)
+                    .font(Type.body())
+                    .lineSpacing(5)
+                    .foregroundStyle(Ink.paper)
+                    .padding(.top, 14)
+            }
+            .padding(.horizontal, 24)
+            Spacer()
+            Lever(title: "TRY AGAIN") { vault.go(.setup(.passphrase)) }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+        }
+    }
 }
 
-// MARK: 06 — created
+// MARK: 07 — created
 
 private struct CreatedView: View {
     @EnvironmentObject private var vault: Vault
@@ -284,9 +413,13 @@ private struct CreatedView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Eyebrow("COMPLETE", color: Ink.verified)
                     Statement("KEY MATERIAL", "CREATED.", size: 40).padding(.top, 16).padding(.bottom, 26)
-                    FieldRow(label: "STORAGE", value: "DEVICE SECURE HARDWARE")
-                    FieldRow(label: "AT REST", value: "ENCRYPTED")
-                    FieldRow(label: "BINDING", value: "THIS DEVICE ONLY")
+                    /* The id is derived from the account key the engine just
+                     * returned — reading it here is the proof that what sits
+                     * in the keychain unlocked, not a card that always says
+                     * done. */
+                    FieldRow(label: "VAULT ID", value: vault.vaultID)
+                    FieldRow(label: "AT REST", value: "SEALED · ARGON2ID + XCHACHA20", tone: .verified)
+                    FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                     FieldRow(label: "COPIES ELSEWHERE", value: "NONE")
                     Text("There is no cloud backup, because there is no cloud. If you lose this " +
                          "phone without a recovery phrase written down, the keys are gone. That " +
@@ -300,11 +433,9 @@ private struct CreatedView: View {
                 Spacer()
                 VStack(spacing: 10) {
                     Lever(title: "OPEN VAULT") {
-                        vault.setupComplete = true
                         vault.go(.home)
                     }
                     Lever(title: "WRITE DOWN RECOVERY PHRASE", hint: "RECOMMENDED", style: .quiet) {
-                        vault.setupComplete = true
                         vault.go(.recovery)
                     }
                 }

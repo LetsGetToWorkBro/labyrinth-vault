@@ -68,7 +68,7 @@ echo "  [3/3] parsing the sources only Xcode can build"
 apple_only=()
 while IFS= read -r file; do
   # The tier-1 files are compiled above; parsing them again proves nothing.
-  if grep -qE '^import (SwiftUI|Combine|JavaScriptCore|CryptoKit|CoreImage|UIKit)' "$file"; then
+  if grep -qE '^import (SwiftUI|Combine|JavaScriptCore|CryptoKit|CoreImage|UIKit|Security)' "$file"; then
     apple_only+=("$file")
   fi
 done < <(find ios -name '*.swift' | sort)

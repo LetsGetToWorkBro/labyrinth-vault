@@ -115,7 +115,7 @@ struct Hairline: View {
 /// The atom of every diagnostic and every transaction detail: label left,
 /// value right, hairline under. Nothing else.
 struct FieldRow: View {
-    enum Tone { case plain, dim, verified, attention }
+    enum Tone { case plain, dim, verified, attention, refused }
     let label: String
     let value: String
     var tone: Tone = .plain
@@ -126,6 +126,7 @@ struct FieldRow: View {
         case .dim: Ink.paperDim
         case .verified: Ink.verified
         case .attention: Ink.attention
+        case .refused: Ink.refused
         }
     }
 
