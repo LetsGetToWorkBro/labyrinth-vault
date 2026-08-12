@@ -5,7 +5,7 @@
 //     app resigns active, and that photograph persists on disk. If it was
 //     taken mid-review — or worse, mid seed-phrase — the confirmation screen
 //     outlives the airgap. So on willResignActive an opaque cover in the
-//     vault's own surface colour drops over the window, and the snapshot
+//     vault's own surface color drops over the window, and the snapshot
 //     shows a black card with the wordmark: true, and empty.
 //
 //  2. The cover is torn down only on didBecomeActive, which also covers the

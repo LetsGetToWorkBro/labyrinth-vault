@@ -172,7 +172,7 @@
   }
 
   /** The labyrinth: a right-angle involute, drawn as one continuous path from
-   *  the outside to a single centre. Used as architecture — watermark, scan
+   *  the outside to a single center. Used as architecture — watermark, scan
    *  assembly, entropy resolution — never as a picture of a maze. */
   function labyrinthPath(size, turns, step) {
     var c = size / 2, x = c, y = c, d = step, p = 'M ' + c + ' ' + c;
@@ -325,7 +325,7 @@
     render: function () {
       var items = [
         ['REMOVE SIM', 'Physically. The tray, not a setting.'],
-        ['DISABLE WI-FI', 'In Settings, not Control Centre.'],
+        ['DISABLE WI-FI', 'In Settings, not Control Center.'],
         ['DISABLE BLUETOOTH', 'Including sharing and nearby devices.'],
         ['DISABLE CELLULAR', 'Data and voice.'],
         ['VERIFY IN SETTINGS', 'The vault requests no network permission. Confirm it has none.']
@@ -809,7 +809,7 @@
             '<div class="checks">' +
               '<div class="check is-on"><span class="check__mark">✓</span>42 OF 42 FRAGMENTS ASSEMBLED</div>' +
               '<div class="check is-on"><span class="check__mark">✓</span>PAYLOAD DIGEST MATCHED</div>' +
-              '<div class="check is-on"><span class="check__mark">✓</span>KIND RECOGNISED · PSBT</div>' +
+              '<div class="check is-on"><span class="check__mark">✓</span>KIND RECOGNIZED · PSBT</div>' +
               '<div class="check is-on"><span class="check__mark">✓</span>DECODED WITHOUT AMBIGUITY</div>' +
             '</div>' +
             '<p class="prose" style="margin-top:24px">The checksum proves the camera read the ' +
@@ -910,7 +910,7 @@
               field('OUTPUTS', String(TX.outputs)) +
               field('TOTAL IN', TX.total + ' BTC') +
               field('LOCKTIME', 'NONE') +
-              field('RBF SIGNALLED', 'YES') +
+              field('RBF SIGNALED', 'YES') +
             '</div>' +
 
             '<div style="padding:34px 0 0"><div class="eyebrow">WHAT THE VAULT CHECKED</div></div>' +
@@ -940,7 +940,7 @@
 
   /* STOP → VERIFY → SIGN is not a progress bar with three labels. The signing
      route does not open until the document has physically passed the reader's
-     eyes, because the only defence this product has is that somebody looked.
+     eyes, because the only defense this product has is that somebody looked.
      Shared by both assets; `next` is the attest screen it unlocks. */
   function confirmMount(next) {
     return function (root) {
@@ -1048,7 +1048,7 @@
     mount: attestMount('signed')
   };
 
-  /* The attest-and-hold behaviour, shared by both assets: four attestations
+  /* The attest-and-hold behavior, shared by both assets: four attestations
      unlock the control, the hold is the decision, releasing early does not
      sign and says so. `next` is where a completed signature lands. */
   function attestMount(next) {
@@ -1457,7 +1457,7 @@
         'THIS BUILD FAILED<br>ITS OWN<br>SELF-TEST.',
         'One of the launch checks against published vectors did not return the answer it ' +
         'has returned on every honest run. A signing device whose hash is wrong has exactly ' +
-        'one honest behaviour, which is to say so and stop. Nothing has been damaged, and ' +
+        'one honest behavior, which is to say so and stop. Nothing has been damaged, and ' +
         'nothing will run.',
         '<div class="check is-on"><span class="check__mark">✓</span>SHA-256 · NIST VECTOR</div>' +
         '<div class="check is-bad"><span class="check__mark">×</span>BIP84 · SPECIFICATION VECTOR</div>' +

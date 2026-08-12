@@ -18,10 +18,10 @@
 //  can do anything about. Narrowing the window is the available move; closing
 //  it is not, and this file does not pretend otherwise.
 //
-//  ## The normalisation is a cross-language contract
+//  ## The normalization is a cross-language contract
 //
 //  NFKD, then UTF-8, matching `passphraseToBytes` in src/keys/seal.ts exactly.
-//  This is the one piece of behaviour that had to be implemented twice, and it
+//  This is the one piece of behavior that had to be implemented twice, and it
 //  is worth naming why that is acceptable here when it is not elsewhere: it is
 //  a Unicode operation with a specification, both implementations are the
 //  platform's rather than ours, and `test/fixtures/primitives.json` pins the
@@ -34,7 +34,7 @@
 
 import Foundation
 
-/* The wipe below needs a function the compiler is forbidden to optimise away,
+/* The wipe below needs a function the compiler is forbidden to optimize away,
  * and the two platforms spell it differently. Both imports are here so that
  * this file builds on a phone and under a plain `swift test` on Linux, which
  * is the only reason any of it is checked by a compiler at all — see
@@ -66,7 +66,7 @@ enum Passphrase {
     /// storage rather than a copy. The function called through it is the part
     /// that matters: a plain `for i in ...  { bytes[i] = 0 }` is a store to
     /// memory nothing reads afterwards, which is precisely the store an
-    /// optimiser is allowed to delete. `memset_s` and `explicit_bzero` exist
+    /// optimizer is allowed to delete. `memset_s` and `explicit_bzero` exist
     /// because that deletion is a real and repeatedly-observed bug, and both
     /// carry a guarantee that it will not happen.
     ///

@@ -23,7 +23,7 @@ function bytes(n: number, seed = 1): Uint8Array {
 }
 
 describe('telling the two wires apart', () => {
-  it('recognises each from its first characters', () => {
+  it('recognizes each from its first characters', () => {
     expect(formatOf('LV1:PSBT:1:1:00000000:AA')).toBe('labyrinth');
     expect(formatOf('ur:crypto-psbt/feadaoaxaaahjlkbghmd')).toBe('ur');
     expect(formatOf('UR:CRYPTO-PSBT/FEADAOAXAAAHJLKBGHMD')).toBe('ur');

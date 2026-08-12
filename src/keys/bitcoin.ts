@@ -136,7 +136,7 @@ export function mnemonicFromStoredEntropy(entropy: Uint8Array): string {
   return entropyToMnemonic(entropy, wordlist);
 }
 
-/** Whitespace-normalise and checksum-check a typed seed phrase. */
+/** Whitespace-normalize and checksum-check a typed seed phrase. */
 export function checkMnemonic(text: string): { ok: boolean; words?: string; problem?: string } {
   const words = String(text ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ');
   if (!words) return { ok: false, problem: 'Enter the seed words.' };

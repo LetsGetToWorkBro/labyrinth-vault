@@ -252,7 +252,7 @@ describe('subaddresses', () => {
 
   it('recovers the subaddress spend key through a derivation round trip', () => {
     /* A sender using tx secret r derives to D; derive_subaddress_public_key
-     * inverts that to D again, which is how a receiver recognises it. */
+     * inverts that to D again, which is how a receiver recognizes it. */
     const sub = subaddressKeys(spendPublic, viewSecret, 2, 5);
     const txSecret = reduceScalar(new Uint8Array(32).fill(9));
     const derivation = generateKeyDerivation(sub.view, txSecret); // r·C

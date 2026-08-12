@@ -1,5 +1,5 @@
 /**
- * The wallet2 files, recognised and refused.
+ * The wallet2 files, recognized and refused.
  *
  * This is a small module and it would be easy to under-test, so it is worth
  * saying what the failure would look like. It is not a wrong signature; this
@@ -50,7 +50,7 @@ describe('the six wallet2 files', () => {
   it('names every one of them from its bytes', () => {
     for (const { magic, kind } of knownContainers()) {
       const found = readContainer(container(magic, 5));
-      expect(found, `${magic} was not recognised`).not.toBeNull();
+      expect(found, `${magic} was not recognized`).not.toBeNull();
       expect(found!.kind).toBe(kind);
       expect(found!.usable).toBe(false);
     }

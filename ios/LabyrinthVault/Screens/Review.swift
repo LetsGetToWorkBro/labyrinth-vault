@@ -7,7 +7,7 @@
 //  1. The scroll gate. STOP / VERIFY / SIGN across the top are not a progress
 //     bar with labels — the route to approval does not open until the whole
 //     document has physically passed the reader's eyes, because a person who
-//     looked is the only defence this product has.
+//     looked is the only defense this product has.
 //
 //  2. The destination zone. The destination is the one thing an attacker must
 //     change to steal, so it is the one thing given a zone of its own:

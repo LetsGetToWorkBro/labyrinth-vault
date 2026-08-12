@@ -265,7 +265,7 @@ describe('the whole flow, through the bundle', () => {
   });
 
   it('names a Monero wallet file instead of calling it junk', () => {
-    /* The whole point of recognising these: somebody holding a perfectly good
+    /* The whole point of recognizing these: somebody holding a perfectly good
      * unsigned_monero_tx should be told what the vault cannot do with it, not
      * told their file is not a transaction. Driven through the bundle because
      * the refusal has to survive the bridge with its code attached, which is

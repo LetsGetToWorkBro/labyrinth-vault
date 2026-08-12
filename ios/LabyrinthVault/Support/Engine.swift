@@ -289,7 +289,7 @@ final class Engine {
 
     /// Sign, quoting the digest of the summary that was actually on screen.
     ///
-    /// The summary object never crosses the bridge and back: re-serialising it
+    /// The summary object never crosses the bridge and back: re-serializing it
     /// would be a second chance for what gets signed to differ from what was
     /// read. Only the digest travels, and the engine compares it against the
     /// description it produced.

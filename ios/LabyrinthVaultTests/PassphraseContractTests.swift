@@ -3,14 +3,14 @@
 //
 //  `passphraseToBytes` in src/keys/seal.ts and `Passphrase.bytes(from:)` in
 //  Passphrase.swift do the same thing in two languages. That is the only
-//  behaviour in this project deliberately implemented twice, and the reason it
+//  behavior in this project deliberately implemented twice, and the reason it
 //  is allowed to be is this file: both sides are checked against
 //  test/fixtures/primitives.json rather than against each other.
 //
 //  Why it has to be twice. The passphrase must stop being a `String` before it
 //  crosses into JavaScriptCore, because a string in either heap cannot be
-//  overwritten. Normalising on the far side would mean sending text, which is
-//  the thing being avoided. So Swift normalises, and the pinned bytes are what
+//  overwritten. Normalizing on the far side would mean sending text, which is
+//  the thing being avoided. So Swift normalizes, and the pinned bytes are what
 //  keep the two honest.
 //
 //  What a failure here looks like if nobody catches it: a vault that seals
@@ -42,12 +42,12 @@ import XCTest
 final class PassphraseContractTests: XCTestCase {
 
     private struct Fixture: Decodable {
-        struct Normalisation: Decodable {
+        struct Normalization: Decodable {
             let note: String
             let text: String
             let nfkdUtf8: String
         }
-        let passphraseNormalisation: [Normalisation]
+        let passphraseNormalisation: [Normalization]
     }
 
     private func loadFixture() throws -> Fixture {
@@ -94,8 +94,8 @@ final class PassphraseContractTests: XCTestCase {
     }
 
     /// The property app/storage.ts relies on when it layers a device
-    /// passphrase and a user passphrase around a newline: normalising the
-    /// parts and joining gives the same bytes as joining and normalising.
+    /// passphrase and a user passphrase around a newline: normalizing the
+    /// parts and joining gives the same bytes as joining and normalizing.
     ///
     /// It holds because U+000A is a starter, so NFKD cannot compose or reorder
     /// across it. "It holds because" is how subtle Unicode bugs get in, hence

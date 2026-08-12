@@ -1,11 +1,11 @@
 //  Theme.swift
 //  The whole visual system in one file, so there is exactly one place where a
-//  colour or a size can be decided.
+//  color or a size can be decided.
 //
 //  The rules, restated as code:
-//    - One surface, one ink, and three state colours that each mean one thing:
+//    - One surface, one ink, and three state colors that each mean one thing:
 //      green is a verification that passed, amber is attention in progress,
-//      red exists only on the refusal screens. If a colour is on screen, it is
+//      red exists only on the refusal screens. If a color is on screen, it is
 //      information. Everything else is monochrome.
 //    - Two typefaces by role. The grotesk (SF Pro) talks to the person; the
 //      monospace (SF Mono) shows cryptographic material, where characters are
@@ -15,7 +15,7 @@
 
 import SwiftUI
 
-// MARK: - Colour
+// MARK: - Color
 
 enum Ink {
     /// Not pure black: pure black flares against OLED smear and kills the grain.

@@ -28,7 +28,7 @@ struct ScannerView: View {
                         Statement("POINT AT", "THE COMPANION", size: 36).padding(.top, 12).padding(.bottom, 20)
 
                         CameraViewfinder(status: $status) {
-                            // A recognised LV1/UR frame begins acquisition.
+                            // A recognized LV1/UR frame begins acquisition.
                             vault.go(.acquiring)
                         }
                         .aspectRatio(1, contentMode: .fit)
@@ -100,7 +100,7 @@ struct CameraViewfinder: View {
     }
 
     private func handleFrame(_ payload: String) {
-        // The scanner recognises its wires by shape and never asks the person
+        // The scanner recognizes its wires by shape and never asks the person
         // to know a protocol name.
         if payload.hasPrefix("LV1:") || payload.lowercased().hasPrefix("ur:") {
             status = "LOCKED · ENVELOPE RECOGNIZED"
@@ -132,7 +132,7 @@ struct CameraLayer: UIViewRepresentable {
         let view = UIView()
         view.backgroundColor = .clear
         #if targetEnvironment(simulator)
-        // No camera in the Simulator: emit one recognisable frame after a
+        // No camera in the Simulator: emit one recognizable frame after a
         // beat so the flow can be walked end to end.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             context.coordinator.onFrame("LV1:PSBT:1:42:9f2a1c04:SIMULATED")

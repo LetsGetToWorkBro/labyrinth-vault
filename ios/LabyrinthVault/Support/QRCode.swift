@@ -63,7 +63,7 @@ struct QRAperture: View {
     }
 }
 
-/// A short amber segment travelling the aperture's outline: transmission is
+/// A short amber segment traveling the aperture's outline: transmission is
 /// live. Static when the code is static.
 struct PerimeterTrace: View {
     var active: Bool

@@ -203,7 +203,7 @@ final class Vault: ObservableObject {
     ///
     /// A failure here is terminal by design. There is no "continue anyway":
     /// a device whose derivation no longer matches the published vectors has
-    /// one honest behaviour, and it is to say so and stop.
+    /// one honest behavior, and it is to say so and stop.
     func boot() {
         do {
             let engine = try Engine()
@@ -276,7 +276,7 @@ final class Vault: ObservableObject {
             reply = try engine.scan(text)
         } catch EngineError.refusedAs(let code, _) {
             /* The scanner named what it was looking at. A frame it simply does
-             * not recognise is not an error and lands in the `catch` below,
+             * not recognize is not an error and lands in the `catch` below,
              * where staying silent is right: the camera is still running and
              * the next frame may be the one. A *named* refusal is different —
              * the engine knows exactly what this is — so it gets a screen. */

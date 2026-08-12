@@ -84,13 +84,13 @@ describe('sealing and opening', () => {
     expect(opened.params).toEqual(FAST);
   });
 
-  it('recognises its own blobs, for a file picker', () => {
+  it('recognizes its own blobs, for a file picker', () => {
     expect(looksSealed(sealed.sealed!)).toBe(true);
     expect(looksSealed(new Uint8Array([1, 2, 3]))).toBe(false);
     expect(looksSealed(enc('LVS but actually prose'))).toBe(false);
   });
 
-  it('normalises the passphrase the way BIP39 does', () => {
+  it('normalizes the passphrase the way BIP39 does', () => {
     // The same passphrase composed two different ways by two keyboards must
     // open the same vault, or a person is locked out by their font.
     const composed = 'café';       // é as one code point

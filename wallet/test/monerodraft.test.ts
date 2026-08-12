@@ -118,7 +118,7 @@ describe('preparing a Monero draft', () => {
     expect(draft.spentKeys).toEqual([hex64('a1000001')]);
     expect(draft.changeAddresses).toEqual([OWN]);
     expect(draft.inputTotal).toBe(2_000_000_000_000n);
-    /* And the payload is a set the vault's parser will recognise. */
+    /* And the payload is a set the vault's parser will recognize. */
     const parsed = JSON.parse(new TextDecoder().decode(draft.unsigned)) as { chain: string; outputs: unknown[] };
     expect(parsed.chain).toBe('xmr');
     expect(parsed.outputs.length).toBeGreaterThanOrEqual(2);

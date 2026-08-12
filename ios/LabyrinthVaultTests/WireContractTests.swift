@@ -82,7 +82,7 @@ final class WireContractTests: XCTestCase {
 
         /* The money the attack tries to disguise as change is counted as
          * leaving, because it is leaving. If this ever read 0.00045 as
-         * "returning", the screen would be lying in the attacker's favour. */
+         * "returning", the screen would be lying in the attacker's favor. */
         XCTAssertEqual(tx.change.count, 0)
         XCTAssertEqual(tx.payees.count, 2)
         XCTAssertTrue(tx.paysSeveral)

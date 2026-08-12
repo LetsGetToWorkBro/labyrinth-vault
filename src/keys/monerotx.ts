@@ -1,5 +1,5 @@
 /**
- * wallet2's file formats: recognising them, and refusing them by name.
+ * wallet2's file formats: recognizing them, and refusing them by name.
  *
  * ## What this is for
  *
@@ -34,7 +34,7 @@
  *      pick the final result between them. Until that exists the file cannot
  *      even be decrypted.
  *   2. **Boost's portable binary archive.** The plaintext inside is a C++
- *      object graph serialised by Boost.Serialization, not a documented wire
+ *      object graph serialized by Boost.Serialization, not a documented wire
  *      format. It is defined by the library's implementation.
  *   3. **`unsigned_tx_set`.** The struct graph itself: construction data,
  *      sources, ring members, destinations, subaddress indices.

@@ -11,7 +11,7 @@
 //  cannot find that. `swift build` finds it instantly, which is the argument
 //  for this file existing.
 //
-//  The rendering — colours, layout, the hold-to-continue that these screens
+//  The rendering — colors, layout, the hold-to-continue that these screens
 //  deliberately do not have — stays in Screens/Refusal.swift.
 
 import Foundation
@@ -23,7 +23,7 @@ import Foundation
 /// continue.
 ///
 /// The mapping is not decorative. When the bridge hands this layer a fatal
-/// warning it does not recognise, the honest outcome is a refusal it cannot
+/// warning it does not recognize, the honest outcome is a refusal it cannot
 /// describe well — never a screen that quietly proceeds — so `unrecognised`
 /// exists as the catch-all and `test/app-wiring.test.ts` fails if psbt.ts
 /// grows a fatal code with no case here.
@@ -53,7 +53,7 @@ enum Refusal: Equatable {
     ///
     /// The default is `unrecognised`, and `unrecognised` refuses. A code this
     /// build has no words for is still a reason to stop, and the one thing
-    /// this initialiser must never do is return nil and let a caller carry on.
+    /// this initializer must never do is return nil and let a caller carry on.
     init(code: String) {
         switch code {
         case "output-path-mismatch": self = .changeMismatch

@@ -65,7 +65,7 @@ struct SignedQRView: View {
     /// encoder in src/airgap/envelope.ts. Twelve frames, same wire format.
     private var frames: [String] {
         /* The real frames the engine produced. A signed transaction that
-         * cannot be finalised (someone else still has to sign) has none, and
+         * cannot be finalized (someone else still has to sign) has none, and
          * the screen says so rather than animating something invented. */
         result.frames ?? []
     }

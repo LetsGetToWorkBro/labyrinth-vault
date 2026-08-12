@@ -210,7 +210,7 @@ describe('parsing an address', () => {
     expect(parseAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa').valid).toBe(false);
   });
 
-  it('recognises an address this code built', () => {
+  it('recognizes an address this code built', () => {
     const wallet = walletFromSeed(seedFrom('built here'));
     const parsed = parseAddress(wallet.address);
     expect(parsed.valid).toBe(true);
@@ -596,10 +596,10 @@ describe('secrets are bytes, and bytes can be wiped', () => {
       expect(value, `${key} contains the spend key`).not.toContain(spendHex);
       expect(value, `${key} contains the view key`).not.toContain(viewHex);
     }
-    // And the whole object serialised, which is what a careless log would do.
-    const serialised = JSON.stringify(wallet);
-    expect(serialised).not.toContain(spendHex);
-    expect(serialised).not.toContain(viewHex);
+    // And the whole object serialized, which is what a careless log would do.
+    const serialized = JSON.stringify(wallet);
+    expect(serialized).not.toContain(spendHex);
+    expect(serialized).not.toContain(viewHex);
   });
 
   it('does not compute the recovery phrase until it is asked to', () => {

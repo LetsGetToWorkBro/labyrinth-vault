@@ -33,7 +33,7 @@
  * to render "fee: probably fine" on a confirmation screen. So a missing input
  * value is fatal here rather than a blank field.
  *
- * Worth being precise about the neighbouring attack rather than claiming to
+ * Worth being precise about the neighboring attack rather than claiming to
  * stop it: a PSBT that *understates* an input amount does not steal anything
  * from this wallet, because a segwit signature commits to the amount, so a
  * wrong one produces a signature that simply does not verify. The danger is
@@ -593,7 +593,7 @@ export interface SignResult {
   problem?: string;
   /** The PSBT with our signatures in it, for a companion that wants one. */
   psbt?: Uint8Array;
-  /** The finished transaction, when every input could be finalised. */
+  /** The finished transaction, when every input could be finalized. */
   hex?: string;
   txid?: string;
   signed: number;
@@ -671,7 +671,7 @@ export function signPsbt(psbt: Uint8Array, wallet: BtcWallet, approval: PsbtSumm
     return { ok: false, signed: 0, problem: 'None of the inputs belong to this wallet, so there was nothing to sign.' };
   }
 
-  /* Finalising is attempted, not required. A transaction with another party's
+  /* Finalizing is attempted, not required. A transaction with another party's
    * inputs in it is legitimately unfinished after we sign, and handing back a
    * part-signed PSBT is the right answer there rather than an error. */
   let hex: string | undefined;

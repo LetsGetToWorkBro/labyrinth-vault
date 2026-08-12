@@ -1,6 +1,6 @@
 //  Labyrinth.swift
 //  The brand geometry: a right-angle involute drawn as one continuous path
-//  from a single centre outward. It is never an illustration of a maze; it is
+//  from a single center outward. It is never an illustration of a maze; it is
 //  architecture, and above all it is a motion system:
 //
 //    uncertain -> verified : the path draws itself to completion

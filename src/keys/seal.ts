@@ -66,9 +66,9 @@
  * becomes them, it is named for what it does, and what it returns is the
  * caller's to wipe.
  *
- * The NFKD normalisation that used to be hidden inside `deriveKey` lives there
+ * The NFKD normalization that used to be hidden inside `deriveKey` lives there
  * too, in the open, because it is a cross-language contract now: the app does
- * the same normalisation in Swift before it sends bytes across the bridge, and
+ * the same normalization in Swift before it sends bytes across the bridge, and
  * `test/fixtures/primitives.json` pins the exact bytes for the inputs where
  * two implementations could plausibly disagree. Getting that wrong does not
  * fail loudly — it produces a vault that opens on the phone that sealed it and
@@ -82,7 +82,7 @@ import { wipe } from './wipe';
 /** Bumped only if the layout changes in a way an old reader would misread. */
 export const SEAL_VERSION = 1;
 
-/** "LVS" + version. A sealed blob is recognisable without being readable. */
+/** "LVS" + version. A sealed blob is recognizable without being readable. */
 const MAGIC = [0x4c, 0x56, 0x53];
 
 const SALT_BYTES = 16;
@@ -146,7 +146,7 @@ function paramsAcceptable(params: KdfParams): boolean {
 /**
  * The one place a typed passphrase becomes bytes.
  *
- * NFKD, the same normalisation BIP39 applies to its passphrases, so a
+ * NFKD, the same normalization BIP39 applies to its passphrases, so a
  * passphrase that seals on this phone opens on any other device regardless of
  * how its keyboard composed the characters. Then UTF-8.
  *

@@ -7,7 +7,7 @@
  * right angles and straight lines, because that is what the motif is.
  *
  * There is no icon for an asset. Bitcoin and Monero are named in words, and
- * the coloured rule down the edge of a row does the sorting. A wallet full of
+ * the colored rule down the edge of a row does the sorting. A wallet full of
  * coin logos is a wallet that has decided its content is brands.
  */
 

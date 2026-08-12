@@ -644,7 +644,7 @@ export function walletFromMnemonic(phrase: string | string[], network: Network =
  *
  * That asymmetry is the entire reason a vault and a companion can be two
  * different devices. The private *view* key finds incoming outputs; the
- * private *spend* key authorises spending. The companion gets the view key,
+ * private *spend* key authorizes spending. The companion gets the view key,
  * watches the chain and shows a balance, and cannot move a coin. The spend key
  * never leaves this device.
  *

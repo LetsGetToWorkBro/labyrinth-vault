@@ -4,7 +4,7 @@
  * Two properties matter here and they are different in kind. One is that the
  * conversion is faithful — every output present, every number formatted by the
  * one implementation that has tests. The other is that the shape survives
- * JSON, because a bridge is a serialisation and a field that quietly becomes
+ * JSON, because a bridge is a serialization and a field that quietly becomes
  * `undefined` on the way across is a field the screen will render as blank.
  *
  * The multi-payee tests are the reason this file exists. The Swift model this

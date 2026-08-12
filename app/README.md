@@ -50,7 +50,7 @@ a fresh unseal. A phone lifted mid-session holds ciphertext and public keys.
 order-enforced by test: `react-native-get-random-values` provides the
 `crypto.getRandomValues` that every entropy argument draws from, and a
 guarded `TextEncoder`/`TextDecoder` polyfill covers older Hermes: the note
-in `src/platform.d.ts`, honoured. Natively, `PrivacyGuard.install()` drops
+in `src/platform.d.ts`, honored. Natively, `PrivacyGuard.install()` drops
 an opaque cover on `willResignActive` so the app-switcher snapshot iOS
 writes to disk shows a wordmark instead of a seed phrase; and nothing in
 `app/` or `app/ios/` writes to the clipboard: the passphrase fields set

@@ -7,7 +7,7 @@
  * Children do not mount until allChecksPass. There is no skip, no timeout
  * that waves it through, and the failure state's one action re-runs the
  * checks; a signing device whose hash is wrong has exactly one honest
- * behaviour, and "continue" is not it.
+ * behavior, and "continue" is not it.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';

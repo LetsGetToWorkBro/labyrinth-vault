@@ -272,7 +272,7 @@ export function hashToScalar(data: Uint8Array): Uint8Array {
  * `generate_key_derivation`: the shared secret between a transaction's public
  * key and your view key.
  *
- * This is the Diffie-Hellman step that makes a Monero wallet able to recognise
+ * This is the Diffie-Hellman step that makes a Monero wallet able to recognize
  * its own outputs without revealing anything to anybody watching. Multiplying
  * by 8 afterwards is Monero's, not ed25519's: it clears any small-order
  * component the sender's key might have carried, so two parties cannot be made

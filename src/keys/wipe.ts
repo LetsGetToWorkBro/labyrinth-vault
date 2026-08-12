@@ -30,7 +30,7 @@
  *     crypto bought for partial credit, which this project refuses. The real
  *     answer, if it is ever needed, is a native secure-memory signer, not a
  *     patch here; `docs/monero-send.md` states the residue plainly.
- *   - Crossing a React Native bridge serialises and copies.
+ *   - Crossing a React Native bridge serializes and copies.
  *
  * So the real protections remain the outer ones: the device is offline, the
  * seed at rest is sealed (seal.ts), and the platform keystore holds what it

@@ -86,7 +86,7 @@ let package = Package(
             resources: [
                 /* The same file test/primitives.test.ts checks TypeScript
                  * against. Copied, not processed: it is a fixture, and a build
-                 * system that "optimises" a test vector has broken the test. */
+                 * system that "optimizes" a test vector has broken the test. */
                 .copy("Fixtures/primitives.json"),
                 .copy("Fixtures/summary.json"),
                 .copy("Fixtures/monero-summary.json"),

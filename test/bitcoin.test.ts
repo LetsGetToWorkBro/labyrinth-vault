@@ -63,7 +63,7 @@ describe('amounts', () => {
 });
 
 describe('seed words', () => {
-  it('normalises case and whitespace before judging', () => {
+  it('normalizes case and whitespace before judging', () => {
     const sloppy =
       '  Abandon ABANDON abandon\tabandon abandon abandon\nabandon abandon abandon abandon abandon about ';
     const checked = checkMnemonic(sloppy);

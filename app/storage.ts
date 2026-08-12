@@ -75,7 +75,7 @@ function fromHex(hex: string): Uint8Array {
  * so the two layers cannot collide into each other. Layering means AND: to
  * unseal you need what the Keychain guards *and* what the person knows.
  *
- * Built by joining *normalised parts* rather than by normalising a joined
+ * Built by joining *normalized parts* rather than by normalizing a joined
  * string, so the user's passphrase is never copied into a longer string that
  * nothing can wipe. The two are supposed to produce identical bytes — U+000A
  * is a starter, so NFKD cannot compose or reorder across it — but "supposed

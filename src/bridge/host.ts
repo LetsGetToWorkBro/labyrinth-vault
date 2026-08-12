@@ -144,7 +144,7 @@ function fail(problem: string): string {
 }
 
 /**
- * A refusal the screen can recognise rather than only print.
+ * A refusal the screen can recognize rather than only print.
  *
  * Most failures here are one-off sentences and stay that way. A few name a
  * condition the app has a dedicated screen for, and those carry a code, in the
@@ -162,7 +162,7 @@ function failCoded(code: string, problem: string): string {
  * how it arrived. Returns the refusal to send back, or null when it is not a
  * Monero file and the caller should carry on.
  *
- * The vault refuses these, and the point of recognising them is that the
+ * The vault refuses these, and the point of recognizing them is that the
  * refusal is true: "this is a Monero unsigned transaction set and this build
  * cannot open it" sends somebody to the right place, and "that is not a
  * transaction" sends them to re-export a file that was never wrong.
@@ -396,7 +396,7 @@ export const api = {
   scan: guarded('scan', (text: string) => {
     const value = String(text ?? '');
     /* Before the scanner, because it would answer "not a frame this device
-     * recognises" and that is the unhelpful half-truth this check exists to
+     * recognizes" and that is the unhelpful half-truth this check exists to
      * replace. */
     const monero = moneroFileRefusal(value, null);
     if (monero) return monero;
@@ -431,7 +431,7 @@ export const api = {
    * Sign, given the digest of the summary a person approved.
    *
    * Swift passes back the digest it displayed rather than a whole summary:
-   * re-serialising the description through the bridge and back would be a
+   * re-serializing the description through the bridge and back would be a
    * second chance for it to differ from what was read. The summary object
    * itself never leaves this side, so the one `signPsbt` checks is the one
    * `describe` produced.

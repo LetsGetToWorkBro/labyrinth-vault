@@ -4,7 +4,7 @@
  * app/storage.ts and app/session.ts take their platform as arguments — the
  * store, the RNG, the foreground events — precisely so this file can be the
  * platform: a Map plays the Keychain, a counter plays the CSPRNG, a function
- * call plays the app switcher. What is asserted here is the behaviour the
+ * call plays the app switcher. What is asserted here is the behavior the
  * README promises: ciphertext-only at rest, transient unseal with a
  * guaranteed wipe, both-layers-required passphrases, and keys that die when
  * the app leaves the foreground while watching survives.
@@ -323,7 +323,7 @@ describe('the screen can name every refusal the reader makes', () => {
     expect(missing, 'fatal codes with no case in Refusal').toEqual([]);
   });
 
-  it('refuses rather than continues when it does not recognise a code', () => {
+  it('refuses rather than continues when it does not recognize a code', () => {
     // The catch-all exists and is a refusal, not a fallthrough.
     expect(swift).toMatch(/case unrecognised\(String\)/);
     expect(swift).toMatch(/NO SIGNATURE PRODUCED/);
@@ -445,7 +445,7 @@ describe('a passphrase is never a string on either side of the bridge', () => {
     expect(passphrase).toMatch(/memset_s/);
   });
 
-  it('normalises the same way the engine does, and says NFKD not NFD', () => {
+  it('normalizes the same way the engine does, and says NFKD not NFD', () => {
     /* decomposedStringWithCanonicalMapping is NFD and is the easy thing to
      * type. It would agree with the engine on almost every passphrase and
      * disagree on ligatures, full-width characters and Roman numerals — a
@@ -488,7 +488,7 @@ describe('the screen model matches the wire, field for field', () => {
   /* The seam that had already drifted once. `TxSummary` in Swift is a hand
    * written mirror of `WireSummary` in TypeScript, and nothing but this test
    * connects them. The first version was missing `yourNet`, had no case for an
-   * output with no address, and — worst — modelled a single `destination`,
+   * output with no address, and — worst — modeled a single `destination`,
    * so a transaction paying two people would have shown one of them.
    *
    * Parsing Swift with regexes is crude. It is also the only thing standing

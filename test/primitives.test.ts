@@ -12,7 +12,7 @@
  * test proves the TypeScript side agrees with it. `ios/LabyrinthVaultTests/`
  * holds the Swift half.
  *
- * The passphrase normalisation section is the one that is not merely
+ * The passphrase normalization section is the one that is not merely
  * convenient. NFKD in `src/keys/seal.ts` and NFKD in Passphrase.swift are two
  * implementations of the same Unicode operation, in two runtimes, on two
  * Unicode versions that are not guaranteed to be the same one. If they ever
@@ -91,20 +91,20 @@ describe('TypeScript agrees with the fixture', () => {
     }
   });
 
-  it('passphrase normalisation, character for character', () => {
+  it('passphrase normalization, character for character', () => {
     for (const v of fixture.passphraseNormalisation) {
       expect(hex(passphraseToBytes(v.text)), v.note).toBe(v.nfkdUtf8);
     }
   });
 });
 
-describe('the normalisation vectors actually test normalisation', () => {
+describe('the normalization vectors actually test normalization', () => {
   /* A set of vectors that are all plain ASCII would pass against an
-   * implementation that did no normalising at all. These assertions are about
+   * implementation that did no normalizing at all. These assertions are about
    * the fixture rather than the code: they fail if somebody trims the
    * interesting cases out of it. */
 
-  it('includes inputs that normalisation changes', () => {
+  it('includes inputs that normalization changes', () => {
     const changed = fixture.passphraseNormalisation.filter(
       (v) => hex(new TextEncoder().encode(v.text)) !== v.nfkdUtf8,
     );

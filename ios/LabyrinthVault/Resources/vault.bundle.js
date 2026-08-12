@@ -17656,7 +17656,7 @@ zoo`.split("\n"));
      * Sign, given the digest of the summary a person approved.
      *
      * Swift passes back the digest it displayed rather than a whole summary:
-     * re-serialising the description through the bridge and back would be a
+     * re-serializing the description through the bridge and back would be a
      * second chance for it to differ from what was read. The summary object
      * itself never leaves this side, so the one `signPsbt` checks is the one
      * `describe` produced.

@@ -2,7 +2,7 @@
  * The seam between the reader and the screen.
  *
  * `describePsbt` decides what a transaction says. A SwiftUI view draws it.
- * Between them is a serialisation, and this file is it — the one definition
+ * Between them is a serialization, and this file is it — the one definition
  * of what crosses, so that the two sides cannot quietly disagree about what a
  * transaction contains.
  *
