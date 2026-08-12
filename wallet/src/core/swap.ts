@@ -120,7 +120,7 @@ export interface SwapCoin {
 }
 
 /**
- * What this wallet will trade: the five assets that carry essentially all
+ * What this wallet will trade: the six assets that carry essentially all
  * swap volume, each on the chains people actually use.
  *
  * Deliberately not every coin every exchange lists. A catalog of thousands is
@@ -142,6 +142,8 @@ export const SWAP_COINS: SwapCoin[] = [
   { id: 'eth-arbitrum', ticker: 'eth', label: 'Ethereum on Arbitrum', chain: 'arbitrum', family: 'evm', ours: null },
   { id: 'eth-optimism', ticker: 'eth', label: 'Ethereum on Optimism', chain: 'optimism', family: 'evm', ours: null },
   { id: 'eth-base', ticker: 'eth', label: 'Ethereum on Base', chain: 'base', family: 'evm', ours: null },
+
+  { id: 'sol', ticker: 'sol', label: 'Solana', chain: 'solana', family: 'sol', ours: null },
 
   { id: 'usdt-tron', ticker: 'usdt', label: 'USDT on Tron', chain: 'tron', family: 'tron', ours: null },
   { id: 'usdt-eth', ticker: 'usdt', label: 'USDT on Ethereum', chain: 'ethereum', family: 'evm', ours: null },
@@ -183,6 +185,7 @@ const EXOLIX_CHAIN: Record<string, string> = {
   'eth-arbitrum': 'ARBITRUM',
   'eth-optimism': 'OPTIMISM',
   'eth-base': 'BASE',
+  sol: 'SOL',
   'usdt-tron': 'TRX',
   'usdt-eth': 'ETH',
   'usdt-bsc': 'BSC',
@@ -209,6 +212,7 @@ const GODEX_CHAIN: Record<string, string> = {
   'eth-arbitrum': 'ARBITRUM',
   'eth-optimism': 'OPTIMISM',
   'eth-base': 'BASE',
+  sol: 'SOL',
   'usdt-tron': 'TRX',
   'usdt-eth': 'ETH',
   'usdt-bsc': 'BSC',

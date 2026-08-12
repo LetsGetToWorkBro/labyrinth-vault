@@ -532,19 +532,23 @@ describe('the coin catalog, and the chain tables that translate it', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('covers the five assets that carry the volume, and nothing invented', () => {
+  it('covers the assets that carry the volume, and nothing invented', () => {
     const tickers = new Set(SWAP_COINS.map((c) => c.ticker));
-    expect([...tickers].sort()).toEqual(['btc', 'eth', 'usdc', 'usdt', 'xmr']);
+    expect([...tickers].sort()).toEqual(['btc', 'eth', 'sol', 'usdc', 'usdt', 'xmr']);
   });
 
-  it('holds only native Bitcoin and native Monero', () => {
-    /* Both exchanges list wrapped BTC and wrapped XMR under the native
-     * ticker. They are somebody else's IOU, and a person choosing "Monero"
-     * must not be able to land on a Solana token by that name. */
-    const btc = SWAP_COINS.filter((c) => c.ticker === 'btc');
-    const xmr = SWAP_COINS.filter((c) => c.ticker === 'xmr');
-    expect(btc.map((c) => c.chain)).toEqual(['bitcoin']);
-    expect(xmr.map((c) => c.chain)).toEqual(['monero']);
+  it('holds each native coin only on its own chain', () => {
+    /* The exchanges list wrapped BTC, wrapped XMR and wrapped SOL under the
+     * native ticker: Exolix alone offers SOL on Ethereum, BNB Chain and HECO,
+     * and its own data marks the Ethereum one as native, which it is not.
+     * They are somebody else's IOU, and a person choosing "Monero" must not
+     * be able to land on a Solana token wearing that name. This is why the
+     * catalog is written by hand rather than mirrored from a provider. */
+    const chainsFor = (ticker: string) =>
+      SWAP_COINS.filter((c) => c.ticker === ticker).map((c) => c.chain);
+    expect(chainsFor('btc')).toEqual(['bitcoin']);
+    expect(chainsFor('xmr')).toEqual(['monero']);
+    expect(chainsFor('sol')).toEqual(['solana']);
   });
 
   it('is the only thing the wallet itself holds', () => {
