@@ -148,6 +148,42 @@ describe('the listings say what the code does', () => {
     expect(send).toMatch(/\{DEMO && \(/);
   });
 
+  it('the privacy policy does not describe a protection this build does not have', () => {
+    /* The policy explains the swap proxy and Oblivious HTTP, and both are real
+     * arrangements with real code behind them. Neither is switched on: the
+     * proxy address is an empty string and the relay list is empty, because a
+     * relay run by the same company as the gateway would be theatre and no
+     * other operator is agreed yet.
+     *
+     * A privacy policy is the one document where a reader takes the
+     * description as the product, so the rule this repository already applies
+     * in `worker/README.md` applies hardest here: say which arrangement is
+     * actually in force rather than describing the better one. The policy
+     * carries that sentence now, and this holds the two together.
+     *
+     * Note which direction it fails in. The day either one is switched on,
+     * this test fails and points at a paragraph that has just become wrong in
+     * the other direction, which is the only moment anybody would think to
+     * reread it. */
+    const policy = read('store/wallet/privacy-policy.md');
+    if (!/Oblivious HTTP|routed through a proxy/.test(policy)) return;
+
+    const proxyOff = /export const SWAP_PROXY = ''/.test(
+      readFileSync('wallet/src/net/swapproxy.ts', 'utf8'),
+    );
+    const relaysOff = /export const RELAYS: Relay\[\] = \[\]/.test(
+      readFileSync('wallet/src/net/oblivious.ts', 'utf8'),
+    );
+    expect(
+      proxyOff && relaysOff,
+      'the swap proxy or the relay list is configured now, so the policy paragraph saying neither is in force has to be rewritten before this check can go',
+    ).toBe(true);
+    expect(
+      policy,
+      'the policy describes the proxy and Oblivious HTTP without saying that neither is switched on in this build',
+    ).toMatch(/Neither is in force in this release/);
+  });
+
   it('neither listing promises something the other app does', () => {
     /* They are two apps and they will be read side by side. The vault holds
      * keys and the wallet does not, and that is the sentence a person needs

@@ -53,6 +53,15 @@ are additionally sent under Oblivious HTTP (RFC 9458), so that the party who
 sees your address cannot read the request and the party who reads the request
 cannot see your address.
 
+**Neither is in force in this release.** Read the paragraph above as the
+arrangement, not as what is running today: no proxy address is set in this
+build and no relay operator is agreed, so the swap screen serves its figures
+from a fixture and says so on the screen, and nothing about a swap reaches any
+exchange from this version. If a later build sets the proxy but still has no
+relay, the proxy stands between you and the exchange and Oblivious HTTP does
+not apply. The app states which of the arrangements is actually in force rather
+than describing the best one, and so does this document.
+
 The exchange itself is a third party with its own policy, and what it does with
 an order it has filled is between you and it. The wallet hands the exchange
 only what a swap requires: the two coins, the amount, and the addresses the
