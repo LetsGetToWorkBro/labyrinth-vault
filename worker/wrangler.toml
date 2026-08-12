@@ -40,6 +40,13 @@ SWAP_RATE_LIMIT_PER_MINUTE = "60"
 # broken or hostile relay cannot turn this into an open amplifier.
 OHTTP_RATE_LIMIT_PER_MINUTE = "6000"
 
+# Orders, specifically, on the oblivious door. Creating one is the only route
+# that writes something durable at a stranger under our affiliate key, and the
+# route is visible to the gateway without the caller being visible, so it can
+# be counted for free. Well under the general limit on purpose: a 429 lasts a
+# minute, an affiliate key flagged for abuse lasts until a human fixes it.
+OHTTP_CREATE_LIMIT_PER_MINUTE = "120"
+
 # Secrets, set with `npx wrangler secret put NAME`, never in this file:
 #
 #   EXOLIX_API_KEY      Exolix affiliate key. Sent as the `api-key` header on

@@ -191,6 +191,95 @@ describe('a request that goes the whole way', () => {
     expect(outer.headers.get('Content-Type')).toBe('message/ohttp-res');
   });
 });
+describe('counting what can be counted without knowing whose it is', () => {
+  /* Per-person limiting is genuinely gone on this path: every caller wears
+   * the relay's address. The route, though, is visible to the gateway without
+   * the caller being visible, and creating an order is the one route that
+   * writes something durable at a stranger under our affiliate key. */
+  const counters = (): KVNamespace => {
+    const held = new Map<string, string>();
+    return {
+      get: async (key: string) => held.get(key) ?? null,
+      put: async (key: string, value: string) => void held.set(key, value),
+    } as unknown as KVNamespace;
+  };
+
+  const limited = (over: Partial<Env> = {}): Env =>
+    env({ SWAP_LIMIT: counters(), RATE_LIMIT_SECRET: 'a secret that is not the address', ...over });
+
+  const orderBody = JSON.stringify({
+    provider: 'exolix',
+    from: 'btc',
+    to: 'xmr',
+    amount: 1,
+    payoutAddress: 'a',
+    refundAddress: 'b',
+  });
+
+  const post = (send: typeof fetch, path: string, body: string): Promise<Response> =>
+    send(`https://gateway.example${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+
+  const withUpstream = async <T>(run: () => Promise<T>): Promise<T> => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response('{}', { headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+    try {
+      return await run();
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+
+  it('holds orders to a ceiling well under the relay own general limit', async () => {
+    const relay = pretendRelay(limited({ OHTTP_CREATE_LIMIT_PER_MINUTE: '2' }));
+    const send = through(relay);
+    await withUpstream(async () => {
+      expect((await post(send, '/v1/create', orderBody)).status).toBe(200);
+      expect((await post(send, '/v1/create', orderBody)).status).toBe(200);
+      expect((await post(send, '/v1/create', orderBody)).status).toBe(429);
+    });
+  });
+
+  it('refuses inside the envelope, so the relay cannot tell an order from a quote', async () => {
+    /* A 429 in the clear would tell the relay that this particular request
+     * was an order, which is exactly what it is not supposed to learn. */
+    const gatewayEnv = limited({ OHTTP_CREATE_LIMIT_PER_MINUTE: '1' });
+    const relay = pretendRelay(gatewayEnv);
+    const send = through(relay);
+    await withUpstream(async () => {
+      await post(send, '/v1/create', orderBody);
+      expect((await post(send, '/v1/create', orderBody)).status).toBe(429);
+    });
+
+    const outer = await worker.fetch(
+      new Request('https://gateway.example/v1/gateway', {
+        method: 'POST',
+        headers: { 'Content-Type': 'message/ohttp-req' },
+        body: relay.seen[1]!,
+      }),
+      gatewayEnv,
+    );
+    expect(outer.status).toBe(200);
+    expect(outer.headers.get('Content-Type')).toBe('message/ohttp-res');
+  });
+
+  it('leaves quotes under the general limit rather than the order one', async () => {
+    /* Cheap and idempotent. Giving them the order ceiling would turn a
+     * person comparing two exchanges into an abuser. */
+    const relay = pretendRelay(limited({ OHTTP_CREATE_LIMIT_PER_MINUTE: '1' }));
+    const send = through(relay);
+    await withUpstream(async () => {
+      const quote = JSON.stringify({ provider: 'exolix', from: 'btc', to: 'xmr', amount: 1 });
+      for (let i = 0; i < 4; i++) {
+        expect((await post(send, '/v1/quote', quote)).status, `quote ${i + 1}`).toBe(200);
+      }
+    });
+  });
+});
 
 describe('what the gateway refuses', () => {
   const post = (body: BodyInit, contentType = 'message/ohttp-req'): Promise<Response> =>

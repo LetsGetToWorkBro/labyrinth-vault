@@ -53,6 +53,7 @@ export interface Env {
   SWAP_LIMIT?: KVNamespace;
   SWAP_RATE_LIMIT_PER_MINUTE?: string;
   OHTTP_RATE_LIMIT_PER_MINUTE?: string;
+  OHTTP_CREATE_LIMIT_PER_MINUTE?: string;
   EXOLIX_API_KEY?: string;
   GODEX_PUBLIC_KEY?: string;
   GODEX_AFFILIATE_ID?: string;
@@ -262,11 +263,41 @@ export default {
        * be pointed at itself is a route somebody will eventually point at
        * itself a few thousand times. */
       const inner = new URL(opened.request.url);
-      const answer =
-        inner.pathname === '/v1/gateway' || inner.pathname === '/v1/ohttp-keys'
-          ? problem('That route is not reachable from inside.', 404)
-          : await serve(opened.request, env);
-      return sealAnswer(opened, answer);
+      if (inner.pathname === '/v1/gateway' || inner.pathname === '/v1/ohttp-keys') {
+        return sealAnswer(opened, problem('That route is not reachable from inside.', 404));
+      }
+
+      /* Which route this is can be counted without knowing whose it is, and
+       * that is worth using. Creating an order is the only route that writes
+       * something durable at a stranger, under our affiliate key, so it gets
+       * a ceiling of its own well under the relay's. Quotes and node reads
+       * are cheap and idempotent and stay under the general limit.
+       *
+       * This does trade one failure for another: a single abuser can now eat
+       * the relay's whole order budget and get honest people a 429. That is
+       * the better failure. A 429 is a minute old and recoverable; an
+       * affiliate key flagged for abuse at the exchange breaks swaps for
+       * everybody until a human negotiates a new one. */
+      if (inner.pathname === '/v1/create') {
+        const orders = await checkLimit(
+          env.SWAP_LIMIT,
+          env.RATE_LIMIT_SECRET,
+          `relay-create:${callerAddress(request)}`,
+          intOr(env.OHTTP_CREATE_LIMIT_PER_MINUTE, 120),
+          Date.now(),
+        );
+        /* Sealed, like any other answer. Refusing in the clear would tell the
+         * relay that this particular request was an order, which is exactly
+         * the kind of thing it is not supposed to be able to learn. */
+        if (!orders.allowed) {
+          return sealAnswer(
+            opened,
+            problem('Too many orders are being created right now. Try again in a moment.', 429),
+          );
+        }
+      }
+
+      return sealAnswer(opened, await serve(opened.request, env));
     }
 
     const counted = await checkLimit(

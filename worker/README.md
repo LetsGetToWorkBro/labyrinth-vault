@@ -140,6 +140,36 @@ to the relay instead, generously, and per-person limiting is simply gone.
 There is no version of this where we both cannot identify somebody and can
 meter them.
 
+This is the designed trade, not an oversight. RFC 9458 6.2.2 puts the
+obligation where the information is: a gateway that exempts a relay from
+ordinary limits "might want to ensure that the relay applies a rate-limiting
+policy that is acceptable to the server", and "might choose to authenticate
+the relay to enable the higher rate." Two consequences follow, and only one of
+them is discharged:
+
+- **Done.** What can be counted without knowing whose it is, is. The *route*
+  is visible to the gateway while the caller is not, and creating an order is
+  the only route that writes something durable at a stranger under our
+  affiliate key, so it has a ceiling of its own well under the relay's
+  (`OHTTP_CREATE_LIMIT_PER_MINUTE`). The refusal is sealed like any other
+  answer, because a 429 in the clear would tell the relay which request was an
+  order. This does trade one failure for another: a single abuser can eat the
+  relay's whole order budget and get honest people a 429. That is the better
+  failure, since a 429 is a minute old and recoverable while an affiliate key
+  flagged for abuse breaks swaps for everybody until a human negotiates a new
+  one.
+- **Owed.** Per-person limiting at the relay, and authenticating the relay so
+  that `/v1/gateway` is not open to the whole internet, are both terms for the
+  operator agreement that does not exist yet. Neither can be built here: the
+  first needs the addresses this gateway deliberately cannot see, and the
+  second needs an operator to authenticate.
+
+What is deliberately *not* built is the third option the same RFC section
+describes: signalling abuse back to the relay. A gateway that answered
+differently depending on what it decrypted would let a relay acting on those
+signals deanonymize the client, which is the failure this whole design exists
+to prevent. Every refusal here is the same shape for that reason.
+
 **Replay is possible.** The gateway is stateless, so a relay could send the
 same ciphertext twice. For a quote or a node call that is noise. For an order
 it would create a duplicate at the exchange, which the wallet never sees,
