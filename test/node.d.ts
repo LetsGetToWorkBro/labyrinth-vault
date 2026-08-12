@@ -50,6 +50,24 @@ declare module 'node:path' {
 }
 
 /**
+ * A fresh JavaScript context, for the two tests that need to run code
+ * somewhere other than here.
+ *
+ * `test/bare-runtime.test.ts` evaluates the shipped bundle with every host
+ * global deleted, which is the nearest thing to JavaScriptCore that exists on
+ * a build machine, and `test/encoding.test.ts` loads the UTF-8 polyfill into a
+ * context of its own so that installing it cannot replace Node's, which is the
+ * reference it is being compared against.
+ */
+declare module 'node:vm' {
+  export function runInNewContext(
+    code: string,
+    sandbox?: Record<string, unknown>,
+    options?: { timeout?: number },
+  ): unknown;
+}
+
+/**
  * A monotonic clock, for the one test that measures work avoided rather than
  * a value returned. `Date.now()` would do, but it moves when the system clock
  * does and this is a duration.
