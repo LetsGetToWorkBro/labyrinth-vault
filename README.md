@@ -309,7 +309,9 @@ npm install
 npm run dev
 ```
 
-The current live site is [labyrinth-vault.higgsfield.app](https://labyrinth-vault.higgsfield.app).
+The site is [labyrinthwallet.com](https://labyrinthwallet.com), served by Cloudflare
+Pages from `site/` on `main`. [site/README.md](site/README.md) has the build
+settings, and the one that catches people is the root directory.
 
 ## Shipping
 
