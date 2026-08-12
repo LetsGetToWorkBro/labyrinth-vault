@@ -192,12 +192,9 @@ export default function LabyrinthSite() {
       </section>
 
       <section id="source" className="source-section section-pad">
-        <div>
-          <h2>DON’T TRUST.<br />VERIFY.</h2>
-          <p>Labyrinth is designed to be inspected, challenged, and improved.</p>
-          <img className="section-photo" src={verifyLoupe} alt="A jeweller’s loupe resting on a printed sheet of hexadecimal, the characters under the glass magnified and sharp" width={1200} height={805} loading="lazy" decoding="async" />
-        </div>
+        <div><h2>DON’T TRUST.<br />VERIFY.</h2><p>Labyrinth is designed to be inspected, challenged, and improved.</p></div>
         <div className="source-grid">{sourceAreas.map((area) => <span key={area}>{area}</span>)}</div>
+        <img className="source-photo" src={verifyLoupe} alt="A jeweller’s loupe resting on a printed sheet of hexadecimal, the characters under the glass magnified and sharp" width={1200} height={805} loading="lazy" decoding="async" />
         <a className="source-action" href="https://github.com/LetsGetToWorkBro/labyrinth-vault" target="_blank" rel="noreferrer"><span>VIEW SOURCE</span><b>↗</b></a>
       </section>
 
