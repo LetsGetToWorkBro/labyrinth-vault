@@ -14,7 +14,10 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@labyrinth/geometry": ["../wallet/src/design/geometry.ts"]
+    }
   },
   "include": ["src"],
   "references": []

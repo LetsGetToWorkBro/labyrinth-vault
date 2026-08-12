@@ -103,11 +103,21 @@ a { color: inherit; text-decoration: none; }
  * screen is exactly what it was. */
 .nav-menu { display: none; }
 .nav-panel { display: none; }
-.lab-mark { position: relative; display: inline-grid; place-items: center; width: 23px; height: 23px; border: 1px solid currentColor; }
-.lab-mark i { position: absolute; display: block; border: 1px solid currentColor; }
-.lab-mark i:nth-child(1) { width: 15px; height: 15px; border-right-color: transparent; }
-.lab-mark i:nth-child(2) { width: 9px; height: 9px; border-bottom-color: transparent; }
-.lab-mark i:nth-child(3) { width: 3px; height: 3px; background: currentColor; }
+/* The mark. One unbroken path, out of `wallet/src/design/geometry.ts`, which
+ * is also the function `scripts/make-icons.mjs` rasterizes both app icons
+ * from. So the logo in this bar and the icon on the phone's home screen are
+ * the same drawing rather than two people's memory of one.
+ *
+ * It used to be three nested squares made of CSS borders, which was a fourth
+ * version of a mark that already had three, and not even the same figure: a
+ * labyrinth is one path with no choices in it, and three separate rings say
+ * the opposite of that.
+ *
+ * `currentColor` because it appears on both grounds, bone on void in the bar
+ * and void on bone in the inverted sections, and it should follow its context
+ * rather than need a second rule. The stroke is in the 24-unit viewBox, so it
+ * stays proportional at every size the mark is used at. */
+.lab-mark { display: inline-block; width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: square; stroke-linejoin: miter; }
 
 .hero-journey { position: relative; }
 .hero-journey .scroll-scrub__route { display: none; }

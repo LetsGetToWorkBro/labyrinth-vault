@@ -118,6 +118,28 @@ function round(value: number): number {
 // ---------------------------------------------------------------- the mark
 
 /**
+ * How far apart the identity glyph's runs sit, as a fraction of its size.
+ *
+ * A named number rather than a literal because three surfaces draw this mark
+ * and they have to draw the same one: the vault's icon, the wallet's icon, and
+ * the navigation bars of the wallet and the marketing site. They used to use
+ * two different numbers, 6 for the icons and 5.5 for the navigation mark. That
+ * is not a difference anybody could name and it is one everybody could feel,
+ * and it is how a logo drifts from itself a release at a time.
+ *
+ * Set to the icons' value, deliberately. The icon is the copy of this mark
+ * that is already installed on people's home screens, so it is the one that
+ * does not get to move.
+ *
+ * Note that this is *not* the figure the vault's own screens draw. Those use
+ * a denser involute from `ios/LabyrinthVault/Design/Labyrinth.swift`, and that
+ * is a deliberate second figure rather than drift: it exists to be animated,
+ * drawing itself as the launch sequence resolves and freezing mid-stroke when
+ * a signature is refused. This one is the still mark.
+ */
+export const MARK_GAP_RATIO = 6;
+
+/**
  * The identity glyph: four turns, entered from the top, ending at the center.
  *
  * Deliberately the same construction as the journey path, at a coarser gap, so
@@ -125,6 +147,11 @@ function round(value: number): number {
  * visibly the same object at different densities. A logo that is a special
  * case is a logo that stops meaning anything.
  */
+export function markSpiral(size = 24): Point[] {
+  return spiral(size, size / MARK_GAP_RATIO);
+}
+
+/** The same glyph as SVG path data, for anything that draws rather than measures. */
 export function markPath(size = 24): string {
-  return pathFrom(spiral(size, size / 5.5));
+  return pathFrom(markSpiral(size));
 }

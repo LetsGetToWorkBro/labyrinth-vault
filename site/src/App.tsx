@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+/* The mark, from the same module the icons and the wallet draw it from, rather
+ * than a copy of the path data. A copy is a logo that is right on the day it
+ * is pasted. */
+import { markPath } from "@labyrinth/geometry";
 import { ScrollScrub } from "./components/scroll-scrub";
 import { scrollScrubScenes, scrollScrubTheme } from "./scroll-scrub-scenes";
 import qrPhones from "./assets/qr-phones.webp";
@@ -29,8 +33,28 @@ const sourceAreas = [
   "INTEROPERABILITY",
 ];
 
+/* The logo, from the file that draws it everywhere else.
+ *
+ * This used to be three nested squares built out of CSS borders, which is a
+ * fourth drawing of a mark that already had three: both app icons and both
+ * navigation bars come from `markPath`. Nested squares are not even the same
+ * figure — a labyrinth has one unbroken path and no choices, which is the
+ * whole reason it is the mark, and three separate rings say the opposite.
+ *
+ * `stroke-width` is in the viewBox's units and the box is 24 wide, so the
+ * stroke scales with the mark and one rule sets the size. `vectorEffect` is
+ * deliberately not used: this has to stay heavier as it gets smaller, or it
+ * disappears at 17px in the phone mockups. */
 function Mark() {
-  return <span className="lab-mark" aria-hidden="true"><i /><i /><i /></span>;
+  return (
+    /* The viewBox is padded by more than half the stroke width. The spiral's
+     * outer run sits *on* the line x=0..24, so an unpadded box clips exactly
+     * half the stroke off the top and the left and the mark reads as cropped
+     * rather than as a shape. */
+    <svg className="lab-mark" viewBox="-1 -1 26 26" aria-hidden="true" focusable="false">
+      <path d={markPath(24)} />
+    </svg>
+  );
 }
 
 /* One list, rendered twice: inline on a wide screen, stacked in the panel on a

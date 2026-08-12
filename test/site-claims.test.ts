@@ -502,6 +502,50 @@ describe('the site reads the way everything else here reads', () => {
   });
 });
 
+describe('the site wears the same mark as the apps', () => {
+  const app = readFileSync('site/src/App.tsx', 'utf8');
+  const css = readFileSync('site/src/labyrinth.css', 'utf8');
+
+  it('draws the mark from the shared geometry rather than its own copy', () => {
+    /* The mark used to be three nested squares built out of CSS borders: a
+     * fourth drawing of a figure that already had three, and not even the same
+     * figure, since a labyrinth is one unbroken path and three separate rings
+     * say the opposite of that.
+     *
+     * It now comes from `wallet/src/design/geometry.ts`, which is also what
+     * `scripts/make-icons.mjs` rasterizes both app icons from, so the logo in
+     * the navigation bar and the icon on a phone's home screen are the same
+     * drawing rather than two people's memory of one. Pasted path data would
+     * be correct on the day it was pasted, so what is held here is the import. */
+    expect(app, 'the site does not import the shared mark').toMatch(
+      /import\s*\{\s*markPath\s*\}\s*from\s*["']@labyrinth\/geometry["']/,
+    );
+    expect(app, 'the mark is not drawn from markPath').toMatch(/d=\{markPath\(/);
+    expect(app, 'the mark path is hard-coded rather than computed').not.toMatch(/d="M[\d\s.]+L/);
+  });
+
+  it('has no nested-square mark left in the stylesheet', () => {
+    expect(css, 'the old mark is still being drawn out of borders').not.toMatch(/\.lab-mark\s+i\b/);
+    expect(css, 'the mark is not stroked').toMatch(/\.lab-mark\s*\{[^}]*stroke:/);
+  });
+
+  it('gives the mark room for its own stroke', () => {
+    /* The spiral's outer run sits on the lines x=0 and y=0, so a viewBox of
+     * exactly `0 0 24 24` clips half the stroke off the top and the left. It
+     * did, and the mark rendered visibly cropped. The box has to be inset by
+     * more than half the stroke width, and this is that arithmetic rather than
+     * a note asking somebody to remember it. */
+    const box = /viewBox="(-?[\d.]+) (-?[\d.]+) [\d.]+ [\d.]+"/.exec(app);
+    expect(box, 'the mark has no viewBox').not.toBeNull();
+    const stroke = /\.lab-mark\s*\{[^}]*stroke-width:\s*([\d.]+)/.exec(css);
+    expect(stroke, 'the mark has no stroke width to check against').not.toBeNull();
+
+    const half = Number(stroke![1]) / 2;
+    expect(-Number(box![1]), 'the viewBox clips the stroke on the left').toBeGreaterThan(half);
+    expect(-Number(box![2]), 'the viewBox clips the stroke on the top').toBeGreaterThan(half);
+  });
+});
+
 describe('the site still makes the claim that is true', () => {
   it('says the binary has no network code, which is the checkable one', () => {
     const all = text.map((t) => t.body).join('\n');

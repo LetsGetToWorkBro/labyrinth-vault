@@ -51,7 +51,7 @@ const compiled = await build({
   write: false,
   platform: 'neutral',
 });
-const { spiral } = await import(
+const { markSpiral } = await import(
   'data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64')
 );
 
@@ -182,12 +182,17 @@ const BONE = [0xf3, 0xf0, 0xe9];
  * the home screen crowds them, so the mark sits well inside its own tile: this
  * is the same instinct as the geometry file's note about surviving at 14
  * points, applied at the other end of the scale.
+ *
+ * The density is not a parameter. It used to be, defaulted to a number that
+ * was not the one `markPath` uses, so the icon on the home screen and the mark
+ * in the navigation bar were the same drawing at two slightly different
+ * densities. Nobody would name the difference and everybody would feel it.
+ * `markSpiral` is now the only way to get this shape.
  */
-function mark({ size, background, ink, inset = 0.17, gapDivisor = 6, weight = 0.026 }) {
+function mark({ size, background, ink, inset = 0.17, weight = 0.026 }) {
   const target = canvas(size, background);
   const box = size * (1 - inset * 2);
-  const gap = box / gapDivisor;
-  const points = spiral(box, gap);
+  const points = markSpiral(box);
   const offset = size * inset;
   const width = size * weight;
   for (let i = 1; i < points.length; i++) {
