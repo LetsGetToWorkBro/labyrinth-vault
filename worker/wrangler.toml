@@ -1,0 +1,47 @@
+# The swap proxy, and nothing else.
+#
+# This Worker exists so that an exchange never learns a user's IP address.
+# Every quote, order and status check the wallet makes is forwarded from here,
+# so from Exolix's or Godex's side the request comes from Cloudflare and not
+# from somebody's phone. It also holds the affiliate keys, which is the other
+# half of why it exists: a key compiled into a phone app is a published key,
+# and anyone who pulled it out of the binary could spend the identity it
+# represents.
+#
+# It is deliberately small. It has no database, no queue, no cron, no logging,
+# and one KV namespace whose only contents are counters keyed by an HMAC that
+# nobody can reverse into an address. See README.md for what that buys and
+# what it does not.
+
+name = "labyrinth-swap"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+# Node compatibility is deliberately absent: this Worker uses Web Crypto and
+# fetch and needs nothing from Node, and every polyfill is surface.
+
+# The rate limit's counters. Keys are HMACs, values are integers, and both
+# expire in two minutes. There is nothing in here to leak and nothing in here
+# to subpoena.
+# Create with: npx wrangler kv namespace create SWAP_LIMIT
+[[kv_namespaces]]
+binding = "SWAP_LIMIT"
+id = "PUT_THE_ID_FROM_WRANGLER_KV_NAMESPACE_CREATE_HERE"
+
+[vars]
+# Requests per minute per caller, before a 429. Generous, because a person
+# comparing two exchanges makes several quotes in a row and none of that is
+# abuse; low enough that the affiliate keys cannot be farmed at scale.
+SWAP_RATE_LIMIT_PER_MINUTE = "60"
+
+# Secrets, set with `npx wrangler secret put NAME`, never in this file:
+#
+#   EXOLIX_API_KEY      Exolix affiliate key. Sent as the `api-key` header on
+#                       every request, which is what their reference asks for
+#                       to earn affiliate credit.
+#   GODEX_PUBLIC_KEY    Godex partner token. Sent as the `public-key` header.
+#   GODEX_AFFILIATE_ID  Godex affiliate id, carried in the create body.
+#   RATE_LIMIT_SECRET   The HMAC key the rate limiter uses so that a caller
+#                       can be counted without their address being stored.
+#                       Any 32+ bytes of randomness. Rotating it forgets every
+#                       bucket, which is harmless.

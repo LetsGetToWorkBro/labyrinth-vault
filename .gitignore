@@ -12,3 +12,7 @@ wallet/android/
 
 # SwiftPM build products (Package.swift builds the platform-free model).
 .build/
+
+# The swap Worker's dependencies and wrangler state.
+worker/node_modules/
+worker/.wrangler/
