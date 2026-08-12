@@ -37,6 +37,7 @@ import {
   parseGodexRate,
   parseGodexStatus,
   amountWithinQuote,
+  chainCanBeProven,
   chainIsAmbiguous,
   confusableChains,
   parsePair,
@@ -957,5 +958,98 @@ describe('the floor on the other side of the trade', () => {
   it('lets a provider that names no payout floor constrain nothing', () => {
     const quote = { provider: 'godex' as const, ok: true as const, toAmount: 0.0001, minAmount: 0.1 };
     expect(amountWithinQuote(1, quote).ok).toBe(true);
+  });
+});
+
+describe('what Godex names back, and what it does not', () => {
+  /* Godex's documented create reply, field for field from the reference.
+   * It echoes the coins and says nothing about the networks: the request
+   * accepts coin_from_network and coin_to_network, the response returns
+   * neither. That asymmetry is the whole point of these tests. */
+  const DOC_RESPONSE = {
+    status: 'wait',
+    coin_from: 'LTC',
+    coin_to: 'ETH',
+    deposit_amount: 1,
+    withdrawal: '0x5aadfa328D778383d1134F7530f9feaC676',
+    withdrawal_extra_id: 'qbGDbH9gwrAkJTM6gxsfQpWYMfe8',
+    return: 'LsZK2wfxvXrfsfB6L39qmCcV5DK29ismmAwN41',
+    return_extra_id: 'qbGDbH9gwrAkfJTM6gxsfQpWYMfe8zRu',
+    withdrawal_amount: 0.25281436,
+    deposit: 'LsZK2wfxvXrdffsfB6L39qmCcV5DK29ismmAwN41',
+    deposit_extra_id: null,
+    rate: 0.26011493,
+    fee: 0.00730057,
+    transaction_id: '5bb4d99cd44a5',
+    float: true,
+  };
+
+  it('reads the documented reply', () => {
+    const order = parseGodexCreate(DOC_RESPONSE)!;
+    expect(order).not.toBeNull();
+    expect(order.id).toBe('5bb4d99cd44a5');
+    expect(order.depositAddress).toBe('LsZK2wfxvXrdffsfB6L39qmCcV5DK29ismmAwN41');
+    expect(order.payoutAddress).toBe('0x5aadfa328D778383d1134F7530f9feaC676');
+    expect(order.depositAmount).toBe(1);
+    expect(order.toAmount).toBe(0.25281436);
+    expect(order.depositExtra).toBeNull();
+  });
+
+  it('carries the coins it was told, and no network at all', () => {
+    const order = parseGodexCreate(DOC_RESPONSE)!;
+    expect(order.fromCoin).toBe('LTC');
+    expect(order.toCoin).toBe('ETH');
+    /* Null because the API does not say, not because the parser skipped it.
+     * verifyOrder reads null as unchecked, so a Godex order is never treated
+     * as having proven a chain it never mentioned. */
+    expect(order.fromNetwork).toBeNull();
+    expect(order.toNetwork).toBeNull();
+  });
+
+  it('catches a Godex order built for the wrong coin', () => {
+    const request = btcToXmr();
+    const wrong = orderFor(request, { fromCoin: 'BTC', toCoin: 'LTC' });
+    const check = verifyOrder(request, wrong, 7.5);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/different coin coming back/i);
+  });
+
+  it('maps every status Godex documents', () => {
+    const documented: Record<string, string> = {
+      wait: 'waiting',
+      confirmation: 'confirming',
+      exchanging: 'exchanging',
+      sending: 'sending',
+      sending_confirmation: 'sending',
+      success: 'done',
+      overdue: 'expired',
+      error: 'failed',
+      refunded: 'refunded',
+    };
+    for (const [word, stage] of Object.entries(documented)) {
+      expect(parseGodexStatus({ status: word }).stage, word).toBe(stage);
+      expect(parseGodexStatus({ status: word }).stage, word).not.toBe('unknown');
+    }
+  });
+});
+
+describe('which provider can prove a chain', () => {
+  it('says Exolix can, because it names the network back', () => {
+    expect(chainCanBeProven('exolix', swapCoin('usdc-arbitrum')!)).toBe(true);
+    expect(chainCanBeProven('exolix', swapCoin('btc')!)).toBe(true);
+  });
+
+  it('says Godex cannot, for a coin that rides more than one chain', () => {
+    expect(chainCanBeProven('godex', swapCoin('usdc-arbitrum')!)).toBe(false);
+    expect(chainCanBeProven('godex', swapCoin('usdt-eth')!)).toBe(false);
+    expect(chainCanBeProven('godex', swapCoin('eth-base')!)).toBe(false);
+  });
+
+  it('says Godex can, where the coin itself settles the chain', () => {
+    /* One chain in the catalog means echoing the coin names the network by
+     * elimination, so the missing network field costs nothing here. */
+    for (const id of ['btc', 'xmr', 'sol', 'usdt-tron', 'usdt-ton']) {
+      expect(chainCanBeProven('godex', swapCoin(id)!), id).toBe(true);
+    }
   });
 });

@@ -386,6 +386,35 @@ export function confusableChains(coin: SwapCoin): ChainId[] {
   return [...others];
 }
 
+/**
+ * Does this exchange name the network back when it creates an order?
+ *
+ * Exolix returns coinFrom and coinTo objects carrying `network`, so an order
+ * can be held against the chain it was asked for. Godex's documented reply
+ * echoes `coin_from` and `coin_to` and nothing about networks, even though
+ * its request accepts them, so the same check has nothing to read.
+ *
+ * Read from each provider's own reference, and false is the safe default for
+ * anyone added later: a provider is assumed unable to prove a chain until
+ * somebody has seen it do so.
+ */
+export const PROVIDER_ECHOES_NETWORK: Record<ProviderId, boolean> = {
+  exolix: true,
+  godex: false,
+};
+
+/**
+ * Can this provider prove the order was built on the chain requested?
+ *
+ * Two ways it can. It names the network back, or the coin only lives on one
+ * chain in this catalog, in which case echoing the coin settles the network
+ * by elimination. Neither holds for USDT, USDC or ETH on Godex, because each
+ * of those rides seven EVM chains here and Godex names none of them.
+ */
+export function chainCanBeProven(provider: ProviderId, coin: SwapCoin): boolean {
+  return PROVIDER_ECHOES_NETWORK[provider] || !chainIsAmbiguous(coin);
+}
+
 /** True when the address shape alone cannot establish the chain. */
 export function chainIsAmbiguous(coin: SwapCoin): boolean {
   return confusableChains(coin).length > 0;
@@ -925,14 +954,20 @@ export function parseGodexCreate(json: unknown): SwapOrder | null {
     depositAmount: number(body['deposit_amount']),
     toAmount: number(body['withdrawal_amount']),
     payoutAddress,
-    /* Godex publishes no public API reference: the create-transaction schema
-     * arrives with partner onboarding. Reading a field name we have not seen
-     * would build a check that silently never fires, so these stay null and
-     * verifyOrder records the pair as unchecked. When the partner docs land,
-     * this is the one place to fill in. */
-    fromCoin: null,
+    /* Godex echoes the coins and, per its own response table, nothing about
+     * the networks: the request takes `coin_from_network` and
+     * `coin_to_network`, and the reply names neither back. So the coin check
+     * is available here and the chain check is not, and that is a fact about
+     * the API rather than a gap in this parser.
+     *
+     * The consequence is worth stating where somebody will read it: for a
+     * coin that lives on one chain the coin echo settles it, but for USDT,
+     * USDC and ETH, which this catalog carries on seven EVM chains each, a
+     * Godex order cannot be proven to have been built on the chain it was
+     * asked for. Exolix names the network back and is checked on it. */
+    fromCoin: text(body['coin_from']).toUpperCase() || null,
     fromNetwork: null,
-    toCoin: null,
+    toCoin: text(body['coin_to']).toUpperCase() || null,
     toNetwork: null,
   };
 }
@@ -952,7 +987,9 @@ export function parseGodexStatus(json: unknown): SwapStatus {
     raw === 'wait' ? 'waiting'
     : raw === 'confirmation' || raw === 'confirming' ? 'confirming'
     : raw === 'exchanging' ? 'exchanging'
-    : raw === 'sending' ? 'sending'
+    /* `sending_confirmation` is the outgoing transaction waiting for network
+     * confirmations: still the sending stage, and the last one before done. */
+    : raw === 'sending' || raw === 'sending_confirmation' ? 'sending'
     : raw === 'success' ? 'done'
     : raw === 'refunded' ? 'refunded'
     : raw === 'overdue' || raw === 'expired' ? 'expired'

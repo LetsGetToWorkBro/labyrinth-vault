@@ -63,6 +63,7 @@ import {
   PRIVACY_NOTE,
   PROVIDERS,
   SWAP_COINS,
+  chainCanBeProven,
   chainIsAmbiguous,
   chainName,
   confusableChains,
@@ -609,7 +610,17 @@ function QuoteFacts({
       {Number.isFinite(quote.maxAmount ?? NaN) ? (
         <FactLine label="MAXIMUM" value={`${quote.maxAmount} ${fromTicker}`} />
       ) : null}
-      <FactLine label="ROUTE" value={provider.label} last />
+      <FactLine label="ROUTE" value={provider.label} />
+      {/* What this exchange can and cannot be held to. Exolix names the
+        * network back when it creates an order, so the chain can be checked
+        * against the one asked for; Godex's reply names only the coin. For a
+        * coin that lives on one chain that costs nothing, so the line only
+        * appears where it is actually true. */}
+      <FactLine
+        label="CHAIN CHECKED"
+        value={chainCanBeProven(quote.provider, to) ? 'YES' : 'NOT BY THIS EXCHANGE'}
+        last
+      />
     </View>
   );
 }
