@@ -1,3 +1,5 @@
-First TestFlight build.
+First public build.
 
-Bitcoin signing works end to end: make a vault, export a watch-only key, read a transaction, approve it, sign it. Monero is keys, addresses and recovery phrases only; it cannot spend yet, and the app says so rather than pretending.
+Both chains sign: Bitcoin PSBTs and Monero unsigned sets are read, rendered in full, and signed on this device. A built-in demo transaction walks the whole flow with no companion device, against demo keys that can never touch a real coin.
+
+The lifecycle is real end to end. Keys are generated on device from the platform's CSPRNG, sealed under your passphrase with Argon2id and XChaCha20-Poly1305, stored passcode-bound in the keychain, unlocked on launch, and wiped the moment the app leaves the foreground.

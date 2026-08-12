@@ -1,9 +1,9 @@
 //  Protocols.swift
 //  Bitcoin and Monero as protocols, not brands: one vault, two signing
-//  systems, each described by what is installed and what is not. The Monero
-//  screen is honest about the repository's actual state — keys, addresses
-//  and view-key export exist and are tested; transaction signing does not,
-//  so the vault refuses an XMR payload rather than appear to handle one.
+//  systems, each described by what is installed. Both chains sign now —
+//  PSBT for Bitcoin, CLSAG over an unsigned set for Monero — and each
+//  screen names what the vault checks before a signature exists, because
+//  the checking is the product.
 
 import SwiftUI
 

@@ -28,6 +28,15 @@ struct UnlockView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Eyebrow("LOCKED")
                     Statement("ENTER", "PASSPHRASE.", size: 44).padding(.top, 16)
+                    if let notice = vault.notice {
+                        /* Why this screen appeared, when the reason is not
+                         * obvious — the demo walk ending, mainly. */
+                        Text(notice)
+                            .font(Type.body(13))
+                            .lineSpacing(4)
+                            .foregroundStyle(Ink.attention)
+                            .padding(.top, 12)
+                    }
                     Text("The keys on this device are sealed. The passphrase is stretched " +
                          "into the decryption key; it is not stored anywhere, and there is " +
                          "no way to recover it.")

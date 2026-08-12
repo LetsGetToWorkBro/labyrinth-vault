@@ -11,8 +11,8 @@ struct SettingsView: View {
     private var rows: [(String, String, Route)] {
         [
             ("BITCOIN", "BIP84 · ACCOUNT 0", .bitcoin),
-            ("MONERO", "VIEW KEY ONLY", .monero),
-            ("SECURITY DIAGNOSTICS", "ALL CLEAR", .airgap),
+            ("MONERO", "CLSAG SIGNING", .monero),
+            ("SECURITY DIAGNOSTICS", "", .airgap),
             ("KEY MANAGEMENT", "ENCRYPTED", .recovery),
             ("RE-RUN AIRGAP CHECK", "", .setup(.verify)),
         ]

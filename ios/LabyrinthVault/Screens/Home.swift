@@ -59,9 +59,9 @@ struct HomeView: View {
                                     Text(vault.vaultID).font(Type.mono(13)).foregroundStyle(Ink.paper)
                                 }
                                 HStack {
-                                    Eyebrow("LAST VERIFIED")
+                                    Eyebrow("FINGERPRINT")
                                     Spacer()
-                                    Text("NEVER").font(Type.mono(13)).foregroundStyle(Ink.paperDim)
+                                    Text(vault.fingerprint).font(Type.mono(13)).foregroundStyle(Ink.paperDim)
                                 }
                             }
                             .padding(.vertical, 22)

@@ -22,6 +22,10 @@ Some transactions cannot be shown honestly, and those are not signed at all. An 
 
 Whether an output is yours is re-derived from your own key. It is never read from the file.
 
+TRY IT BEFORE YOU TRUST IT
+
+A built-in demo transaction walks the entire flow - read, review, approve, sign - against demo keys that can never touch a real coin. No companion device needed, and every screen it crosses is marked DEMO.
+
 IT CHECKS ITSELF, EVERY LAUNCH
 
 Before it will make or use a key, the app proves its own cryptography against published test vectors from NIST, from BIP84, from the Monero project, from libsodium and from the Argon2 reference implementation. If anything fails, nothing runs.
