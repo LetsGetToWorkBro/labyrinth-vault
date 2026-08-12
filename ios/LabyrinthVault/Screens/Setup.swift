@@ -328,12 +328,13 @@ private struct EntropyView: View {
                 working
             }
         }
-        /* The real work starts with the animation, not after it: fresh
-         * randomness into the engine's create, the sealed blob into the
-         * keychain, then an unlock of the stored blob to prove a relaunch
-         * will find a vault that opens. The screen moves on when both the
-         * drawing and the sealing are done, whichever finishes last. */
-        .onAppear { vault.createVault() }
+        /* The real work — fresh randomness into the engine's create, the
+         * sealed blob into the keychain, an unlock of the stored blob to
+         * prove a relaunch will find a vault that opens — was started by
+         * `beginCreate` before this screen appeared, so the passphrase never
+         * waits in a model property between screens. This screen renders the
+         * progress and moves on when both the drawing and the sealing are
+         * done, whichever finishes last. */
         .onChange(of: vault.creation) { _ in advance() }
         .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { now in
             bits = min(256, Int(now.timeIntervalSince(began) / 5.2 * 256))

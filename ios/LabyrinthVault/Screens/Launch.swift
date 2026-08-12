@@ -22,12 +22,19 @@ struct LaunchView: View {
     /// The power-on choreography has finished playing.
     @State private var settled = false
 
-    private var failed: Bool { vault.booted && !vault.launchPassed }
+    /// The animation has played and the verdict is in; a face may render.
+    private var verdictReady: Bool { settled && vault.booted }
 
     var body: some View {
         Screen {
-            if failed {
-                failure
+            if !verdictReady {
+                powerOn
+            } else if !vault.launchPassed {
+                selfTestFailure
+            } else if case .unreadable(let sentence) = vault.stored {
+                storageFailure(sentence)
+            } else if vault.stored == .vanished {
+                vanished
             } else {
                 powerOn
             }
@@ -41,11 +48,22 @@ struct LaunchView: View {
     }
 
     /// Move on only when there is somewhere true to move to: animation done,
-    /// boot done, checks green. The failure face renders otherwise.
+    /// boot done, checks green, and the keychain giving one of its two clean
+    /// answers. The other verdicts hold this screen and render as faces —
+    /// `unreadable` with the checks-again lever, `vanished` with the
+    /// explanation the person is owed before setup is offered.
     private func proceed() {
         guard settled, vault.booted, vault.launchPassed else { return }
-        Haptic.verify()
-        vault.go(vault.hasVault ? .unlock : .setup(.declaration))
+        switch vault.stored {
+        case .found:
+            Haptic.verify()
+            vault.go(.unlock)
+        case .none:
+            Haptic.verify()
+            vault.go(.setup(.declaration))
+        case .vanished, .unreadable:
+            return
+        }
     }
 
     private var powerOn: some View {
@@ -94,9 +112,76 @@ struct LaunchView: View {
         }
     }
 
+    /// The keychain errored on the read. Not "no vault" — rounding this down
+    /// to none would offer setup on a device whose vault may still exist, so
+    /// it gets the failed-self-test posture instead: stop, the sentence, one
+    /// lever that runs the whole boot again. The retry is genuine; boot
+    /// re-reads the keychain.
+    private func storageFailure(_ sentence: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 0) {
+                Eyebrow("STORAGE CHECK FAILED", color: Ink.refused)
+                Statement("THE VAULT", "CANNOT BE READ.", size: 40).padding(.top, 16)
+                Text(sentence)
+                    .font(Type.body())
+                    .lineSpacing(5)
+                    .foregroundStyle(Ink.paper)
+                    .padding(.top, 14)
+                Text("The sealed keys were not touched and nothing beyond this screen " +
+                     "will open. If this repeats, restart the device before anything else.")
+                    .font(Type.body(13))
+                    .lineSpacing(5)
+                    .foregroundStyle(Ink.paperDim)
+                    .padding(.top, 10)
+            }
+            .padding(.horizontal, 24)
+            Spacer()
+            Lever(title: "RUN CHECKS AGAIN") { vault.boot() }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+        }
+    }
+
+    /// A vault was made on this device and its sealed keys are no longer in
+    /// the keychain. iOS deletes passcode-bound items when the device
+    /// passcode is turned off — the protection working as designed, on the
+    /// theory that a device without a passcode should hold nothing worth
+    /// taking. The witness item survives exactly so this screen can exist:
+    /// the alternative was setup appearing over the vault's grave with no
+    /// sentence about it.
+    private var vanished: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 0) {
+                Eyebrow("KEYS REMOVED", color: Ink.attention)
+                Statement("THE VAULT", "IS GONE.", size: 40).padding(.top, 16)
+                Text("A vault existed on this device, and its sealed keys are no longer " +
+                     "in the keychain. The usual cause: the device passcode was turned " +
+                     "off, and iOS deletes passcode-bound items when that happens.")
+                    .font(Type.body())
+                    .lineSpacing(5)
+                    .foregroundStyle(Ink.paper)
+                    .padding(.top, 14)
+                Text("Nothing on any chain was touched. The funds are recoverable with " +
+                     "the two phrases written down at setup, restored in any standard " +
+                     "wallet software. A new vault made here starts empty.")
+                    .font(Type.body(13))
+                    .lineSpacing(5)
+                    .foregroundStyle(Ink.paperDim)
+                    .padding(.top, 10)
+            }
+            .padding(.horizontal, 24)
+            Spacer()
+            Lever(title: "SET UP A NEW VAULT") { vault.acknowledgeVanished() }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+        }
+    }
+
     /// The gate, shut. Every check by name with its verdict, the engine's
     /// sentence, and one lever. No other exit exists on this screen.
-    private var failure: some View {
+    private var selfTestFailure: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {

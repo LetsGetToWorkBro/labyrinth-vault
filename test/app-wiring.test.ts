@@ -247,6 +247,18 @@ describe('guards over the app source itself', () => {
     expect(keychain).not.toContain('kSecAttrSynchronizable');
   });
 
+  it('the vault app holds its sealed blob to the same standard', () => {
+    /* Same rule, other device. The blob is passcode-bound; the witness item
+     * (which holds no secret, only the fact a vault existed) is deliberately
+     * one class weaker so it survives the passcode being turned off — that
+     * survival is its entire purpose. Both are ThisDeviceOnly, and the sync
+     * attribute stays unmentionable here too. */
+    const store = readFileSync('ios/LabyrinthVault/Support/SealedStore.swift', 'utf8');
+    expect(store).toContain('kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly');
+    expect(store).toContain('kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly');
+    expect(store).not.toContain('kSecAttrSynchronizable');
+  });
+
   it('nothing in the app tree touches the clipboard', () => {
     const clipboard = /(UIPasteboard\s*\.|@react-native-clipboard|\bClipboard\s*\.|expo-clipboard)/;
     const guilty = files.filter((f) => clipboard.test(f.text)).map((f) => f.path);

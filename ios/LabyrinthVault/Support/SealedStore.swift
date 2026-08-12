@@ -36,8 +36,13 @@ enum SealedStore {
     /// second one appearing under a different account name would be a bug.
     private static let service = "vision.labyrinth.vault"
     private static let account = "sealed-vault"
+    /// A second item holding no secret at all — its existence is the fact "a
+    /// vault was created on this device". It lives under a class that
+    /// survives the one event that deletes the blob (see `witnessExists`),
+    /// which is what lets boot tell a fresh device from a bereaved one.
+    private static let witnessAccount = "vault-witness"
 
-    private static var base: [String: Any] {
+    private static func base(_ account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -45,22 +50,61 @@ enum SealedStore {
         ]
     }
 
-    /// The sealed blob from the last `save`, or nil if no vault exists yet.
-    /// Nil and "device locked" are different answers, but not here: this is
-    /// read once at boot, in the foreground, where a passcode-set device is
-    /// always readable.
-    static func load() -> String? {
-        var query = base
+    /// The three answers the keychain can give at boot, kept distinct because
+    /// they route to three different screens. Collapsing `unreadable` into
+    /// `none` would walk a person whose vault still exists into making a
+    /// second one over it; that is the confusion this type exists to refuse.
+    enum Loaded {
+        case none
+        case found(String)
+        case unreadable(String)
+    }
+
+    /// What is at rest. Read once at boot, in the foreground, where a
+    /// passcode-set device is always readable — so anything other than a
+    /// clean hit or a clean miss is a real problem, and is reported as one
+    /// rather than rounded down to "no vault".
+    static func load() -> Loaded {
+        var query = base(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let hex = String(data: data, encoding: .utf8),
-              !hex.isEmpty
-        else { return nil }
-        return hex
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data,
+                  let hex = String(data: data, encoding: .utf8),
+                  !hex.isEmpty
+            else {
+                return .unreadable("The keychain returned the vault in a form this build cannot read.")
+            }
+            return .found(hex)
+        case errSecItemNotFound:
+            return .none
+        default:
+            return .unreadable("The keychain would not return the vault (code \(status)). Nothing was changed.")
+        }
+    }
+
+    /// True if a vault was created on this device at some point, whether or
+    /// not its blob still exists. The witness is stored under
+    /// `AfterFirstUnlockThisDeviceOnly` — still never synced, still bound to
+    /// this device, but *not* passcode-bound, because its whole job is to
+    /// survive the passcode being turned off. That event deletes every
+    /// `WhenPasscodeSetThisDeviceOnly` item, the sealed blob included: the
+    /// protection working as designed, and something the person deserves a
+    /// sentence about rather than a silent walk back into setup.
+    static func witnessExists() -> Bool {
+        var query = base(witnessAccount)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Clear the witness alone: the acknowledgment tap on the screen that
+    /// explains a vanished vault, after which the device really is fresh.
+    static func forgetWitness() {
+        SecItemDelete(base(witnessAccount) as CFDictionary)
     }
 
     /// Store the sealed blob. Returns a sentence on failure, nil on success.
@@ -73,15 +117,24 @@ enum SealedStore {
         guard let data = sealedHex.data(using: .utf8), !data.isEmpty else {
             return "There is nothing to store."
         }
-        SecItemDelete(base as CFDictionary)
+        SecItemDelete(base(account) as CFDictionary)
 
-        var item = base
+        var item = base(account)
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
 
         let status = SecItemAdd(item as CFDictionary, nil)
         switch status {
         case errSecSuccess:
+            /* The witness rides along with every successful save. Its value
+             * is a single meaningless byte: the fact is its existence. A
+             * failure to write it is not a failure to make the vault, so the
+             * status is deliberately not consulted. */
+            SecItemDelete(base(witnessAccount) as CFDictionary)
+            var witness = base(witnessAccount)
+            witness[kSecValueData as String] = Data([1])
+            witness[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            SecItemAdd(witness as CFDictionary, nil)
             return nil
         case errSecNotAvailable, errSecAuthFailed:
             /* The accessibility class requires a device passcode; without one
@@ -94,10 +147,11 @@ enum SealedStore {
         }
     }
 
-    /// Remove the sealed blob. The keys it protected are unrecoverable after
-    /// this except from the recovery phrases; the caller is the screen that
-    /// says so.
+    /// Remove the sealed blob and the witness both. The keys are
+    /// unrecoverable after this except from the recovery phrases; the caller
+    /// is the screen that says so.
     static func erase() {
-        SecItemDelete(base as CFDictionary)
+        SecItemDelete(base(account) as CFDictionary)
+        SecItemDelete(base(witnessAccount) as CFDictionary)
     }
 }
