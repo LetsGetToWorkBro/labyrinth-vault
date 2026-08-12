@@ -326,6 +326,59 @@ describe('choosing a node', () => {
     expect(parseNode('monerod', 'http://node.example:18081').ok).toBe(false);
   });
 
+  it('does not mistake a public name that starts like a private address', () => {
+    /* This check was a prefix match, `/^10\./` against the hostname, and
+     * `10.evil.com` is an ordinary public domain that starts with `10.`. It
+     * passed, and so did `192.168.evil.com` and `172.16.attacker.net`.
+     *
+     * The consequence is specific rather than theoretical. Plain http is
+     * permitted *only* to a local node, so a name that merely looks local buys
+     * an unencrypted connection carrying every address in the wallet, off the
+     * one screen whose whole purpose is deciding who gets to watch you. A
+     * private address is a number in a range, so the check parses the number. */
+    for (const wolf of [
+      'http://10.evil.com:18081',
+      'http://192.168.evil.com:18081',
+      'http://172.16.attacker.net:18081',
+      'http://127.0.0.1.evil.com:18081',
+      'http://10.0.0.5.attacker.net:18081',
+      'http://localhost.evil.com:18081',
+    ]) {
+      expect(parseNode('monerod', wolf).ok, `${wolf} was accepted as local`).toBe(false);
+    }
+  });
+
+  it('still accepts every address that really is private', () => {
+    /* The other half of the same fix. A check that refuses everything is not a
+     * check, it is an outage, and the person it strands is the one running
+     * their own node, which is the behavior this screen exists to argue for. */
+    for (const home of [
+      'http://10.0.0.5:18081',
+      'http://10.255.255.254:18081',
+      'http://192.168.1.1:18081',
+      'http://172.16.0.1:18081',
+      'http://172.31.255.254:18081',
+      'http://127.0.0.1:18081',
+      'http://169.254.10.20:18081',
+      'http://monero.local:18081',
+      'http://localhost:18081',
+    ]) {
+      expect(parseNode('monerod', home).ok, `${home} was refused`).toBe(true);
+    }
+    /* Adjacent to the private ranges and not in them. 172.15 and 172.32 sit
+     * either side of RFC 1918's 172.16 through 172.31, and an off-by-one in
+     * either direction is a public address treated as a private one. */
+    for (const away of [
+      'http://172.15.0.1:18081',
+      'http://172.32.0.1:18081',
+      'http://11.0.0.1:18081',
+      'http://192.169.1.1:18081',
+      'http://999.999.999.999:18081',
+    ]) {
+      expect(parseNode('monerod', away).ok, `${away} was accepted as local`).toBe(false);
+    }
+  });
+
   it('refuses credentials, queries and fragments in the address', () => {
     for (const bad of [
       'https://user:pass@node.example',

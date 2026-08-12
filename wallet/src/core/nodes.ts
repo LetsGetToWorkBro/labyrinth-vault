@@ -103,12 +103,47 @@ export function parseNode(kind: NodeKind, raw: string, label?: string, mine = fa
   };
 }
 
+/**
+ * True only for a name or literal that cannot leave the owner's own network.
+ *
+ * ## This used to be a prefix match, and a prefix match is not an address
+ *
+ * The previous version tested `/^10\./` against the hostname. `10.evil.com`
+ * starts with `10.` and is a perfectly ordinary public domain, so it passed,
+ * and so did `192.168.evil.com` and `172.16.attacker.net`. The consequence is
+ * specific rather than theoretical: `parseNode` allows plain http *only* to a
+ * local node, so a name that merely looks local buys an attacker an
+ * unencrypted connection carrying every address in the wallet, from the one
+ * screen whose entire purpose is choosing who gets to watch you.
+ *
+ * A private address is a number in a range, so this parses the number. Four
+ * decimal octets, each in range, and then the range test. Anything that is
+ * not an IPv4 literal is not private, and the answer is no.
+ *
+ * Names are separate and both are safe by construction: `localhost` resolves
+ * to the loopback by definition, and `.local` is reserved for mDNS and cannot
+ * be registered publicly, so neither can be pointed at somebody's server.
+ */
 function isLocal(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname.endsWith('.local')) return true;
-  if (hostname === '127.0.0.1' || hostname === '::1') return true;
-  if (/^10\./.test(hostname)) return true;
-  if (/^192\.168\./.test(hostname)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+  /* WHATWG URL keeps the brackets on an IPv6 literal. Strip them before
+   * comparing, or `[::1]` is silently not the loopback. */
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+
+  if (host === 'localhost' || host.endsWith('.local')) return true;
+  if (host === '::1') return true;
+
+  const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!octets) return false;
+
+  const parts = octets.slice(1).map(Number);
+  if (parts.some((part) => part > 255)) return false;
+  const [a, b] = parts as [number, number, number, number];
+
+  if (a === 127) return true;                      // loopback
+  if (a === 10) return true;                       // RFC 1918
+  if (a === 192 && b === 168) return true;         // RFC 1918
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918
+  if (a === 169 && b === 254) return true;         // link-local, RFC 3927
   return false;
 }
 
