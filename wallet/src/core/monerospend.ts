@@ -407,14 +407,28 @@ export function parseUnsigned(
     return { ok: false, problem: 'That set does not name a known network.' };
   }
 
+  /* An amount is a 64-bit count of piconero, and the ceiling is part of that
+   * rather than a nicety: the twin of this parser in the vault has it, and a
+   * mirror that accepts what the original refuses is not a mirror. */
   const amount = (v: unknown): bigint | null => {
     if (typeof v !== 'string' || !/^\d+$/.test(v)) return null;
-    try { return BigInt(v); } catch { return null; }
+    try {
+      const parsed = BigInt(v);
+      return parsed < 2n ** 64n ? parsed : null;
+    } catch { return null; }
   };
   const hex64 = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/i.test(v);
+  /* `JSON.parse` produces `[null]`, and reading a field off null throws out of
+   * a parser that promises to refuse in a sentence. The vault's copy of this
+   * format keeps the same guard; both halves of a wire format should fail the
+   * same way on the same bytes. */
+  const fields = (entry: unknown): Record<string, unknown> =>
+    entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {};
+  const whole = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
   if (!Array.isArray(raw['inputs']) || raw['inputs'].length === 0) return { ok: false, problem: 'That set has no inputs.' };
   if (!Array.isArray(raw['outputs']) || raw['outputs'].length === 0) return { ok: false, problem: 'That set has no outputs.' };
+  if (raw['inputs'].length > 128 || raw['outputs'].length > 16) return { ok: false, problem: 'That set is implausibly large.' };
   const fee = amount(raw['fee']);
   if (fee === null) return { ok: false, problem: 'That set has no fee.' };
   const ringSize = Number(raw['ringSize']);
@@ -422,14 +436,14 @@ export function parseUnsigned(
 
   const inputs: UnsignedInput[] = [];
   for (const entry of raw['inputs']) {
-    const input = entry as Record<string, unknown>;
+    const input = fields(entry);
     const amt = amount(input['amount']);
     if (!hex64(input['txPublicKey']) || amt === null) return { ok: false, problem: 'An input is malformed.' };
-    if (typeof input['indexInTx'] !== 'number' || typeof input['globalIndex'] !== 'number') return { ok: false, problem: 'An input is malformed.' };
+    if (!whole(input['indexInTx']) || !whole(input['globalIndex'])) return { ok: false, problem: 'An input is malformed.' };
     if (!Array.isArray(input['ring']) || input['ring'].length !== ringSize) return { ok: false, problem: 'An input ring is the wrong size.' };
-    const ring = input['ring'].map((m) => m as Record<string, unknown>);
+    const ring = input['ring'].map(fields);
     for (const m of ring) {
-      if (!hex64(m['key']) || !hex64(m['commitment']) || typeof m['globalIndex'] !== 'number') {
+      if (!hex64(m['key']) || !hex64(m['commitment']) || !whole(m['globalIndex'])) {
         return { ok: false, problem: 'A ring member is malformed.' };
       }
     }
@@ -449,7 +463,7 @@ export function parseUnsigned(
 
   const outputs: UnsignedOutput[] = [];
   for (const entry of raw['outputs']) {
-    const output = entry as Record<string, unknown>;
+    const output = fields(entry);
     const amt = amount(output['amount']);
     if (typeof output['address'] !== 'string' || amt === null) return { ok: false, problem: 'An output is malformed.' };
     outputs.push({ address: output['address'], amount: amt.toString(), change: output['change'] === true, dummy: output['dummy'] === true });

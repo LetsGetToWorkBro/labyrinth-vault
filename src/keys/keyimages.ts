@@ -105,6 +105,21 @@ export const MAX_OUTPUTS = 2000;
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
+ * An array entry as something safe to read fields off.
+ *
+ * `JSON.parse` happily produces `[null]`, and `null['tx']` is a TypeError
+ * rather than the sentence this parser promises. Anything that is not an
+ * object becomes an empty one, so its fields read as `undefined` and fall
+ * through the ordinary checks below into an ordinary refusal. The alternative
+ * is an exception thrown out of a function whose whole contract is to refuse
+ * in words — and on the wallet side of this file there is no outer net to
+ * turn that back into one.
+ */
+function fields(entry: unknown): Record<string, unknown> {
+  return entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {};
+}
+
+/**
  * Read a request, or say what is wrong with it.
  *
  * Strict for the usual reason: everything arriving over the wire is untrusted,
@@ -137,7 +152,7 @@ export function parseKeyImageRequest(
 
   const outputs: OutputRef[] = [];
   for (const entry of raw['outputs']) {
-    const output = entry as Record<string, unknown>;
+    const output = fields(entry);
     const tx = typeof output['tx'] === 'string' ? output['tx'].toLowerCase() : '';
     const key = typeof output['key'] === 'string' ? output['key'].toLowerCase() : '';
     const index = output['index'];
@@ -245,7 +260,7 @@ export function parseKeyImageReply(
 
   const images: KeyImageEntry[] = [];
   for (const entry of raw['images']) {
-    const image = entry as Record<string, unknown>;
+    const image = fields(entry);
     const key = typeof image['key'] === 'string' ? image['key'].toLowerCase() : '';
     const value = typeof image['image'] === 'string' ? image['image'].toLowerCase() : '';
     if (!HEX64.test(key) || !HEX64.test(value)) {

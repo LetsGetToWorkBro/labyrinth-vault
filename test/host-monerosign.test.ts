@@ -106,7 +106,9 @@ function randomHexFor(): string {
 }
 
 describe('moneroDescribe and moneroSign over the bridge', () => {
-  it('refuses to describe when locked, and to sign undescribed', () => {
+  /* Opens a session, so it carries the same Argon2id cost — and the same
+   * explicit allowance — as the two tests below it. */
+  it('refuses to describe when locked, and to sign undescribed', { timeout: 30_000 }, () => {
     const locked = JSON.parse(api.moneroDescribe('00')) as { ok: boolean; problem?: string };
     expect(locked.ok).toBe(false);
     expect(locked.problem).toMatch(/locked/i);

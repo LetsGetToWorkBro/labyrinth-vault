@@ -174,7 +174,10 @@ describe('the whole flow, through the bundle', () => {
     expect(call(api, 'revealBackup').ok).toBe(false);
   });
 
-  it('opens with the passphrase and not without it', () => {
+  /* Sealing and unsealing twice over, each one an Argon2id derivation at
+   * 64 MiB. Being expensive is the point of the KDF, so the allowance is
+   * stated here rather than the cost being quietly lowered. */
+  it('opens with the passphrase and not without it', { timeout: 30_000 }, () => {
     expect(call(api, 'unlock', sealed, [...passphraseToBytes('wrong')]).ok).toBe(false);
     const opened = call(api, 'unlock', sealed, passphrase);
     expect(opened.ok).toBe(true);

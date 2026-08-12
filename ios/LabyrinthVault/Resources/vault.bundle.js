@@ -1538,6 +1538,7 @@
     const seqNum = Number(seq[1]);
     const seqLength = Number(seq[2]);
     if (!(seqNum >= 1 && seqLength >= 1 && seqLength <= MAX_FRAGMENTS)) return null;
+    if (components[2].length > MAX_MESSAGE_BYTES * 2) return null;
     const body = bytewordsDecode(components[2], "minimal");
     if (body === null) return null;
     const decoded = cborDecode(body);
@@ -1913,9 +1914,9 @@
     };
     return genUntil;
   }
-  function validateObject(object, fields = {}, optFields = {}, title = "object") {
+  function validateObject(object, fields3 = {}, optFields = {}, title = "object") {
     aobject2(object, title);
-    aobject2(fields, "fields");
+    aobject2(fields3, "fields");
     aobject2(optFields, "optFields");
     function checkField(fieldName, expectedType, isOpt) {
       const label = title === "object" ? `param "${String(fieldName)}"` : `"${title}.${String(fieldName)}"`;
@@ -1930,7 +1931,7 @@
         throw new TypeError(`${label} is invalid: expected ${expectedType}, got ${current}`);
     }
     const iter = (f, isOpt) => Object.entries(f).forEach(([k, v]) => checkField(k, v, isOpt));
-    iter(fields, false);
+    iter(fields3, false);
     iter(optFields, true);
   }
 
@@ -8409,9 +8410,9 @@ zoo`.split("\n"));
       }
     });
   }
-  function sizeof(fields) {
+  function sizeof(fields3) {
     let size = 0;
-    for (const f of fields) {
+    for (const f of fields3) {
       if (f.size === void 0)
         return;
       if (!isNum(f.size))
@@ -8420,24 +8421,24 @@ zoo`.split("\n"));
     }
     return size;
   }
-  function struct(fields) {
-    if (!isPlainObject(fields))
-      throw new TypeError(`struct: expected plain object, got ${fields}`);
+  function struct(fields3) {
+    if (!isPlainObject(fields3))
+      throw new TypeError(`struct: expected plain object, got ${fields3}`);
     const coders2 = [];
-    for (const name in fields) {
+    for (const name in fields3) {
       validateFieldName(name, "struct: field");
-      if (!isCoder(fields[name]))
+      if (!isCoder(fields3[name]))
         throw new TypeError(`struct: field ${name} is not CoderType`);
-      coders2.push(fields[name]);
+      coders2.push(fields3[name]);
     }
     return wrap({
       size: sizeof(coders2),
       encodeStream: (w, value) => {
         const _w = w;
         _w.pushObj(value, () => {
-          for (const name in fields) {
+          for (const name in fields3) {
             _w.enterField(name);
-            fields[name].encodeStream(w, value[name]);
+            fields3[name].encodeStream(w, value[name]);
             _w.exitField();
           }
         });
@@ -8446,9 +8447,9 @@ zoo`.split("\n"));
         const res = {};
         const _r = r;
         _r.pushObj(res, () => {
-          for (const name in fields) {
+          for (const name in fields3) {
             _r.enterField(name);
-            res[name] = fields[name].decodeStream(r);
+            res[name] = fields3[name].decodeStream(r);
             _r.exitField();
           }
         });
@@ -8568,8 +8569,8 @@ zoo`.split("\n"));
     }
     return value;
   }
-  function validateObject2(object, fields = {}, optFields = {}, _title = "object") {
-    return validateObject(object, fields, optFields);
+  function validateObject2(object, fields3 = {}, optFields = {}, _title = "object") {
+    return validateObject(object, fields3, optFields);
   }
   var Point2 = /* @__PURE__ */ (() => secp256k1.Point)();
   var Fn2 = /* @__PURE__ */ (() => Point2.Fn)();
@@ -14034,6 +14035,9 @@ zoo`.split("\n"));
   var decoder2 = new TextDecoder();
   var MAX_OUTPUTS = 2e3;
   var HEX64 = /^[0-9a-f]{64}$/;
+  function fields(entry) {
+    return entry && typeof entry === "object" ? entry : {};
+  }
   function parseKeyImageRequest(bytes) {
     let value;
     try {
@@ -14057,7 +14061,7 @@ zoo`.split("\n"));
     }
     const outputs = [];
     for (const entry of raw["outputs"]) {
-      const output = entry;
+      const output = fields(entry);
       const tx = typeof output["tx"] === "string" ? output["tx"].toLowerCase() : "";
       const key = typeof output["key"] === "string" ? output["key"].toLowerCase() : "";
       const index = output["index"];
@@ -14110,15 +14114,15 @@ zoo`.split("\n"));
   var EXTRA_TAG_NONCE = 2;
   var EXTRA_TAG_ADDITIONAL_PUBKEYS = 4;
   var NONCE_ENCRYPTED_PAYMENT_ID = 1;
-  function buildTxExtra(fields) {
-    const parts = [Uint8Array.of(EXTRA_TAG_PUBKEY), fromHex(fields.txPublicKey)];
-    const additional = fields.additionalPublicKeys ?? [];
+  function buildTxExtra(fields3) {
+    const parts = [Uint8Array.of(EXTRA_TAG_PUBKEY), fromHex(fields3.txPublicKey)];
+    const additional = fields3.additionalPublicKeys ?? [];
     if (additional.length > 0) {
       parts.push(Uint8Array.of(EXTRA_TAG_ADDITIONAL_PUBKEYS), varintBytes(additional.length));
       for (const key of additional) parts.push(fromHex(key));
     }
-    if (fields.encryptedPaymentId !== void 0) {
-      const id = fromHex(fields.encryptedPaymentId);
+    if (fields3.encryptedPaymentId !== void 0) {
+      const id = fromHex(fields3.encryptedPaymentId);
       if (id.length !== 8) throw new Error("An encrypted short payment id is eight bytes.");
       const nonce = new Uint8Array(1 + 8);
       nonce[0] = NONCE_ENCRYPTED_PAYMENT_ID;
@@ -14217,13 +14221,13 @@ zoo`.split("\n"));
     return toHex(keccak_256(cat(keccak_256(prefix2), keccak_256(base), keccak_256(prunable))));
   }
   function preClsagHash(prefixHash, baseBytes, bpp) {
-    const fields = [];
+    const fields3 = [];
     for (const proof of bpp) {
-      fields.push(fromHex(proof.A), fromHex(proof.A1), fromHex(proof.B), fromHex(proof.r1), fromHex(proof.s1), fromHex(proof.d1));
-      for (const l of proof.L) fields.push(fromHex(l));
-      for (const r of proof.R) fields.push(fromHex(r));
+      fields3.push(fromHex(proof.A), fromHex(proof.A1), fromHex(proof.B), fromHex(proof.r1), fromHex(proof.s1), fromHex(proof.d1));
+      for (const l of proof.L) fields3.push(fromHex(l));
+      for (const r of proof.R) fields3.push(fromHex(r));
     }
-    return keccak_256(cat(prefixHash, keccak_256(baseBytes), keccak_256(cat(...fields))));
+    return keccak_256(cat(prefixHash, keccak_256(baseBytes), keccak_256(cat(...fields3))));
   }
   function transactionWeight(sizeBytes, nOutputs) {
     if (nOutputs <= 2) return sizeBytes;
@@ -14859,6 +14863,9 @@ zoo`.split("\n"));
   var SIGNED_VERSION = 1;
   var decoder3 = new TextDecoder();
   var HEX642 = /^[0-9a-f]{64}$/;
+  function fields2(entry) {
+    return entry && typeof entry === "object" ? entry : {};
+  }
   function parseUnsignedSet(bytes) {
     let value;
     try {
@@ -14889,7 +14896,7 @@ zoo`.split("\n"));
     if (!Number.isInteger(ringSize) || ringSize < 1 || ringSize > 64) return { ok: false, problem: "That set has an unreasonable ring size." };
     const inputs = [];
     for (const entry of raw["inputs"]) {
-      const input = entry;
+      const input = fields2(entry);
       const amt = amount(input["amount"]);
       if (!hex64(input["txPublicKey"]) || amt === null) return { ok: false, problem: "An input is malformed." };
       const indexInTx = Number(input["indexInTx"]);
@@ -14900,7 +14907,7 @@ zoo`.split("\n"));
       if (!Array.isArray(input["ring"]) || input["ring"].length !== ringSize) return { ok: false, problem: "An input ring is the wrong size." };
       const ring = [];
       for (const memberEntry of input["ring"]) {
-        const m = memberEntry;
+        const m = fields2(memberEntry);
         const memberIndex = Number(m["globalIndex"]);
         if (!hex64(m["key"]) || !hex64(m["commitment"]) || !Number.isInteger(memberIndex) || memberIndex < 0) {
           return { ok: false, problem: "A ring member is malformed." };
@@ -14922,7 +14929,7 @@ zoo`.split("\n"));
     }
     const outputs = [];
     for (const entry of raw["outputs"]) {
-      const output = entry;
+      const output = fields2(entry);
       const amt = amount(output["amount"]);
       if (typeof output["address"] !== "string" || amt === null) return { ok: false, problem: "An output is malformed." };
       outputs.push({ address: output["address"], amount: amt.toString(), change: output["change"] === true, dummy: output["dummy"] === true });
@@ -17635,6 +17642,7 @@ zoo`.split("\n"));
       const random = new Uint8Array(88);
       for (let i = 0; i < random.length; i++) random[i] = i * 7 + 11 & 255;
       const secret = deriveSecret(random, new Uint8Array(0));
+      lockInternal();
       session = openSession(secret);
       wipe(secret, random);
       const frames = encodeParts("PSBT", demoUnsignedPsbt(session.btc));

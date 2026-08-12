@@ -392,6 +392,15 @@ export const api = {
     const random = new Uint8Array(88);
     for (let i = 0; i < random.length; i++) random[i] = (i * 7 + 11) & 0xff;
     const secret = deriveSecret(random, new Uint8Array(0));
+    /* Close whatever was open before taking its place, exactly as `unlock`
+     * does. Assigning over `session` would drop a real wallet's private keys
+     * without zeroing them — the one thing every other path in this file is
+     * careful about — and would leave that session's `lastDescribed` standing
+     * behind the demo's keys. Nothing could be signed across the two (the
+     * approval carries a walletId and `signPsbt` checks it), but the secrets
+     * would still have been abandoned rather than wiped, and "the demo button
+     * is the one place we skip the wipe" is not a sentence worth having. */
+    lockInternal();
     session = openSession(secret);
     wipe(secret, random);
     const frames = encodeParts('PSBT' satisfies PayloadKind, demoUnsignedPsbt(session.btc));

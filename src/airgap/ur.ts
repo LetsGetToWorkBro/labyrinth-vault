@@ -201,6 +201,16 @@ export function parseUr(text: string): UrPart | null {
   const seqLength = Number(seq[2]);
   if (!(seqNum >= 1 && seqLength >= 1 && seqLength <= MAX_FRAGMENTS)) return null;
 
+  /* Bounded before decoding, the same way the single-frame branch above is,
+   * and for the same reason: bytewords allocates proportionally to the string
+   * it is given, so a length has to be refused while it is still a string
+   * rather than after it has become bytes. The ceilings below on
+   * `messageLength` come too late to help — they read a header this decode
+   * already had to allocate to reach. A frame body is one fragment plus a
+   * five-item header, so the whole-message ceiling is a generous bound on it
+   * and a cheap one to check. */
+  if (components[2]!.length > MAX_MESSAGE_BYTES * 2) return null;
+
   const body = bytewordsDecode(components[2]!, 'minimal');
   if (body === null) return null;
   const decoded = cborDecode(body);
