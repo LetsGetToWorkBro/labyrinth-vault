@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { live, parseJson, recorded } from '../src/net/http';
 import * as esplora from '../src/net/esplora';
 import * as monerod from '../src/net/monerod';
-import { isLocalNode, parseNode, privacyNote, SUGGESTIONS } from '../src/core/nodes';
+import { hostOf, isLocalNode, parseNode, privacyNote, SUGGESTIONS } from '../src/core/nodes';
 
 // ---------------------------------------------------------------------------
 // Recorded answers. Shapes as the nodes really send them.
@@ -376,6 +376,68 @@ describe('choosing a node', () => {
       'http://999.999.999.999:18081',
     ]) {
       expect(parseNode('monerod', away).ok, `${away} was accepted as local`).toBe(false);
+    }
+  });
+
+  it('never disagrees with WHATWG about which host it is talking to', () => {
+    /* The check above is worth exactly as much as the parser under it, and
+     * that parser used to be `new URL()`, which is a different program on a
+     * phone than it is here.
+     *
+     * React Native ships its own URL in `Libraries/Blob/URL.js`, built from
+     * regular expressions rather than the WHATWG algorithm. Its hostname
+     * pattern stops at the class `[^:/?#]`, which does not contain a
+     * backslash, and WHATWG treats a backslash as a path separator for http.
+     * Measured against that file rather than assumed:
+     *
+     *     http://evil.com\@10.0.0.5/
+     *       WHATWG (here, and iOS networking)  ->  evil.com
+     *       React Native                       ->  10.0.0.5
+     *
+     * On a device that parsed as a private address, passed as local, was
+     * stored, and would then have been handed to a networking stack that
+     * resolves `evil.com` and opens an unencrypted connection to it carrying
+     * every address in the wallet. No test here could have seen it, because
+     * this runs where the string parses the safe way.
+     *
+     * So the invariant is not "matches a list of bad inputs", which the next
+     * trick gets past. It is that for any input, `hostOf` either refuses or
+     * names the same host the platform will actually connect to. Where the
+     * two could differ, the address does not get in. */
+    const corpus = [
+      'https://mempool.space/api',
+      'http://10.0.0.5:18081',
+      'http://[::1]:18081',
+      'http://evil.com\\@10.0.0.5/',
+      'http://evil.com\\@192.168.1.1/',
+      'http://10.0.0.5@evil.com/',
+      'http://10.0.0.5\t.evil.com/',
+      'http://10.0.0.5\n:18081',
+      'http://10.0.0.5 .evil.com/',
+      'http://0x0a000005/',
+      'https://node..example.com',
+      'https://.example.com',
+      'https://EXAMPLE.com',
+      'https://example.com.',
+      'http://10.0.0.5:18081/#@192.168.1.1/',
+      'http://10.0.0.5:18081/?@192.168.1.1/',
+    ];
+
+    for (const address of corpus) {
+      const ours = hostOf(address);
+      if (ours === null) continue; // refused, which is always a safe answer
+
+      let theirs: string | null = null;
+      try {
+        theirs = new URL(address).hostname.toLowerCase();
+      } catch {
+        theirs = null;
+      }
+      expect(
+        ours,
+        `${JSON.stringify(address)} was accepted as ${JSON.stringify(ours)} ` +
+          `but the platform would connect to ${JSON.stringify(theirs)}`,
+      ).toBe(theirs);
     }
   });
 

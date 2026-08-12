@@ -99,6 +99,46 @@ refused, and every address that really is private is still accepted, including
 the four sitting immediately outside RFC 1918's boundaries where an off-by-one
 would turn a public address into a trusted one.
 
+## Found: the check ran on a URL parser that is a different program on a phone
+
+Worse than the one above, and found by asking what the fix depended on.
+
+`parseNode` called `new URL()`. React Native ships its own, in
+`Libraries/Blob/URL.js`, and it is a handful of regular expressions rather
+than the WHATWG algorithm. Its hostname pattern stops at the class
+`[^:/?#]`, which does not contain a backslash, and WHATWG treats a backslash
+as a path separator for http. Measured against that file rather than assumed:
+
+    http://evil.com\@10.0.0.5/
+      WHATWG (Node, and iOS networking)  ->  evil.com
+      React Native                       ->  10.0.0.5
+
+The disagreement lands exactly on the local-address check. On a device that
+string parses as a private address, passes as local, is stored, and is then
+handed to a networking stack that resolves `evil.com` and opens an
+unencrypted connection to it carrying every address in the wallet. Nothing in
+the suite could see it, because the suite runs on Node, where the same string
+parses the safe way.
+
+So `nodes.ts` parses the address itself now, in about thirty lines, and
+`hostOf` is exported so that nothing else reaches for `new URL()` to answer
+the same question. `routeFor` in `net/nodeproxy.ts`, which decides whether
+traffic is relayed, was the other caller and now shares the parser.
+
+The test is not a list of bad inputs, because the next trick is not on the
+list. It is an invariant: for any address, the parser either refuses or names
+the same host the platform will actually connect to. Where the two could
+differ, the address does not get in.
+
+That invariant immediately earned itself. It failed on `http://0x0a000005/`,
+which WHATWG rewrites to `10.0.0.5` and a regular expression reads as a name,
+so the app would have called a host by one name and connected to another. The
+host rule now requires either a dotted quad or a final label beginning with a
+letter, which removes every numeric form WHATWG would rewrite.
+
+Reverting the parser to React Native's shape makes the test fail with the
+original attack string, which is the check that the guard is real.
+
 ## Found: two Info.plist keys the node feature needs and did not have
 
 The same class as the vault's `TextEncoder` bug. Both are cases where the
