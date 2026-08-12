@@ -177,6 +177,11 @@ async function serve(request: Request, env: Env): Promise<Response> {
         amount: numberOf(body['amount']),
         ...(typeof body['payoutAddress'] === 'string' ? { payoutAddress: body['payoutAddress'] } : {}),
         ...(typeof body['refundAddress'] === 'string' ? { refundAddress: body['refundAddress'] } : {}),
+        /* Bounded and passed through unread. It is a uuid from the provider,
+         * not something this Worker interprets. */
+        ...(typeof body['rateUuid'] === 'string' && body['rateUuid'].length <= 64
+          ? { rateUuid: body['rateUuid'] }
+          : {}),
       };
 
       const built = url.pathname === '/v1/quote' ? buildQuote(intent) : buildCreate(intent);

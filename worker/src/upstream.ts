@@ -46,6 +46,16 @@ export interface Intent {
   amount: number;
   payoutAddress?: string;
   refundAddress?: string;
+  /**
+   * The quote handle the provider issued, carried through untouched.
+   *
+   * Godex honors a quoted rate only for an order that brings its `rate_uuid`
+   * back. The wallet holds the quote and this Worker does not, so the handle
+   * has to survive the hop or the order gets repriced at creation and the
+   * wallet's own drift check refuses it. Opaque here, and never inspected:
+   * this Worker does not read orders and does not start now.
+   */
+  rateUuid?: string;
 }
 
 export type Built = { ok: true; request: HttpRequest } | { ok: false; problem: string };
@@ -106,7 +116,14 @@ export function buildCreate(intent: Intent): Built {
     refundAddress,
     payoutIsOurs: false,
   };
-  return { ok: true, request: intent.provider === 'exolix' ? exolixCreate(request) : godexCreate(request) };
+  /* Only the handle travels, wrapped as the minimal quote the adapter reads.
+   * A whole quote from the caller would be a set of numbers this Worker would
+   * appear to have checked, and it checks nothing. */
+  const quote = intent.rateUuid ? { provider: intent.provider, ok: true, rateUuid: intent.rateUuid } : undefined;
+  return {
+    ok: true,
+    request: intent.provider === 'exolix' ? exolixCreate(request) : godexCreate(request, quote),
+  };
 }
 
 export function buildStatus(provider: ProviderId, id: string): Built {

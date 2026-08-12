@@ -46,6 +46,8 @@ export interface SwapIntent {
   amount: number;
   payoutAddress?: string;
   refundAddress?: string;
+  /** The provider's quote handle, so the order is priced at the shown rate. */
+  rateUuid?: string;
 }
 
 interface ProxyReply {

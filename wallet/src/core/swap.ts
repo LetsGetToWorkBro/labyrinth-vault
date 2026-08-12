@@ -546,6 +546,32 @@ export interface SwapQuote {
    * which constrains nothing.
    */
   withdrawMin?: number;
+  /**
+   * The provider's own handle for this quote, when it issues one.
+   *
+   * Godex returns a `rate_uuid` and honors the quoted rate only for an order
+   * that carries it back. Without it the order is priced at whatever the rate
+   * is at creation time, which drifts, which `verifyOrder` then refuses.
+   * Failing safe is right, and being refused for no reason is still a bad
+   * afternoon for somebody who did nothing wrong, so the handle is carried.
+   */
+  rateUuid?: string;
+  /**
+   * When this stops being the quote, in epoch milliseconds.
+   *
+   * Godex says so plainly and it is worth believing. A quote used after this
+   * is not a quote, and the honest move is to say so before an order exists
+   * rather than to discover it in a drift check afterwards.
+   */
+  expiresAt?: number;
+  /**
+   * Whether the rate floats with the market or is fixed for the order.
+   *
+   * Recorded because the screen ranks quotes by payout, and a fixed rate and
+   * a floating one are not the same promise: comparing them without saying
+   * which is which is how a worse trade wins a comparison.
+   */
+  floating?: boolean;
   /** Why there is no quote, in words fit for a screen. */
   reason?: string;
 }
@@ -896,6 +922,13 @@ export function godexRate(pair: SwapPair, amount: number): HttpRequest {
       amount: String(amount),
       coin_from_network: providerChain('godex', pair.from) ?? pair.from.chain,
       coin_to_network: providerChain('godex', pair.to) ?? pair.to.chain,
+      /* Asked for explicitly, because the default is a fixed rate and Exolix
+       * is asked for a floating one. Two providers answering different
+       * questions were being ranked against each other by payout, and the
+       * fixed answer is the worse number, so Godex was losing a comparison it
+       * had not been entered into. Checked against the live endpoint: without
+       * this the reply carries `float: false`. */
+      float: true,
     },
   };
 }
@@ -915,16 +948,21 @@ export function parseGodexRate(json: unknown): SwapQuote {
       ...(Number.isFinite(max) ? { maxAmount: max } : {}),
     };
   }
+  const uuid = text(body['rate_uuid']);
+  const expires = number(body['rate_expired_at']);
   return {
     provider: 'godex',
     ok: true,
     toAmount,
     ...(Number.isFinite(min) ? { minAmount: min } : {}),
     ...(Number.isFinite(max) ? { maxAmount: max } : {}),
+    ...(uuid ? { rateUuid: uuid } : {}),
+    ...(Number.isFinite(expires) && expires > 0 ? { expiresAt: expires } : {}),
+    floating: body['float'] === true,
   };
 }
 
-export function godexCreate(request: SwapRequest): HttpRequest {
+export function godexCreate(request: SwapRequest, quote?: SwapQuote): HttpRequest {
   return {
     method: 'POST',
     url: 'https://api.godex.io/api/v1/transaction',
@@ -936,6 +974,15 @@ export function godexCreate(request: SwapRequest): HttpRequest {
       return: request.refundAddress,
       coin_from_network: providerChain('godex', request.pair.from) ?? request.pair.from.chain,
       coin_to_network: providerChain('godex', request.pair.to) ?? request.pair.to.chain,
+      /* The same rate type the quote was asked for. An order created as
+       * fixed against a floating quote is a different trade than the one on
+       * the screen. */
+      float: true,
+      /* And the quote's own handle, which is what makes the exchange honor
+       * the number the person was shown rather than repricing at creation.
+       * Omitted when there is no quote in hand, which is a caller that has
+       * nothing to be held to. */
+      ...(quote?.rateUuid ? { rate_uuid: quote.rateUuid } : {}),
     },
   };
 }
@@ -1009,7 +1056,7 @@ const PARSE_RATE: Record<ProviderId, (json: unknown) => SwapQuote> = {
   exolix: parseExolixRate,
   godex: parseGodexRate,
 };
-const CREATE: Record<ProviderId, (request: SwapRequest) => HttpRequest> = {
+const CREATE: Record<ProviderId, (request: SwapRequest, quote?: SwapQuote) => HttpRequest> = {
   exolix: exolixCreate,
   godex: godexCreate,
 };
@@ -1100,6 +1147,9 @@ export async function createOrder(
   request: SwapRequest,
   quotedOut: number,
   quote?: SwapQuote,
+  /* The clock is an argument, like the randomness in decoys.ts, so that the
+   * expiry check below is testable without waiting for one. */
+  now: number = Date.now(),
 ): Promise<OrderCheck> {
   /* The bounds check lives here, next to the verification, for the same
    * reason: a caller cannot forget what it has no way to skip. Passing the
@@ -1110,11 +1160,22 @@ export async function createOrder(
     if (!bounds.ok) {
       return { ok: false, problem: bounds.problem, detail: `amount ${request.amount} outside quoted range` };
     }
+    /* An expired quote is refused before an order exists rather than after.
+     * The drift check downstream would catch the repricing anyway, but it
+     * would catch it once the exchange had already opened an order, and a
+     * refusal that leaves no wreckage is better than one that does. */
+    if (Number.isFinite(quote.expiresAt) && (quote.expiresAt as number) <= now) {
+      return {
+        ok: false,
+        problem: 'That quote expired before the order was placed. Ask for quotes again.',
+        detail: `quote expired at ${quote.expiresAt}`,
+      };
+    }
   }
 
   let json: unknown;
   try {
-    json = await transport.send(CREATE[request.provider](request));
+    json = await transport.send(CREATE[request.provider](request, quote));
   } catch (error) {
     return {
       ok: false,

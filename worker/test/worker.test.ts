@@ -329,3 +329,41 @@ describe('the chain node relay', () => {
     expect(nodeTarget('mempool.space', '/' + 'a'.repeat(600)).ok).toBe(false);
   });
 });
+
+describe('the quote handle survives the hop', () => {
+  /* Godex honors a quoted rate only for an order carrying its rate_uuid. The
+   * wallet holds the quote and this Worker does not, so if the handle did not
+   * travel, every proxied order would be repriced at creation and refused by
+   * the wallet's own drift check. Found by querying the live endpoint. */
+  it('carries a rate handle into the Godex order body', () => {
+    const built = buildCreate({
+      provider: 'godex',
+      from: 'btc',
+      to: 'xmr',
+      amount: 0.1,
+      payoutAddress: '4' + 'A'.repeat(94),
+      refundAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+      rateUuid: '37d778fd-6edd-45c6-8430-886828570d05',
+    });
+    expect(built.ok).toBe(true);
+    if (built.ok) {
+      const body = built.request.body as Record<string, unknown>;
+      expect(body['rate_uuid']).toBe('37d778fd-6edd-45c6-8430-886828570d05');
+      expect(body['float']).toBe(true);
+    }
+  });
+
+  it('builds a perfectly good order without one', () => {
+    /* A caller with no quote in hand is not forced to invent a handle. */
+    const built = buildCreate({
+      provider: 'godex',
+      from: 'btc',
+      to: 'xmr',
+      amount: 0.1,
+      payoutAddress: '4' + 'A'.repeat(94),
+      refundAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+    });
+    expect(built.ok).toBe(true);
+    if (built.ok) expect((built.request.body as Record<string, unknown>)['rate_uuid']).toBeUndefined();
+  });
+});

@@ -28,7 +28,9 @@ import {
   buildRequest,
   createOrder,
   exolixCreate,
+  exolixRate,
   godexCreate,
+  godexRate,
   parseAmount,
   parseExolixCreate,
   parseExolixRate,
@@ -1051,5 +1053,124 @@ describe('which provider can prove a chain', () => {
     for (const id of ['btc', 'xmr', 'sol', 'usdt-tron', 'usdt-ton']) {
       expect(chainCanBeProven('godex', swapCoin(id)!), id).toBe(true);
     }
+  });
+});
+
+/**
+ * The things only a live endpoint could tell us.
+ *
+ * Every other test in this file runs against a fixture somebody wrote, which
+ * means it can only confirm what was already believed. These four came from
+ * querying Exolix and Godex for a real BTC to XMR rate and reading what came
+ * back, and each one was wrong in the code before that call was made. The
+ * response bodies below are the real ones, trimmed.
+ */
+describe('anchored to what the exchanges actually answered', () => {
+  /* Exolix, GET /api/v2/rate?coinFrom=BTC&networkFrom=BTC&coinTo=XMR
+     &networkTo=XMR&amount=0.1&rateType=float */
+  const EXOLIX_LIVE = {
+    fromAmount: 0.1,
+    toAmount: 16.57563972,
+    rate: 165.75639473,
+    message: null,
+    minAmount: 0.0007681,
+    withdrawMin: 0.0007088,
+    maxAmount: 10,
+    priceImpact: '0',
+  };
+
+  /* Godex, POST /api/v1/info with float: true. Numbers arrive as strings. */
+  const GODEX_LIVE = {
+    min_amount: '0.003',
+    max_amount: '190',
+    amount: '16.36855067',
+    fee: '0',
+    rate: '163.743821885609848',
+    float: true,
+    withdrawal_fee: '0.00583151',
+    rate_uuid: '37d778fd-6edd-45c6-8430-886828570d05',
+    rate_expired_at: '1786508416898',
+  };
+
+  it('reads every field Exolix really sends, under the names it really uses', () => {
+    const quote = parseExolixRate(EXOLIX_LIVE);
+    expect(quote.ok).toBe(true);
+    expect(quote.toAmount).toBe(16.57563972);
+    expect(quote.minAmount).toBe(0.0007681);
+    expect(quote.maxAmount).toBe(10);
+    /* The payout floor, which is the one that is easy to miss: an order can
+     * clear minAmount and still be unable to pay out. */
+    expect(quote.withdrawMin).toBe(0.0007088);
+  });
+
+  it('reads Godex numbers that arrive as strings', () => {
+    const quote = parseGodexRate(GODEX_LIVE);
+    expect(quote.ok).toBe(true);
+    expect(quote.toAmount).toBe(16.36855067);
+    expect(quote.minAmount).toBe(0.003);
+    expect(quote.maxAmount).toBe(190);
+  });
+
+  it('keeps the quote handle and expiry Godex issues', () => {
+    /* Without the handle the exchange reprices at creation, the payout
+     * drifts, and verifyOrder refuses an order the person did nothing wrong
+     * to deserve. */
+    const quote = parseGodexRate(GODEX_LIVE);
+    expect(quote.rateUuid).toBe('37d778fd-6edd-45c6-8430-886828570d05');
+    expect(quote.expiresAt).toBe(1786508416898);
+    expect(quote.floating).toBe(true);
+  });
+
+  it('asks Godex for a floating rate, the same kind it asks Exolix for', () => {
+    /* Live, the default is a fixed rate: the reply carries float: false and a
+     * worse number. Ranking that against a floating Exolix quote by payout
+     * was comparing two different promises and letting the wrong one win. */
+    const pair = parsePair('btc', 'xmr') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    expect((godexRate(pair.pair, 0.1).body as Record<string, unknown>)['float']).toBe(true);
+    expect(new URL(exolixRate(pair.pair, 0.1).url).searchParams.get('rateType')).toBe('float');
+  });
+
+  it('carries the handle into the order, so the shown number is the ordered one', () => {
+    const pair = parsePair('btc', 'xmr') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const request: SwapRequest = {
+      provider: 'godex',
+      pair: pair.pair,
+      amount: 0.1,
+      payoutAddress: '4' + 'A'.repeat(94),
+      refundAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+      payoutIsOurs: false,
+    };
+    const body = godexCreate(request, parseGodexRate(GODEX_LIVE)).body as Record<string, unknown>;
+    expect(body['rate_uuid']).toBe('37d778fd-6edd-45c6-8430-886828570d05');
+    expect(body['float']).toBe(true);
+  });
+
+  it('refuses an expired quote before an order exists, not after', async () => {
+    /* The drift check downstream would catch the repricing anyway, but only
+     * once the exchange had opened an order. A refusal that leaves no
+     * wreckage beats one that does. */
+    const pair = parsePair('btc', 'xmr') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const quote = parseGodexRate(GODEX_LIVE);
+    const transport = {
+      send: async () => {
+        throw new Error('should never be asked');
+      },
+    };
+    const result = await createOrder(
+      transport,
+      {
+        provider: 'godex',
+        pair: pair.pair,
+        amount: 0.1,
+        payoutAddress: '4' + 'A'.repeat(94),
+        refundAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+        payoutIsOurs: false,
+      },
+      16.36855067,
+      quote,
+      1786508416899,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problem).toMatch(/expired/);
   });
 });
