@@ -18,7 +18,7 @@ struct ExportView: View {
         do {
             let exported = try vault.exportAccount(chain: "btc")
             frames = exported.frames
-            zpub = exported.account.zpub
+            zpub = exported.account.zpub ?? ""
         } catch {
             problem = error.localizedDescription
         }

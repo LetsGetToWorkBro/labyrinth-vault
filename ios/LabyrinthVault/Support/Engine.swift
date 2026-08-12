@@ -193,7 +193,15 @@ final class Engine {
         struct BtcAccount: Decodable { let zpub: String; let first: String }
     }
     struct UnlockedReply: Decodable { let unlocked: Bool }
-    struct ExportReply: Decodable { let frames: [String] }
+    /// The watch-only export: the frames to animate, and the account they
+    /// carry. `zpub` is optional because the same reply shape serves a Monero
+    /// export, which has an address rather than an account key; the one screen
+    /// that reads it exports Bitcoin, where it is always present.
+    struct ExportReply: Decodable {
+        let frames: [String]
+        let account: Account
+        struct Account: Decodable { let zpub: String? }
+    }
     struct BackupReply: Decodable { let bitcoin: [String]; let monero: [String] }
     struct ScanReply: Decodable {
         let format: String?
