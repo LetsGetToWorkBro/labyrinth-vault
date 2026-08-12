@@ -45,6 +45,14 @@ hold funds you would miss with anything built on it.
 - **The vault device compromised while unlocked.** An attacker running code on
   the vault with the passphrase has the keys. The airgap narrows how code gets
   there; it cannot make the device trustworthy against itself.
+- **Someone who can hold the phone up to your face, if you turned that on.**
+  Biometric unlock is off unless a person ticks the box on the unlock screen.
+  Ticking it stores the passphrase in a keychain item the Secure Enclave
+  releases only against a live match on that device, which trades a secret you
+  know for one you carry. That is no weaker against ordinary device theft and
+  strictly weaker against coercion, sleep, and a border stop. The box says so
+  in those terms, `ios/LabyrinthVault/Support/BiometricUnlock.swift` argues it
+  out at length, and Settings turns it off without needing anything back.
 - **Memory forensics against a live process.** Secrets are wiped after use
   (`src/keys/wipe.ts`), and that file says plainly why JavaScript cannot make
   wiping a guarantee. Treat it as narrowing a window, not closing one.

@@ -246,8 +246,7 @@ private struct PassphraseView: View {
     @EnvironmentObject private var vault: Vault
     @State private var chosen = ""
     @State private var confirmed = ""
-    @FocusState private var field: Field?
-    private enum Field { case chosen, confirmed }
+    @FocusState private var field: PassphraseFocus?
 
     private var match: Bool { !chosen.isEmpty && chosen == confirmed }
 
@@ -267,28 +266,26 @@ private struct PassphraseView: View {
                             .padding(.top, 14)
                             .padding(.bottom, 30)
 
-                        Eyebrow("PASSPHRASE", color: Ink.paperFaint)
-                        SecureField("", text: $chosen)
-                            .font(Type.mono(18))
-                            .foregroundStyle(Ink.paper)
-                            .tint(Ink.paper)
-                            .textContentType(.newPassword)
-                            .focused($field, equals: .chosen)
-                            .submitLabel(.next)
-                            .onSubmit { field = .confirmed }
-                            .padding(.vertical, 12)
-                        Hairline(weight: 1, color: field == .chosen ? Ink.ruleHeavy : Ink.rule)
+                        /* Both fields can be revealed, and this screen is where
+                         * it matters most: a passphrase mistyped here is
+                         * sealed into the vault, and the first anybody hears
+                         * of it is a vault that will not open. The confirm
+                         * field catches a typo repeated once; it cannot catch
+                         * one made twice, and being able to look can. */
+                        PassphraseField(label: "PASSPHRASE",
+                                        text: $chosen,
+                                        focus: $field,
+                                        equals: .entry,
+                                        contentType: .newPassword,
+                                        submitLabel: .next) { field = .again }
 
-                        Eyebrow("AGAIN", color: Ink.paperFaint).padding(.top, 22)
-                        SecureField("", text: $confirmed)
-                            .font(Type.mono(18))
-                            .foregroundStyle(Ink.paper)
-                            .tint(Ink.paper)
-                            .textContentType(.newPassword)
-                            .focused($field, equals: .confirmed)
-                            .submitLabel(.done)
-                            .padding(.vertical, 12)
-                        Hairline(weight: 1, color: field == .confirmed ? Ink.ruleHeavy : Ink.rule)
+                        PassphraseField(label: "AGAIN",
+                                        text: $confirmed,
+                                        focus: $field,
+                                        equals: .again,
+                                        contentType: .newPassword,
+                                        submitLabel: .done)
+                            .padding(.top, 22)
 
                         if !confirmed.isEmpty && !match {
                             Text("The two entries do not match yet.")
@@ -310,7 +307,7 @@ private struct PassphraseView: View {
                 .padding(.bottom, 12)
             }
         }
-        .onAppear { field = .chosen }
+        .onAppear { field = .entry }
     }
 }
 

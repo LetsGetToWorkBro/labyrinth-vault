@@ -219,6 +219,71 @@ final class Vault: ObservableObject {
     /// the reason is not obvious. Cleared on a successful unlock.
     @Published private(set) var notice: String?
 
+    /// Whether a passphrase is stored behind Face ID or Touch ID on this
+    /// device, and which of the two this device has. Read at boot and after
+    /// every change rather than asked on each render: `isEnrolled` is a
+    /// keychain round trip and a view body is not the place for one.
+    @Published private(set) var biometricsEnrolled = false
+    @Published private(set) var biometricKind: BiometricUnlock.Kind = .none
+
+    /// Re-read what the keychain and the sensor say. Cheap, and called at
+    /// boot, on returning to the foreground, and after enrolling or forgetting
+    /// — enrollment can be revoked from outside this app, by adding a face or
+    /// turning the passcode off, and a button offering something that is gone
+    /// is worse than no button.
+    func refreshBiometricState() {
+        biometricKind = BiometricUnlock.kind()
+        biometricsEnrolled = biometricKind.isAvailable && BiometricUnlock.isEnrolled()
+    }
+
+    /// Keep the passphrase that just opened this vault, so a face can stand in
+    /// for typing it next time. Returns a sentence on failure.
+    ///
+    /// Takes the passphrase rather than reading one from anywhere, because
+    /// there is nowhere to read one from: nothing in this model retains it
+    /// past the unlock, deliberately, and this is called from the screen that
+    /// still has it in hand.
+    func rememberPassphrase(_ passphrase: String) -> String? {
+        let failure = BiometricUnlock.enroll(passphrase: passphrase)
+        refreshBiometricState()
+        return failure
+    }
+
+    /// Stop answering to a face. Nothing else changes: the vault stays sealed
+    /// under the same passphrase it always was.
+    func forgetPassphrase() {
+        BiometricUnlock.forget()
+        refreshBiometricState()
+    }
+
+    /// Open the vault with the stored passphrase, after a biometric match.
+    ///
+    /// Deliberately routed through `openVault(passphrase:)` rather than given
+    /// a path of its own. Argon2id still runs and the seal is still opened the
+    /// only way it can be opened; what biometry replaced is the typing, not
+    /// the cryptography. One unlock path also means one place where a wrong
+    /// passphrase is reported, which matters because a stored passphrase can
+    /// go stale if the vault is ever recreated.
+    func unlockWithBiometrics() async -> String? {
+        guard biometricsEnrolled else { return nil }
+        let reason = "Unlock the vault"
+        switch await BiometricUnlock.recall(reason: reason) {
+        case .success(let passphrase):
+            let failure = await openVault(passphrase: passphrase)
+            if failure != nil {
+                /* The stored passphrase does not open this vault, so it is
+                 * worse than useless: it is a button that fails every time.
+                 * Drop it and let the person type. */
+                forgetPassphrase()
+                return "The stored passphrase no longer opens this vault, so it was discarded. Enter it to unlock."
+            }
+            return nil
+        case .failure(let problem):
+            refreshBiometricState()
+            return problem.isEmpty ? nil : problem
+        }
+    }
+
     enum Creation: Equatable {
         case idle, working, done
         case failed(String)

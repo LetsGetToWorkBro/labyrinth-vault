@@ -194,6 +194,21 @@ struct Attestation: View {
 
 /// A control on this device is a lever, so it is sized like one and does not
 /// pretend to float. Large, flat, rectangular; sharp corners.
+///
+/// ## A disabled lever still has to be readable
+///
+/// This used to fade the whole control to `opacity(0.3)` when disabled, which
+/// is the reflex, and on the confirmation screen it stranded somebody. That
+/// screen's lever is disabled until the document has been scrolled, and its
+/// hint is the word `SCROLL` — so the one instruction telling a person how to
+/// proceed was the thing being faded out. A cream button at 30% over near
+/// black leaves dark text on a mid-grey slab at about 2.3:1, which
+/// photographs, and reads, as an empty box.
+///
+/// So the disabled state is designed rather than dimmed. The *surface* recedes
+/// to a tenth of its weight, the title comes back as light-on-dark at about
+/// 5.7:1, and the hint is drawn in attention orange because when a control is
+/// unavailable the reason is the most useful thing on it.
 struct Lever: View {
     enum Style { case primary, quiet }
     let title: String
@@ -201,6 +216,23 @@ struct Lever: View {
     var style: Style = .primary
     var enabled: Bool = true
     let action: () -> Void
+
+    private var titleColor: Color {
+        guard enabled else { return Ink.paperDim }
+        return style == .primary ? Ink.void : Ink.paperDim
+    }
+
+    private var surface: Color {
+        guard style == .primary else { return .clear }
+        // Not `.clear` when disabled: the control keeps its footprint, so the
+        // screen does not appear to have lost a button that is merely waiting.
+        return enabled ? Ink.paper : Ink.paper.opacity(0.10)
+    }
+
+    private var edge: Color? {
+        if !enabled { return Ink.ruleStrong }
+        return style == .quiet ? Ink.ruleStrong : nil
+    }
 
     var body: some View {
         Button {
@@ -211,30 +243,124 @@ struct Lever: View {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                     .kerning(0.4)
+                    .foregroundStyle(titleColor)
                 Spacer()
                 if !hint.isEmpty {
                     Text(hint)
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         .kerning(1.4)
                         .textCase(.uppercase)
-                        .opacity(0.55)
+                        /* The hint on a disabled lever is the instruction for
+                         * making it available, so it is the one thing here that
+                         * gets louder rather than quieter. */
+                        .foregroundStyle(enabled ? titleColor.opacity(0.55) : Ink.attention)
                 }
             }
             .padding(.horizontal, 20)
             .frame(maxWidth: .infinity)
             .frame(height: style == .primary ? 66 : 56)
-            .foregroundStyle(style == .primary ? Ink.void : Ink.paperDim)
-            .background(style == .primary ? Ink.paper : .clear)
+            .background(surface)
             .overlay {
-                if style == .quiet {
-                    Rectangle().strokeBorder(Ink.ruleStrong, lineWidth: 1)
+                if let edge {
+                    Rectangle().strokeBorder(edge, lineWidth: 1)
                 }
             }
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.3)
         .animation(.easeOut(duration: 0.18), value: enabled)
+    }
+}
+
+// MARK: - Passphrase entry
+
+/// Which passphrase field has the keyboard. Shared between the unlock screen
+/// and setup so both can use one field component.
+enum PassphraseFocus { case entry, again }
+
+/// A passphrase field with a way to look at what you typed.
+///
+/// ## Why a reveal control belongs on a vault in particular
+///
+/// The usual argument against one is shoulder surfing, and it is a real
+/// argument in a cafe. It is a weaker one here than almost anywhere else: this
+/// device is meant to be held alone in a room with the radios off, and the
+/// passphrase it takes is long, typed on a phone keyboard, and has no reset.
+/// The failure this replaces is worse than being read over: a person who
+/// mistypes during setup seals their keys under a string they cannot
+/// reproduce, and the first they hear of it is a vault that will not open.
+///
+/// So the default is hidden, showing is one deliberate tap, and it says which
+/// state it is in rather than leaving that to an icon.
+///
+/// ## The revealed field is not a plain TextField
+///
+/// Autocapitalization and autocorrection are on by default for text input, and
+/// both of them *change what was typed*. A revealed field that quietly
+/// capitalizes the first letter would seal a vault under a passphrase the
+/// person did not choose, which is the exact failure this control exists to
+/// prevent. Both are off, and `.textContentType` is carried across so the
+/// keychain's own suggestions still work.
+struct PassphraseField: View {
+    let label: String
+    @Binding var text: String
+    var focus: FocusState<PassphraseFocus?>.Binding
+    let equals: PassphraseFocus
+    var contentType: UITextContentType = .password
+    var submitLabel: SubmitLabel = .go
+    var disabled: Bool = false
+    var onSubmit: () -> Void = {}
+
+    @State private var revealed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Eyebrow(label, color: Ink.paperFaint)
+                Spacer()
+                Button {
+                    revealed.toggle()
+                    // The swap replaces the view, so the keyboard has to be
+                    // told where to go or it closes under the person's hands.
+                    focus.wrappedValue = equals
+                } label: {
+                    Text(revealed ? "HIDE" : "SHOW")
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .kerning(1.4)
+                        .foregroundStyle(Ink.paperDim)
+                        /* A 10pt word is not a tap target. The padding is the
+                         * target, and it is negative-inset back out so the
+                         * label still sits on the baseline it belongs on. */
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, -10)
+                .accessibilityLabel(revealed ? "Hide passphrase" : "Show passphrase")
+            }
+
+            Group {
+                if revealed {
+                    TextField("", text: $text)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } else {
+                    SecureField("", text: $text)
+                }
+            }
+            .font(Type.mono(18))
+            .foregroundStyle(Ink.paper)
+            .tint(Ink.paper)
+            .textContentType(contentType)
+            .focused(focus, equals: equals)
+            .submitLabel(submitLabel)
+            .onSubmit(onSubmit)
+            .padding(.vertical, 12)
+            .disabled(disabled)
+
+            Hairline(weight: 1, color: focus.wrappedValue == equals ? Ink.ruleHeavy : Ink.rule)
+        }
     }
 }
 

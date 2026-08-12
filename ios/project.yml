@@ -63,10 +63,17 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIUserInterfaceStyle: Dark
-        # The one permission the app asks for. The camera is the only wire.
+        # The camera is the only wire.
         NSCameraUsageDescription: >-
           The camera is the vault's only input. It reads QR codes from your
           companion device; nothing else, and nothing leaves through it.
+        # Reached only if somebody ticks the box on the unlock screen. This
+        # string and that box say the same thing, because a person who reads
+        # only one of them should not be surprised by the other.
+        NSFaceIDUsageDescription: >-
+          Face ID unlocks the vault with the passphrase you chose to store on
+          this device. It never leaves this phone, and the vault stays sealed
+          under that same passphrase.
     settings:
       base:
         SWIFT_VERSION: "5.9"

@@ -19,11 +19,18 @@
 //    for the flag not to appear in the source at all. test/app-wiring.test.ts
 //    holds the companion to that rule; this file holds itself to it.
 //
-//  - A biometry gate (`SecAccessControl` + Face ID). The lock on the *secret*
-//    is the passphrase the person types — that is what stretches into the
-//    decryption key, and a face cannot replace it, only precede it with a
-//    second prompt in front of ciphertext. A gate that adds a prompt without
-//    adding protection is theater, and theater is what this product refuses.
+//  - A biometry gate on *this* item. The lock on the secret is the passphrase
+//    the person types: that is what stretches into the decryption key, and a
+//    face cannot replace it here, only precede it with a second prompt in
+//    front of ciphertext. A gate that adds a prompt without adding protection
+//    is theater, and theater is what this product refuses.
+//
+//    `Support/BiometricUnlock.swift` is a different thing and worth not
+//    confusing with this one. It stores the *passphrase*, in its own item,
+//    behind `.biometryCurrentSet`, so that a face can stand in for typing.
+//    That is a real convenience bought with a real change to the threat model,
+//    it is off until somebody turns it on, and that file argues it out. This
+//    item is untouched by it either way.
 //
 //  Errors come back as sentences, in the voice the rest of the app speaks,
 //  because every caller puts them straight on a screen.

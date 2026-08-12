@@ -148,6 +148,30 @@ struct RecoveryView: View {
                         FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                         FieldRow(label: "EXPORTABLE", value: "NO")
 
+                        /* Turning it off needs nothing. Turning it on needs the
+                         * passphrase, which only the unlock screen has, so the
+                         * offer lives there and only the withdrawal lives here.
+                         * A convenience you cannot revoke without producing the
+                         * credential it replaced is not one you control. */
+                        if vault.biometricsEnrolled {
+                            FieldRow(label: "UNLOCK", value: "\(vault.biometricKind.name) OR PASSPHRASE")
+                            Lever(title: "STOP USING \(vault.biometricKind.name)",
+                                  hint: "PASSPHRASE ONLY",
+                                  style: .quiet) {
+                                vault.forgetPassphrase()
+                            }
+                            .padding(.top, 14)
+                            Text("The stored passphrase is deleted from this device. The vault " +
+                                 "itself does not change: it is sealed under the same passphrase " +
+                                 "either way.")
+                                .font(Type.body(12))
+                                .lineSpacing(3)
+                                .foregroundStyle(Ink.paperFaint)
+                                .padding(.top, 10)
+                        } else {
+                            FieldRow(label: "UNLOCK", value: "PASSPHRASE ONLY")
+                        }
+
                         /* Two taps, and the first one says so. A single tap on
                          * an irreversible action is an accident waiting for a
                          * pocket; a system alert would be another product's

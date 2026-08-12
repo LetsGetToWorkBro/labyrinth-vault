@@ -11,6 +11,20 @@
 //  cost real time per guess. The screen names it rather than hiding it,
 //  because a person who knows why the second is being spent trusts it more
 //  than one shown a spinner.
+//
+//  ## Face ID is offered here and never assumed
+//
+//  When a passphrase has been stored behind biometry, the button for it sits
+//  above the field and the field stays exactly where it was. It is a shortcut
+//  past the typing, not a replacement for the vault's lock, and if it fails
+//  for any reason a person is left on the screen they already know.
+//
+//  Storing it is an unticked box on this screen rather than a prompt after the
+//  fact. A prompt would have to appear as this view is being torn down —
+//  `openVault` routes home the moment it succeeds — and the box has the
+//  further virtue of being a decision made before the convenience is felt
+//  rather than in the glow of it. `Support/BiometricUnlock.swift` carries the
+//  argument about what it costs.
 
 import SwiftUI
 
@@ -18,7 +32,13 @@ struct UnlockView: View {
     @EnvironmentObject private var vault: Vault
     @State private var passphrase = ""
     @State private var problem: String?
-    @FocusState private var focused: Bool
+    @State private var remember = false
+    @FocusState private var field: PassphraseFocus?
+
+    /// Offer to store it only where there is a sensor and nothing stored yet.
+    private var canOfferToRemember: Bool {
+        vault.biometricKind.isAvailable && !vault.biometricsEnrolled
+    }
 
     var body: some View {
         Screen {
@@ -46,18 +66,22 @@ struct UnlockView: View {
                         .padding(.top, 14)
                         .padding(.bottom, 30)
 
-                    Eyebrow("PASSPHRASE", color: Ink.paperFaint)
-                    SecureField("", text: $passphrase)
-                        .font(Type.mono(18))
-                        .foregroundStyle(Ink.paper)
-                        .tint(Ink.paper)
-                        .textContentType(.password)
-                        .focused($focused)
-                        .submitLabel(.go)
-                        .onSubmit { attempt() }
-                        .padding(.vertical, 12)
-                        .disabled(vault.opening)
-                    Hairline(weight: 1, color: focused ? Ink.ruleHeavy : Ink.rule)
+                    if vault.biometricsEnrolled {
+                        Lever(title: "UNLOCK WITH \(vault.biometricKind.name)",
+                              style: .quiet,
+                              enabled: !vault.opening) {
+                            attemptBiometric()
+                        }
+                        .padding(.bottom, 22)
+                    }
+
+                    PassphraseField(label: "PASSPHRASE",
+                                    text: $passphrase,
+                                    focus: $field,
+                                    equals: .entry,
+                                    contentType: .password,
+                                    submitLabel: .go,
+                                    disabled: vault.opening) { attempt() }
 
                     if let problem {
                         Text(problem)
@@ -65,6 +89,10 @@ struct UnlockView: View {
                             .lineSpacing(4)
                             .foregroundStyle(Ink.refused)
                             .padding(.top, 12)
+                    }
+
+                    if canOfferToRemember {
+                        rememberOffer.padding(.top, 8)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -78,21 +106,73 @@ struct UnlockView: View {
                 .padding(.bottom, 12)
             }
         }
-        .onAppear { focused = true }
+        .onAppear {
+            vault.refreshBiometricState()
+            /* The keyboard is not raised when there is a face to offer: doing
+             * both puts a system sheet over a keyboard that is animating in,
+             * and a person has to dismiss furniture before they can act. */
+            if !vault.biometricsEnrolled { field = .entry }
+        }
+    }
+
+    /// The unticked box, and the sentence about who it is worse against.
+    ///
+    /// The cost line is not hidden behind a disclosure. Somebody who ticks
+    /// this without reading it has still had it in front of them, which is the
+    /// most a screen can honestly do.
+    private var rememberOffer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                Haptic.tick()
+                remember.toggle()
+            } label: {
+                Attestation(text: "REMEMBER WITH \(vault.biometricKind.name)",
+                            state: remember ? .passed : .pending)
+            }
+            .buttonStyle(.plain)
+
+            Text("Kept on this phone, released only to \(vault.biometricKind.name.capitalized). " +
+                 "Opening the vault would then need this phone and your face rather " +
+                 "than something only you know.")
+                .font(Type.body(12))
+                .lineSpacing(3)
+                .foregroundStyle(Ink.paperFaint)
+                .padding(.top, 10)
+        }
     }
 
     private func attempt() {
         guard !vault.opening, !passphrase.isEmpty else { return }
         problem = nil
+        let typed = passphrase
+        let shouldRemember = remember && canOfferToRemember
         Task {
-            let failure = await vault.openVault(passphrase: passphrase)
+            let failure = await vault.openVault(passphrase: typed)
             if let failure {
                 problem = failure
-            } else {
-                /* Unlocked and routed home. Drop what the field is holding —
-                 * the String itself cannot be wiped, but nothing should keep
-                 * showing it either. */
-                passphrase = ""
+                return
+            }
+            /* Stored only after the seal has actually opened under it. A
+             * passphrase that merely got typed would give a face a shortcut to
+             * a vault it cannot open, which is a button that fails forever. */
+            if shouldRemember {
+                if let refused = vault.rememberPassphrase(typed) {
+                    problem = refused
+                }
+            }
+            /* The String itself cannot be wiped, but nothing should keep
+             * showing it either. */
+            passphrase = ""
+        }
+    }
+
+    private func attemptBiometric() {
+        guard !vault.opening else { return }
+        problem = nil
+        Task {
+            if let failure = await vault.unlockWithBiometrics() {
+                problem = failure
+                field = .entry
             }
         }
     }

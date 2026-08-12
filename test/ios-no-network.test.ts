@@ -59,6 +59,57 @@ describe('the iOS shell has no network code in it', () => {
     });
   }
 
+  it('never lets a device passcode stand in for the passphrase', () => {
+    /* Biometric unlock stores the passphrase behind `.biometryCurrentSet`.
+     * The tempting extra flag is `.devicePasscode`, or one of the `.or`
+     * combinations that include it, and adding one would make a four-digit
+     * number sufficient to open a vault whose entire design is a long
+     * passphrase, behind a button that looks like a convenience. The fallback
+     * is meant to be the passphrase field on the screen underneath.
+     *
+     * This is a one-word change somebody makes to close a support complaint,
+     * so it is guarded rather than merely written down. */
+    const guilty = files
+      .filter((f) => /\.devicePasscode|kSecAccessControlDevicePasscode/.test(codeOnly(f.text)))
+      .map((f) => f.path);
+    expect(guilty, 'a device passcode fallback appears in these files').toEqual([]);
+  });
+
+  it('binds the stored passphrase to the current enrollment, not to any face', () => {
+    /* `.biometryAny` would let anybody who knows the device passcode add their
+     * own face in Settings and walk in. `.biometryCurrentSet` invalidates the
+     * stored passphrase the moment enrollment changes, and it is the flag that
+     * makes this feature worth having at all. */
+    const store = files.find((f) => f.path.endsWith('BiometricUnlock.swift'));
+    expect(store, 'BiometricUnlock.swift is missing').toBeDefined();
+    const code = codeOnly(store!.text);
+    expect(code, 'the stored passphrase is not bound to the current enrollment').toMatch(
+      /\.biometryCurrentSet/,
+    );
+    expect(code, 'the stored passphrase accepts any enrolled biometry').not.toMatch(/\.biometryAny/);
+    /* The same rule the sealed blob is held to: never iCloud, never off this
+     * device. The passphrase is a stronger secret than the ciphertext it
+     * opens, so it does not get a weaker class. */
+    expect(code, 'the stored passphrase could sync').not.toMatch(/kSecAttrSynchronizable/);
+    expect(code, 'the stored passphrase is not passcode-bound to this device').toMatch(
+      /kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly/,
+    );
+  });
+
+  it('keeps the sealed blob itself free of any biometry gate', () => {
+    /* The two stores are deliberately different and easy to conflate. A gate
+     * on the ciphertext adds a prompt and no protection, which is what
+     * SealedStore.swift argues against at length; the passphrase store is a
+     * separate item with a separate justification. Neither should drift into
+     * the other. */
+    const sealed = files.find((f) => f.path.endsWith('SealedStore.swift'));
+    expect(sealed, 'SealedStore.swift is missing').toBeDefined();
+    expect(
+      codeOnly(sealed!.text),
+      'the sealed blob has grown an access control it does not need',
+    ).not.toMatch(/SecAccessControl|kSecAttrAccessControl/);
+  });
+
   it('never constructs a refusal escape hatch', () => {
     /* The refusal screens are load-bearing UI: exactly one action. Guard the
      * words that would appear if someone added a second one. */
