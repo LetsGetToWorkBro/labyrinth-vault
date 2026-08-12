@@ -25,7 +25,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 function sources(dir: string, found: string[] = []): string[] {
@@ -78,6 +78,49 @@ describe('the site does not claim a reading the app cannot take', () => {
     for (const { path, body } of text) {
       expect(body, `${path} claims the airgap was verified`).not.toMatch(offending);
     }
+  });
+});
+
+describe('the site carries its own media', () => {
+  /* It shipped loading every video and photograph from a generated-asset CDN
+   * on a user-scoped path, which is a marketing site that goes blank the day
+   * somebody else's bucket expires. It was also 30 MB, most of it PNGs used as
+   * photographs, including a 2048x2048 four-megabyte favicon fetched by every
+   * browser to draw a 32-pixel square. */
+
+  it('loads no media from a third-party host', () => {
+    const remote = /https?:\/\/[^"'`\s)]+\.(png|jpe?g|webp|avif|gif|mp4|webm|mov)\b/i;
+    for (const { path, body } of text) {
+      const found = body.match(remote);
+      expect(found?.[0] ?? null, `${path} loads media from ${found?.[0]}`).toBeNull();
+    }
+  });
+
+  it('keeps the vendored media to a weight a phone can open', () => {
+    /* Not a style rule. This page is the first thing somebody on a bad
+     * connection meets, and it is selling them care with their money. */
+    const assets = existsSync('site/src/assets') ? readdirSync('site/src/assets') : [];
+    expect(assets.length).toBeGreaterThan(0);
+    let total = 0;
+    for (const name of assets) {
+      const size = statSync(join('site/src/assets', name)).size;
+      total += size;
+      /* No single image over 400 KB. A photograph that big is a PNG that
+       * should have been a WebP, which is exactly how this started. */
+      if (/\.(png|jpe?g|webp|avif)$/i.test(name)) {
+        expect(size, `${name} is ${(size / 1024).toFixed(0)} KB`).toBeLessThan(400 * 1024);
+      }
+    }
+    for (const name of existsSync('site/public') ? readdirSync('site/public') : []) {
+      total += statSync(join('site/public', name)).size;
+    }
+    expect(total, `site media is ${(total / 1048576).toFixed(1)} MB`).toBeLessThan(6 * 1024 * 1024);
+  });
+
+  it('has a favicon that is a favicon', () => {
+    /* The one that was 4 MB. Browsers fetch this on every page load. */
+    expect(existsSync('site/public/favicon.ico')).toBe(true);
+    expect(statSync('site/public/favicon.ico').size).toBeLessThan(50 * 1024);
   });
 });
 

@@ -7,8 +7,17 @@
     <meta name="description" content="Your old phone can become an air-gapped signing device for Bitcoin and Monero." />
     <meta property="og:title" content="LABYRINTH" />
     <meta property="og:description" content="Your old phone can become an air-gapped signing device for Bitcoin and Monero." />
-    <meta property="og:image" content="https://d2ol7oe51mr4n9.cloudfront.net/user_3G6IWM0skAyzTF8nCKum7QWXTD0/f2b9ce0d-2d23-4b01-848c-d50a233eecd7.png" />
-    <link rel="icon" href="https://d2ol7oe51mr4n9.cloudfront.net/user_3G6IWM0skAyzTF8nCKum7QWXTD0/b593342a-fc62-4481-9540-8857cb46cd08.png" />
+    <meta property="og:type" content="website" />
+    <!-- Absolute, because social scrapers will not resolve a relative one.
+         Set VITE_SITE_ORIGIN at build time for whatever host this lands on. -->
+    <meta property="og:image" content="%VITE_SITE_ORIGIN%/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- Was a 2048x2048, 4 MB PNG, fetched by every browser to draw a 32px
+         square. These are the sizes actually asked for. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>LABYRINTH — Keep the keys offline</title>
   </head>
   <body>

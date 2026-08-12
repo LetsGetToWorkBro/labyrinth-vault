@@ -1,5 +1,7 @@
 import { ScrollScrub } from "./components/scroll-scrub";
 import { scrollScrubScenes, scrollScrubTheme } from "./scroll-scrub-scenes";
+import qrPhones from "./assets/qr-phones.webp";
+import drawerPhone from "./assets/drawer.webp";
 import "./labyrinth.css";
 
 const architecture = [
@@ -138,7 +140,7 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="qr-language section-pad">
-        <img src="https://d2ol7oe51mr4n9.cloudfront.net/user_3G6IWM0skAyzTF8nCKum7QWXTD0/c3b3741f-0126-43ef-9e94-fc567fa45300.png" alt="Two ordinary phones exchanging QR fragments" />
+        <img src={qrPhones} alt="Two ordinary phones exchanging QR fragments" width={2400} height={1350} loading="lazy" decoding="async" />
         <div className="qr-copy"><h2>THE AIR GAP<br />HAS A LANGUAGE.</h2><strong>QR.</strong><p>The two halves communicate one direction at a time. Nothing pairs. Nothing stays connected.</p></div>
       </section>
 
@@ -162,7 +164,7 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="drawer-section">
-        <img src="https://d2ol7oe51mr4n9.cloudfront.net/user_3G6IWM0skAyzTF8nCKum7QWXTD0/78e6a072-d281-4e32-9305-f470042af322.png" alt="An old iPhone resting in a dark drawer" />
+        <img src={drawerPhone} alt="An old iPhone resting in a dark drawer" width={2400} height={1600} loading="lazy" decoding="async" />
         <div><h2>GIVE THE PHONE<br />IN YOUR DRAWER<br />A NEW JOB.</h2><ol><li>Pick it up.</li><li>Install Labyrinth.</li><li>Turn the radios off.</li><li>Check the build&rsquo;s half.</li><li>Generate keys.</li></ol><strong>LABYRINTH VAULT</strong></div>
       </section>
 
