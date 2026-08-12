@@ -44,6 +44,7 @@
  */
 
 import { parseNode, type NodeConfig } from '../core/nodes';
+import { parsePendingSwap, type PendingSwap } from '../core/swaptrack';
 
 /** Bumped when the shape changes in a way an older reader would misread. */
 export const SCHEMA = 1;
@@ -52,11 +53,16 @@ export interface Persisted {
   nodes: { btc: NodeConfig | null; xmr: NodeConfig | null };
   /** Where the Monero scan got to, so a relaunch does not start again. */
   moneroScan: { height: number; birth: number } | null;
+  /** The one swap in flight, so a relaunch can still ask the provider about
+   *  it. An order id and two amounts: no address, no key, nothing that helps
+   *  anyone who reads this file. See core/swaptrack.ts for the argument. */
+  pendingSwap: PendingSwap | null;
 }
 
 export const EMPTY: Persisted = {
   nodes: { btc: null, xmr: null },
   moneroScan: null,
+  pendingSwap: null,
 };
 
 /**
@@ -119,7 +125,7 @@ export async function load(store: Store): Promise<Persisted> {
    * turn an empty file into a crash on launch. */
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return EMPTY;
 
-  const body = raw as { schema?: unknown; nodes?: unknown; moneroScan?: unknown };
+  const body = raw as { schema?: unknown; nodes?: unknown; moneroScan?: unknown; pendingSwap?: unknown };
   if (body.schema !== SCHEMA) return EMPTY;
 
   const stored = (body.nodes ?? {}) as { btc?: unknown; xmr?: unknown };
@@ -129,6 +135,10 @@ export async function load(store: Store): Promise<Persisted> {
       xmr: revalidate('monerod', stored.xmr),
     },
     moneroScan: revalidateScan(body.moneroScan),
+    /* Same door a fresh order comes through: the provider must be one this
+     * build speaks to, the coins ones it lists, the numbers numbers. A file
+     * from an older build simply has no entry here, which parses to null. */
+    pendingSwap: parsePendingSwap(body.pendingSwap),
   };
 }
 
