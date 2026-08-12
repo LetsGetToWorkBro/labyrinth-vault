@@ -36,9 +36,27 @@ and regenerates the fixtures the test target reads. Open the project without
 it and the app will correctly refuse to launch, because the digest baked
 into the binary will not match the bundle beside it.
 
-Signing: set your team in the generated project. There are no entitlements
-beyond camera access; the app asks for exactly one permission, because the
-camera is the only wire it has.
+Signing: `export LABYRINTH_TEAM_ID=ABCDE12345` and `project.yml` puts it into
+every generated project. Do not set it in the Signing & Capabilities editor
+instead. The `.xcodeproj` is regenerated and not committed, so that choice
+disappears at the next `xcodegen generate`, and the build after it fails as
+though signing had never been configured at all.
+
+**To type-check, build for the simulator, which signs with nothing:**
+
+```sh
+xcodebuild -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
+  -destination 'generic/platform=iOS Simulator' build 2>&1 \
+  | grep -E "error:" | sort -u
+```
+
+A device build stops at code signing **before the compiler runs**, so a missing
+team hides every compile error behind one line about a development team. That
+is worth knowing precisely because it looks like good news: nothing was
+checked.
+
+There are no entitlements beyond camera access; the app asks for exactly one
+permission, because the camera is the only wire it has.
 
 ### What to expect on the first build
 

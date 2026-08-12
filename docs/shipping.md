@@ -75,6 +75,7 @@ version controlled next to the code they describe.
 npm install
 npm test                 # rebuilds the engine, its digest, the icons, the fixtures
 brew install xcodegen
+export LABYRINTH_TEAM_ID=ABCDE12345      # once, in your shell profile
 cd ios && xcodegen generate && open LabyrinthVault.xcodeproj
 ```
 
@@ -82,6 +83,30 @@ cd ios && xcodegen generate && open LabyrinthVault.xcodeproj
 `BundleDigest.swift`, and the app refuses to launch if the digest and the
 bundle disagree. It also regenerates the icons from the app's own geometry and
 the fixtures the test target reads.
+
+**The team id belongs in the environment, not in Xcode.** The `.xcodeproj` is
+generated and never committed, so a team chosen in the Signing & Capabilities
+editor is gone at the next `xcodegen generate`, and the build after that fails
+with *"Signing for LabyrinthVault requires a development team"* as though it
+were a new problem. `ios/project.yml` reads `LABYRINTH_TEAM_ID` instead, so the
+setting survives every regeneration. The ten-character id is in App Store
+Connect under Membership Details.
+
+**To type-check the code, build for the simulator and skip signing entirely:**
+
+```sh
+cd ios && xcodegen generate
+xcodebuild -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
+  -destination 'generic/platform=iOS Simulator' build 2>&1 \
+  | grep -E "error:" | sort -u
+```
+
+This is the command to live in while the first errors come out. A device build
+stops at code signing *before the compiler runs*, so a missing team hides every
+compile error behind one line about a development team, and it is easy to read
+that as "the code is fine, only signing is wrong" when nothing has been checked
+at all. The simulator needs no team, type-checks everything, and `sort -u`
+collapses the same error repeated once per file that includes the header.
 
 Expect the first build to surface real errors. Everything that imports SwiftUI,
 JavaScriptCore, CryptoKit or CoreImage has only ever been *parsed*, because

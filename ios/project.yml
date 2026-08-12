@@ -7,6 +7,32 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
+# ## Signing, and why it lives here rather than in Xcode
+#
+# The `.xcodeproj` is generated and never committed, so a development team
+# chosen in Xcode's Signing & Capabilities editor survives exactly until the
+# next `xcodegen generate` and is then silently gone. The build after that
+# fails with "Signing for LabyrinthVault requires a development team", which
+# reads like a new problem rather than a setting that evaporated.
+#
+# So it comes from the environment and lands in the generated project every
+# time. Export it once, in a shell profile:
+#
+#     export LABYRINTH_TEAM_ID=ABCDE12345
+#
+# The ten-character Team ID is in App Store Connect under Membership Details.
+# Left unset the substitution is empty and the build fails with that same
+# signing error, which is the honest outcome: there is no team, and the error
+# says so rather than inventing one.
+#
+# **None of this is needed to type-check the code.** A simulator build signs
+# with nothing, so it is the build to run while working through compiler
+# errors; the team matters only for a device build, an archive and an upload.
+settings:
+  base:
+    DEVELOPMENT_TEAM: ${LABYRINTH_TEAM_ID}
+    CODE_SIGN_STYLE: Automatic
+
 targets:
   LabyrinthVault:
     type: application
