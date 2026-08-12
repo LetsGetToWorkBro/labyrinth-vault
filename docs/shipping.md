@@ -148,6 +148,11 @@ the BIS report) are the ones to start first.
       first: it involves a D-U-N-S number and takes days, not minutes.
 - [ ] **BIS self-classification report** for the encryption (5D992.c mass
       market), emailed per the section above. Once, then annually.
+- [ ] **The contact address receives mail.** `info@labyrinthwallet.com` is
+      printed in the privacy policy and in SECURITY.md, which means a reviewer
+      and a security researcher both have it. Cloudflare Email Routing is free
+      and the zone is already there; it forwards, so check a test message
+      actually arrives before either document is published.
 - [ ] **Host the privacy policy.** `store/vault/privacy-policy.md`, at
       `https://labyrinthwallet.com/vault/privacy`. App Store Connect requires
       the URL for every app; the document is written and versioned here so the
