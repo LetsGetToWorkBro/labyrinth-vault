@@ -79,6 +79,38 @@ xcodebuild test -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
 alone changes nothing Xcode can see. The symptom is a fix that appears not to
 work, with the identical error as before.
 
+### The contract tests import two different module names
+
+The same sources are built twice under two names, so the tests import
+conditionally:
+
+```swift
+#if canImport(LabyrinthVaultCore)
+@testable import LabyrinthVaultCore
+#else
+@testable import LabyrinthVault
+#endif
+```
+
+Under `swift test` and `npm run swift:check`, `Package.swift` builds the
+platform-free files as a library target called **`LabyrinthVaultCore`**. Under
+Xcode there is no such target: those same files sit in `LabyrinthVault/` and
+are compiled straight into the app, so the module is **`LabyrinthVault`**. A
+bare `@testable import LabyrinthVaultCore` therefore passes on Linux and fails
+the first ⌘U with "Unable to resolve module dependency".
+
+Both runs are worth having and they are not the same check. SwiftPM is the fast
+one that works on any machine and in CI, with no Apple toolchain. Xcode is the
+one that compiles the code **as the app ships it**, against Apple's Foundation
+rather than swift-corelibs-foundation, which is the entire point of
+`PassphraseContractTests`: NFKD is one Unicode annex with two implementations,
+and only one of them is the one a real passphrase goes through.
+
+Adding the SwiftPM package to the Xcode project was the obvious alternative and
+was rejected on purpose. The app target already compiles those files, so the
+package would build a second copy of every type, and the tests would then be
+checking a copy that does not ship.
+
 There are no entitlements beyond camera access; the app asks for exactly one
 permission, because the camera is the only wire it has.
 

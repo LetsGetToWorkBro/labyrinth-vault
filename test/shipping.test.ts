@@ -63,6 +63,29 @@ describe('the vault is shaped like something that can be uploaded', () => {
     expect(doc).toMatch(/self-classification/i);
   });
 
+  it('imports the model under both names it is built with', () => {
+    /* The same sources are built twice. `Package.swift` makes the
+     * platform-free files a library target called `LabyrinthVaultCore`, which
+     * is what `swift test` and CI run. Xcode has no such target: those files
+     * are compiled straight into the app, where the module is
+     * `LabyrinthVault`. So a bare `@testable import LabyrinthVaultCore`
+     * passes on Linux, passes in CI, and fails the first ⌘U on a Mac with
+     * "Unable to resolve module dependency" — which is the worst place to
+     * find out, because ⌘U is where these tests stop being a formality and
+     * start checking NFKD against Apple's own Foundation.
+     *
+     * Every test file therefore imports conditionally, and this is what says
+     * so when somebody adds the sixth one. */
+    const tests = sourcesUnder('ios/LabyrinthVaultTests', ['.swift']);
+    expect(tests.length, 'no contract tests found to check').toBeGreaterThan(3);
+    for (const { path, text } of tests) {
+      if (!/@testable import/.test(text)) continue;
+      expect(text, `${path} imports one module name; it needs both`).toMatch(
+        /#if canImport\(LabyrinthVaultCore\)\s*\n@testable import LabyrinthVaultCore\s*\n#else\s*\n@testable import LabyrinthVault\s*\n#endif/,
+      );
+    }
+  });
+
   it('leaves the built product named after its target, so the tests can find a host', () => {
     /* The home screen label comes from `CFBundleDisplayName`, which is the key
      * iOS actually reads for it. `PRODUCT_NAME` is a different thing: it

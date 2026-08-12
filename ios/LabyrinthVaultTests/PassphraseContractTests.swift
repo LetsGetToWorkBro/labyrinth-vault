@@ -37,7 +37,15 @@
 //  target's resources so there is one copy and it cannot drift.
 
 import XCTest
+// Two module names for one set of sources. Under `swift test` these files are
+// the `LabyrinthVaultCore` SwiftPM target; under Xcode the same sources are
+// compiled straight into the app, where the module is `LabyrinthVault`. Both
+// runs matter and ios/README.md says why.
+#if canImport(LabyrinthVaultCore)
 @testable import LabyrinthVaultCore
+#else
+@testable import LabyrinthVault
+#endif
 
 final class PassphraseContractTests: XCTestCase {
 
