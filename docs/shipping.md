@@ -161,6 +161,21 @@ identifier is already unique, already fixed in `ios/project.yml` and
 `wallet/app.json`, and reusing it means there is no second name to keep track
 of. Letters, numbers, hyphens, periods and underscores; no spaces.
 
+**Which answers on that form you are stuck with**, because the page does not
+say and the difference is the only reason to slow down on any of it:
+
+| Field | Changeable afterwards |
+| --- | --- |
+| User access | any time, and it only governs which other team members see the app |
+| App name | between versions |
+| Primary language | between versions |
+| SKU | **never** |
+| Bundle ID | **never**, once a version has been submitted |
+
+So the two worth reading twice are the SKU and the bundle identifier, and both
+of those are already decided by the repository. Everything else on the page is
+recoverable.
+
 ### 2. Vault: generate and build (needs a Mac)
 
 ```sh
