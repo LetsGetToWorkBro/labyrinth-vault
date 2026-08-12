@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { ScrollScrub } from "./components/scroll-scrub";
 import { scrollScrubScenes, scrollScrubTheme } from "./scroll-scrub-scenes";
 import qrPhones from "./assets/qr-phones.webp";
@@ -32,15 +33,99 @@ function Mark() {
   return <span className="lab-mark" aria-hidden="true"><i /><i /><i /></span>;
 }
 
-function Nav() {
+/* One list, rendered twice: inline on a wide screen, stacked in the panel on a
+ * narrow one. Two copies would be two chances for them to disagree about where
+ * DOCS goes, which is how the previous pair ended up both pointing at #source
+ * while calling themselves different things. */
+const navLinks: { href: string; label: string; away?: true }[] = [
+  { href: "#wallet", label: "WALLET" },
+  { href: "#vault", label: "VAULT" },
+  { href: "#security", label: "SECURITY" },
+  { href: "https://github.com/LetsGetToWorkBro/labyrinth-vault/tree/main/docs", label: "DOCS", away: true },
+  { href: "https://github.com/LetsGetToWorkBro/labyrinth-vault", label: "GITHUB", away: true },
+];
+
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <header className="lab-nav">
-      <a className="lab-brand" href="#top" aria-label="Labyrinth home"><Mark /><span className="lab-wordmark">LABYRINTH</span></a>
-      <nav aria-label="Primary navigation">
-        <a href="#wallet">WALLET</a><a href="#vault">VAULT</a><a href="#security">SECURITY</a><a href="#source">DOCS</a><a href="#source">GITHUB</a>
-      </nav>
-      <a className="nav-action" href="#start"><span>GET STARTED</span></a>
-    </header>
+    <>
+      {navLinks.map(({ href, label, away }) => (
+        <a
+          key={label}
+          href={href}
+          onClick={onNavigate}
+          {...(away ? { target: "_blank", rel: "noreferrer" } : {})}
+        >
+          {label}
+        </a>
+      ))}
+    </>
+  );
+}
+
+function Nav() {
+  const [open, setOpen] = useState(false);
+  const toggle = useRef<HTMLButtonElement>(null);
+
+  const close = () => setOpen(false);
+
+  useEffect(() => {
+    /* A rotation can cross the breakpoint while the panel is open, and the
+     * button that closes it is hidden above 980px. Close it rather than
+     * stranding somebody behind a full-screen panel with no way out. */
+    const wide = window.matchMedia("(min-width: 981px)");
+    const onWide = () => wide.matches && setOpen(false);
+    wide.addEventListener("change", onWide);
+    return () => wide.removeEventListener("change", onWide);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      toggle.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    /* The page behind must not scroll under the panel. Set on the root rather
+     * than by pinning the body, which loses the scroll position and returns
+     * you to the top of a 30,000px page. */
+    const previous = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.documentElement.style.overflow = previous;
+    };
+  }, [open]);
+
+  return (
+    <>
+      <header className="lab-nav">
+        <a className="lab-brand" href="#top" aria-label="Labyrinth home"><Mark /><span className="lab-wordmark">LABYRINTH</span></a>
+        <nav aria-label="Primary navigation"><NavLinks /></nav>
+        <a className="nav-action" href="#start" onClick={close}><span>GET STARTED</span></a>
+        <button
+          ref={toggle}
+          type="button"
+          className="nav-menu"
+          aria-expanded={open}
+          aria-controls="nav-menu-panel"
+          aria-label={open ? "Close menu" : "Open menu"}
+          onClick={() => setOpen((was) => !was)}
+        >
+          <i /><i /><i />
+        </button>
+      </header>
+      <div
+        id="nav-menu-panel"
+        className="nav-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sections"
+        hidden={!open}
+      >
+        <nav aria-label="Sections"><NavLinks onNavigate={close} /></nav>
+      </div>
+    </>
   );
 }
 

@@ -293,6 +293,61 @@ describe('the page holds still while somebody reads it', () => {
   });
 });
 
+describe('the navigation survives a narrow screen', () => {
+  /**
+   * Below 980px the five section links were `display: none` with nothing put
+   * in their place, so the bar held a wordmark and one button. Reported as
+   * "the toolbar was all empty except for get started", which was two bugs
+   * wearing one sentence: an over-broad selector had also hidden the logo,
+   * and even with that fixed the links were still gone.
+   *
+   * They live in a panel now. What this holds is that they still exist
+   * somewhere a phone can reach, because "hide it on mobile" is the cheapest
+   * thing to do to a navigation and it is invisible from a desktop browser.
+   */
+  const app = readFileSync('site/src/App.tsx', 'utf8');
+  const css = readFileSync('site/src/labyrinth.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('has one list of links rather than a copy per breakpoint', () => {
+    /* Two copies are two chances to disagree about where DOCS points, which
+     * is what happened before: DOCS and GITHUB were separate items in the bar
+     * that both went to `#source`, so neither went where its label said. */
+    expect(app).toMatch(/const navLinks/);
+    const inline = app.match(/<NavLinks/g) ?? [];
+    expect(inline.length, 'the link list should be rendered from one component').toBeGreaterThan(1);
+  });
+
+  it('offers a way to open them on a narrow screen', () => {
+    expect(app, 'no menu toggle').toMatch(/className="nav-menu"/);
+    expect(app, 'the toggle does not say whether it is open').toMatch(/aria-expanded=\{open\}/);
+    expect(app, 'the toggle does not point at the panel it controls').toMatch(
+      /aria-controls="nav-menu-panel"/,
+    );
+    /* Hidden above the breakpoint and shown below it, which is the shape that
+     * says the desktop bar is untouched. */
+    expect(css).toMatch(/\.nav-menu \{ display: none; \}/);
+    expect(css).toMatch(/@media \(max-width: 980px\)[\s\S]*?\.nav-menu \{ display: grid;/);
+  });
+
+  it('lets somebody out of the panel again', () => {
+    /* A full-screen panel with no exit is worse than no panel. Escape closes
+     * it and returns focus to the button that opened it; a link closes it on
+     * the way through; and the toggle stays above the panel rather than
+     * under it, which is what the z-index below is for. */
+    expect(app).toMatch(/event\.key !== "Escape"/);
+    expect(app).toMatch(/toggle\.current\?\.focus\(\)/);
+    expect(app).toMatch(/onNavigate=\{close\}/);
+    const nav = /\.lab-nav \{[^}]*z-index:\s*(\d+)/.exec(css);
+    const panel = /\.nav-panel \{ position: fixed; z-index: (\d+)/.exec(css);
+    expect(nav?.[1], 'the nav bar has no z-index to compare').toBeDefined();
+    expect(panel?.[1], 'the panel has no z-index to compare').toBeDefined();
+    expect(
+      Number(panel?.[1]),
+      'the panel covers the toggle that closes it',
+    ).toBeLessThan(Number(nav?.[1]));
+  });
+});
+
 describe('the display type fits the phone it is read on', () => {
   /**
    * Three rounds of "some phones are cut off" and "SHOW THE TRANSACTIO" came
