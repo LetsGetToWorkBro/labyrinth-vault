@@ -79,40 +79,70 @@ xcodebuild test -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
 alone changes nothing Xcode can see. The symptom is a fix that appears not to
 work, with the identical error as before.
 
-### The contract tests import two different module names
-
-The same sources are built twice under two names, so the tests import
-conditionally:
-
-```swift
-#if canImport(LabyrinthVaultCore)
-@testable import LabyrinthVaultCore
-#else
-@testable import LabyrinthVault
-#endif
-```
-
-Under `swift test` and `npm run swift:check`, `Package.swift` builds the
-platform-free files as a library target called **`LabyrinthVaultCore`**. Under
-Xcode there is no such target: those same files sit in `LabyrinthVault/` and
-are compiled straight into the app, so the module is **`LabyrinthVault`**. A
-bare `@testable import LabyrinthVaultCore` therefore passes on Linux and fails
-the first ⌘U with "Unable to resolve module dependency".
-
-Both runs are worth having and they are not the same check. SwiftPM is the fast
-one that works on any machine and in CI, with no Apple toolchain. Xcode is the
-one that compiles the code **as the app ships it**, against Apple's Foundation
-rather than swift-corelibs-foundation, which is the entire point of
-`PassphraseContractTests`: NFKD is one Unicode annex with two implementations,
-and only one of them is the one a real passphrase goes through.
-
-Adding the SwiftPM package to the Xcode project was the obvious alternative and
-was rejected on purpose. The app target already compiles those files, so the
-package would build a second copy of every type, and the tests would then be
-checking a copy that does not ship.
-
 There are no entitlements beyond camera access; the app asks for exactly one
 permission, because the camera is the only wire it has.
+
+## Two build systems, one set of sources
+
+**Read this before adding a file under `LabyrinthVaultTests/`.** It is the only
+part of this repository where a change can be green on every machine anybody
+uses day to day and still be broken, and it cost four rounds of a Mac session
+to learn once.
+
+`Package.swift` and `ios/project.yml` compile overlapping sources under
+different conventions. SwiftPM builds the platform-free half as a library and
+runs its tests on any machine with a Swift toolchain, which is what
+`npm run swift:check` and CI do. Xcode compiles the same files straight into
+the app and runs the same tests against Apple's own frameworks, which is what
+⌘U does.
+
+Both are worth having and they are **not the same check**. SwiftPM is fast,
+portable, and catches type errors. Xcode compiles the code as the app ships it,
+against Apple's Foundation rather than swift-corelibs-foundation, which is the
+entire point of `PassphraseContractTests`: NFKD is one Unicode annex with two
+implementations, and only one of them is the one a real passphrase goes
+through. That test passing on Linux is evidence. Passing on the device is the
+thing that matters.
+
+### Everywhere they disagree
+
+Each of these was found the hard way, in this order, on the first Mac.
+
+| | SwiftPM | Xcode | If you write only the SwiftPM form |
+| --- | --- | --- | --- |
+| Module name | `LabyrinthVaultCore`, a library target | `LabyrinthVault`, compiled into the app | ⌘U: *Unable to resolve module dependency* |
+| Resource accessor | `Bundle.module`, synthesised | nothing synthesised | ⌘U: *Type 'Bundle' has no member 'module'* |
+| Resource layout | `.copy` keeps `Fixtures/` | resource phase flattens to the bundle root | compiles, then finds no fixture at runtime |
+
+The third is the dangerous one, because it fails later and looks like a broken
+test rather than a wiring problem. `FixtureBundle.swift` tries both locations
+for that reason.
+
+### The rule, and what enforces it
+
+**Anything a test reaches for that one build system provides and the other does
+not goes behind a conditional, in one place, with both branches written at the
+same time.** Not "make it work here and fix the other later": the other is a
+Mac you may not be sitting at for a week, and the failure will arrive with no
+memory of this attached to it.
+
+`test/shipping.test.ts` holds all three, so the class is closed rather than the
+instances:
+
+- every file with `@testable import` uses the `canImport` conditional
+- `Bundle.module` appears nowhere outside `FixtureBundle.swift`
+- `ios/project.yml` sets no `PRODUCT_NAME`, which would rename the product out
+  from under the test bundle's `TEST_HOST`
+
+A fourth divergence will not be caught by those, because they name three
+specific things. What generalises is the symptom: **if `npm run swift:check`
+passes and ⌘U does not, suspect a SwiftPM convenience before suspecting the
+code.** Then add the conditional and a fourth guard here.
+
+Adding the SwiftPM package to the Xcode project as a dependency is the obvious
+way to collapse all of this into one convention, and it is worse. The app
+target already compiles those files, so the package would build a second copy
+of every type, and the tests would then be checking a copy that does not ship.
 
 ### What to expect on the first build
 

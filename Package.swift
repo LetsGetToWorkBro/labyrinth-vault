@@ -36,8 +36,17 @@
 //
 //  It shares its sources with the iOS target by path — the same files, not
 //  copies — so the two cannot drift. But a green `swift test` means the model
-//  layer compiles and its tests pass. It does not mean the app builds. Only
-//  Xcode can say that, and it has not been asked yet.
+//  layer compiles and its tests pass. It does not mean the app builds, and it
+//  does not even mean these same tests build: Xcode compiles them under
+//  different conventions, and each difference surfaces only on a Mac.
+//
+//  **Before adding anything under `ios/LabyrinthVaultTests/`, read "Two build
+//  systems, one set of sources" in `ios/README.md`.** The module name is
+//  `LabyrinthVaultCore` here and `LabyrinthVault` in Xcode; `Bundle.module` is
+//  synthesised here and does not exist there; `.copy` keeps the `Fixtures/`
+//  directory here and Xcode flattens it to the bundle root. All three were
+//  found one at a time, each only after the previous was fixed, and all three
+//  are now held by `test/shipping.test.ts`.
 
 import PackageDescription
 
