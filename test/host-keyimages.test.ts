@@ -119,7 +119,10 @@ describe('moneroKeyImages over the bridge', () => {
     }
   });
 
-  it('is gone after lock, like everything else the session holds', () => {
+  /* Opens a session, which is an Argon2id derivation at 64 MiB, and under a
+   * loaded full-suite run that alone can pass the five-second default. The
+   * same explicit allowance every other KDF-bound host test carries. */
+  it('is gone after lock, like everything else the session holds', { timeout: 30_000 }, () => {
     const { xmrAddress } = openSession();
     api.lock();
     const reply = JSON.parse(api.moneroKeyImages(asRequestHex([outputFor(xmrAddress, 0)]))) as {

@@ -75,6 +75,27 @@ export function routeFor(node: NodeConfig): Route {
   return { via: 'direct', because: 'not relayed' };
 }
 
+/**
+ * Whether this wallet's owner has arranged to talk to nobody but their own
+ * machines.
+ *
+ * True when at least one node is configured and every configured node is
+ * marked `mine`. It matters because of what it must switch off: the price
+ * lookup. Prices come from Labyrinth's relay so that no price service ever
+ * sees a phone, and for traffic already routed through the relay that costs
+ * nothing new. The person running only their own nodes is different. They
+ * took the Nodes screen's own advice, and their traffic touches nobody but
+ * machines they control; a price request would have this app contacting
+ * Labyrinth on a timer, disclosing "this address runs a wallet, right now"
+ * to the exact party they had arranged not to talk to. So it is skipped,
+ * their balances show in coin, and the Nodes screen says so: a convenience
+ * they did not ask for is not worth the arrangement they did.
+ */
+export function ownNodesOnly(nodes: { btc: NodeConfig | null; xmr: NodeConfig | null }): boolean {
+  const set = [nodes.btc, nodes.xmr].filter((node): node is NodeConfig => node !== null);
+  return set.length > 0 && set.every((node) => node.mine);
+}
+
 /** One sentence for the screen, so the person can see which case they are in. */
 export function routeLine(node: NodeConfig): string {
   const route = routeFor(node);

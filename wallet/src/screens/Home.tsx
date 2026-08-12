@@ -33,12 +33,12 @@ import { StatusBar } from 'expo-status-bar';
 import { ActionRow, Cell, Chip, Gap, Press, Rule, Screen } from '../design/atoms';
 import { Body, Display, Label, Small } from '../design/text';
 import { SectionHead, VaultStatus, Wordmark } from '../components/chrome';
-import { AssetLine } from '../components/money';
+import { Amount, AssetLine } from '../components/money';
 import { Allocation } from '../labyrinth/glyphs';
 import { TxRow } from '../components/tx';
 import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon, SwapIcon, NodeIcon } from '../components/icons';
 import { assetColor, color, space } from '../design/tokens';
-import { fiatCents, formatFiat } from '../core/units';
+import { fiatCents, formatFiat, hasPrice } from '../core/units';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
@@ -55,6 +55,15 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
   const btcValue = fiatCents(bitcoin.balance, 'BTC', snapshot.centsPerUnit.BTC);
   const xmrValue = fiatCents(monero.balance, 'XMR', snapshot.centsPerUnit.XMR);
   const total = btcValue + xmrValue;
+  /* Whether the hero can be a dollar figure at all. Zero cents per unit means
+   * no price is known right now. A price only ever arrives through Labyrinth's
+   * relay, which serves every client one cached answer so no price service
+   * sees a phone; when there is no relay configured, or it has not answered,
+   * or this wallet runs only on its owner's own nodes and therefore asks
+   * Labyrinth for nothing, the zero stays. Without a price the total is shown
+   * in the coins themselves, which is the truth, rather than as "$0.00",
+   * which is a lie about the money and reads as a wallet that lost it. */
+  const priced = hasPrice(snapshot.centsPerUnit.BTC) || hasPrice(snapshot.centsPerUnit.XMR);
 
   const recent = snapshot.transactions.slice(0, 3);
 
@@ -91,28 +100,60 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
         <Rule />
 
         {/* ------------------------------------------------------- the total */}
+        {/* Two shapes for the hero, and which one shows is a fact about the
+            data rather than a setting. With a price the total is a dollar
+            figure and the rule under it is the allocation. Without one, which
+            is every session against a real node, the coins themselves are the
+            readout: two amounts, stacked, full typographic budget. The
+            allocation goes with the price, because weighing bitcoin against
+            monero needs a common unit and there is none. */}
         <View style={{ paddingHorizontal: space.gutter, paddingTop: space.section }}>
-          <Label>TOTAL HELD</Label>
-          <Gap size={space.step} />
-          <Display>{formatFiat(total)}</Display>
-          <Gap size={space.gap} />
-          <Allocation
-            width={COLUMN}
-            parts={[
-              { weight: btcValue, tone: assetColor('BTC') },
-              { weight: xmrValue, tone: assetColor('XMR') },
-            ]}
-          />
-          <Gap size={space.step} />
-          <View style={{ flexDirection: 'row', gap: space.gap }}>
-            <Small tone={color.slate}>
-              {Math.round((btcValue / Math.max(total, 1)) * 100)}% BITCOIN
-            </Small>
-            <Small tone={color.slate}>
-              {Math.round((xmrValue / Math.max(total, 1)) * 100)}% MONERO
-            </Small>
-            {snapshot.stale ? <Small tone={color.dim}>· PRICE NOT LIVE</Small> : null}
-          </View>
+          {priced ? (
+            <>
+              <Label>TOTAL HELD</Label>
+              <Gap size={space.step} />
+              <Display>{formatFiat(total)}</Display>
+              <Gap size={space.gap} />
+              <Allocation
+                width={COLUMN}
+                parts={[
+                  { weight: btcValue, tone: assetColor('BTC') },
+                  { weight: xmrValue, tone: assetColor('XMR') },
+                ]}
+              />
+              <Gap size={space.step} />
+              <View style={{ flexDirection: 'row', gap: space.gap }}>
+                <Small tone={color.slate}>
+                  {Math.round((btcValue / Math.max(total, 1)) * 100)}% BITCOIN
+                </Small>
+                <Small tone={color.slate}>
+                  {Math.round((xmrValue / Math.max(total, 1)) * 100)}% MONERO
+                </Small>
+                {snapshot.stale ? <Small tone={color.dim}>· PRICE NOT LIVE</Small> : null}
+              </View>
+            </>
+          ) : (
+            <>
+              <Label>HELD</Label>
+              <Gap size={space.step} />
+              <Amount atoms={bitcoin.balance} asset="BTC" size="readout" />
+              <Gap size={space.step} />
+              <Amount atoms={monero.balance} asset="XMR" size="readout" />
+              <Gap size={space.step} />
+              {/* Present tense on purpose. "This wallet asks no price
+                  service" was true forever and misleading tomorrow: the day
+                  the relay is deployed, dollar figures appear, and a person
+                  who read a permanent-sounding sentence concludes the app
+                  lied. What is always true is the arrangement: no price is
+                  known at this moment, and when one is known it came through
+                  Labyrinth's relay rather than from this phone asking a
+                  price service. */}
+              <Small tone={color.dim}>
+                Shown in coin. No price is known right now; one only ever arrives through
+                Labyrinth&apos;s relay, and this phone asks no price service itself.
+              </Small>
+            </>
+          )}
         </View>
 
         <Gap size={space.section} />

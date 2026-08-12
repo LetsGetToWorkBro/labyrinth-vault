@@ -46,6 +46,7 @@ import {
   sealAnswer,
 } from './gateway';
 import { nodeTarget } from './nodes';
+import { currentPrices, PRICE_CACHE_MS } from './prices';
 import { checkLimit } from './ratelimit';
 import { buildCreate, buildQuote, buildStatus, knownProvider, send, type Intent, type Keys } from './upstream';
 
@@ -153,6 +154,26 @@ async function serve(request: Request, env: Env): Promise<Response> {
      * costs a caller nothing. Here as well so that it can be asked through
      * the oblivious door like everything else. */
     if (url.pathname === '/v1/health') return json({ ok: true });
+
+    /* Prices, one cached answer for everybody. Publicly cacheable on purpose
+     * and in contrast to everything else here: a price is the same number for
+     * every caller, and identical widely-cached bytes are what keep one
+     * caller from being told apart from the rest. The edge absorbs the
+     * traffic and the upstream sees this Worker on a timer, never a person.
+     * See prices.ts for the whole argument. */
+    if (url.pathname === '/v1/price') {
+      if (request.method !== 'GET') return problem('That method is not served here.', 405);
+      const answer = await currentPrices();
+      if (!answer.ok) return problem(answer.problem, 502);
+      return new Response(JSON.stringify({ ok: true, prices: answer.prices }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${Math.floor(PRICE_CACHE_MS / 1000)}`,
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
 
     /* The chain node relay. A public node learns every address it is
      * asked about and, on a broadcast, which address announced a

@@ -140,6 +140,20 @@ export function fiatCents(atoms: Atoms, asset: Asset, centsPerUnit: number): num
   return Number(rounded);
 }
 
+/**
+ * Whether a price is known at all.
+ *
+ * This wallet has no price source. That is a decision, not a gap: a price feed
+ * is one more server that learns when the app is open, and the fixture is the
+ * only place a price comes from today. So `centsPerUnit` is zero everywhere a
+ * real node is answering, and zero means *unknown*, never "worth nothing".
+ * Every screen that renders fiat asks this first, because "$0.00" under a real
+ * balance is a claim about what somebody's money is worth, and a false one.
+ */
+export function hasPrice(centsPerUnit: number): boolean {
+  return Number.isFinite(centsPerUnit) && centsPerUnit > 0;
+}
+
 /** `$48,291.82`. Cents are always shown; a readout that drops them looks like
  *  an estimate, and this one is not. */
 export function formatFiat(cents: number, opts: { sign?: boolean } = {}): string {

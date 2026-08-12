@@ -35,6 +35,12 @@ not, and the swap screen's DEMO DATA notice appears and disappears from the
 same fact. There is deliberately no second flag: a second thing to remember is
 a build that ships half-connected.
 
+The same string now also turns on prices. `NodeWatcher` asks the Worker's
+`/v1/price` on every refresh once the relay exists, the Worker serves every
+client one cached answer (`worker/src/prices.ts`), and until then live
+balances are shown in coin. Nothing else has to be remembered for that
+either.
+
 So the sequence is:
 
 1. **Deploy the Worker.** From `worker/`:

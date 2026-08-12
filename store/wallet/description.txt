@@ -30,7 +30,9 @@ The wallet reads the chain through a node, and there is none set by default. Eve
 
 This app makes that choice in front of you, on a screen that says what it costs first. A public Bitcoin node learns every address in your account, because a light client has to ask about each one. Your own node learns nothing. Running your own is presented as the ordinary option, with the command to do it.
 
-Bitcoin works against any Esplora node, including one on your own machine. Monero is not finished: the wallet can reach a node and broadcast through it, but scanning for your outputs needs work that is described honestly in the repository rather than hidden. Until it lands, the Monero balance reads as not scanned rather than as zero.
+Bitcoin works against any Esplora node, including one on your own machine. Monero scans on the device: the node serves blocks, your view key does the arithmetic here, and the node never learns which outputs are yours. Every amount found is proved against the commitment on the chain before it is counted. What a view key alone cannot see is spending, so the number is labeled as what arrived until your vault answers a key image round trip, and after that, spends are subtracted and the screen says where the answer came from.
+
+Prices never come from a price service this phone talks to, because a wallet that asks what bitcoin is worth tells whoever answers that you are running one, on every refresh. When Labyrinth's relay is available, it asks instead and serves every client the same cached answer, so the price source sees a server on a timer and never you. When it is not, balances are shown in coin rather than at a made-up rate.
 
 With no node set, every number is a fixture and the app says DEMO DATA on screen.
 

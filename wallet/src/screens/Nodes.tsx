@@ -141,6 +141,13 @@ export function NodesScreen({ navigation }: Nav<'Nodes'>) {
           else needs https, because otherwise everyone between here and there
           sees the same thing the node does.
         </Small>
+        <Gap size={8} />
+        <Small>
+          A wallet running only on your own nodes also asks Labyrinth for nothing:
+          price lookups are skipped, so balances show in coin rather than in
+          dollars. Your traffic touching nobody but your machines is the point,
+          and a price is not worth giving that up.
+        </Small>
 
         <Gap />
         <TextInput
