@@ -1,0 +1,42 @@
+# Headers Cloudflare applies to the built site.
+#
+# Two jobs. The first is caching, which matters here because every asset Vite
+# emits is named with a hash of its own contents: a changed file gets a new
+# name, so the old name can be cached forever without ever going stale. The
+# original media was served with no Cache-Control at all, only an etag, which
+# means a browser revalidated 30 MB on every visit.
+#
+# The second is that this site sells care with somebody's money, and a page
+# making that argument should not itself be sloppy about what it allows a
+# browser to do.
+
+/assets/*
+  # Content-hashed by the build. Safe to keep for a year and never ask again.
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.webp
+  Cache-Control: public, max-age=31536000, immutable
+/*.mp4
+  Cache-Control: public, max-age=31536000, immutable
+
+/favicon.ico
+  Cache-Control: public, max-age=604800
+/apple-touch-icon.png
+  Cache-Control: public, max-age=604800
+/og.jpg
+  Cache-Control: public, max-age=604800
+
+/*
+  # The entry point is not hashed, so it must be revalidated or a deploy would
+  # not reach anybody still holding the old one.
+  Cache-Control: public, max-age=0, must-revalidate
+
+  # This is a static page. It runs its own bundle, loads its own media, and
+  # talks to nothing. Saying so in a header means a script injected by any
+  # future mistake has nowhere to send what it finds.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
