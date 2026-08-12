@@ -170,6 +170,14 @@ differently depending on what it decrypted would let a relay acting on those
 signals deanonymize the client, which is the failure this whole design exists
 to prevent. Every refusal here is the same shape for that reason.
 
+**Nothing is read before it is measured.** Both doors cap a body at a
+megabyte, in `src/index.ts`, and refuse a declared length before reading a
+byte. Cloudflare would refuse an oversized request anyway, which is exactly
+why the cap is here: a limit that lives in a platform's configuration is one
+nobody can check by reading this source, and one that does not survive being
+deployed anywhere else. A megabyte is about five times the largest honest
+payload, a raw Bitcoin transaction as hex, and a hundredth of the platform's.
+
 **Replay is possible.** The gateway is stateless, so a relay could send the
 same ciphertext twice. For a quote or a node call that is noise. For an order
 it would create a duplicate at the exchange, which the wallet never sees,

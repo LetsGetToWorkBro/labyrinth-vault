@@ -353,3 +353,94 @@ describe('what the gateway refuses', () => {
     }
   });
 });
+
+describe('the ceiling is in the code, not in the platform', () => {
+  /* Cloudflare refuses an oversized request before this Worker runs, so there
+   * was never a hole here. What there was is a limit nobody could check by
+   * reading the source, and one that would not survive being deployed
+   * somewhere with a different platform ceiling. Every parser on the vault
+   * side carries its own; this is the Worker keeping the same standard. */
+
+  const MB = 1_048_576;
+
+  it('refuses an encapsulated request over a megabyte, before decrypting it', async () => {
+    /* Deliberately valid-looking: the right key id and a real header, so the
+     * only reason to refuse is the size. If the check sat after the
+     * decryption it would have done the expensive thing first. */
+    const oversized = new Uint8Array(MB + 1);
+    oversized.set([1, 0, 0x20, 0, 1, 0, 1], 0);
+    const response = await call('https://gateway.example/v1/gateway', {
+      method: 'POST',
+      headers: { 'Content-Type': 'message/ohttp-req' },
+      body: oversized,
+    });
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe('');
+  });
+
+  it('refuses on a declared length without reading the body at all', async () => {
+    /* The cheap check. A caller that announces the size gets refused before a
+     * byte is read; a chunked one is caught by the measurement afterwards. */
+    const response = await call('https://gateway.example/v1/gateway', {
+      method: 'POST',
+      headers: { 'Content-Type': 'message/ohttp-req', 'Content-Length': String(MB + 1) },
+      body: new Uint8Array([1, 0, 0x20, 0, 1, 0, 1]),
+    });
+    expect(response.status).toBe(413);
+  });
+
+  it('still carries an ordinary request, so the limit is invisible to anybody real', async () => {
+    const relay = pretendRelay();
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response('{}', { headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+    try {
+      const answer = await through(relay)('https://gateway.example/v1/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'exolix', from: 'btc', to: 'xmr', amount: 1 }),
+      });
+      expect(answer.status).toBe(200);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('refuses to relay an oversized broadcast to a public node', async () => {
+    /* The other door, which the audit did not name and which read a body the
+     * same unbounded way. A node should never receive something this Worker
+     * would not have accepted for itself. */
+    const original = globalThis.fetch;
+    let dialled = false;
+    globalThis.fetch = (async () => {
+      dialled = true;
+      return new Response('ok');
+    }) as typeof fetch;
+    try {
+      const response = await call(
+        'https://gateway.example/v1/node?host=mempool.space&path=/api/tx',
+        { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: 'a'.repeat(MB + 1) },
+      );
+      expect(response.status).toBe(413);
+      expect(dialled, 'the node was dialled anyway').toBe(false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('relays a broadcast of the size a real transaction actually is', async () => {
+    /* Bitcoin standardness caps a transaction at 100,000 bytes, so 200,000
+     * characters of hex is the worst honest case. It must pass. */
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('txid', { status: 200 })) as typeof fetch;
+    try {
+      const response = await call(
+        'https://gateway.example/v1/node?host=mempool.space&path=/api/tx',
+        { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: 'ab'.repeat(100_000) },
+      );
+      expect(response.status).toBe(200);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

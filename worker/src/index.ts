@@ -105,6 +105,39 @@ const intOr = (text: string | undefined, fallback: number): number => {
 };
 
 /**
+ * The largest body this Worker will read, on either door.
+ *
+ * There is a ceiling already: Cloudflare refuses an oversized request before
+ * this code runs. That ceiling is real and it is also somewhere else, which
+ * is the problem. Every parser on the vault side carries its own limit in its
+ * own source, and a guarantee that lives in a platform's current
+ * configuration is one nobody can check by reading this file, and one that
+ * does not survive being deployed anywhere else.
+ *
+ * A megabyte is chosen against the largest thing a person can legitimately
+ * send. That is a raw transaction going out through `/v1/node`: Bitcoin
+ * standardness caps a transaction at 100,000 bytes, which is 200,000
+ * characters of hex, and Monero's are smaller. Every other payload here is a
+ * few hundred bytes of intent. So this is roughly five times the worst honest
+ * case and a hundredth of the platform's, which is the shape a limit should
+ * have: invisible to anybody real, and firmly in the way of everybody else.
+ */
+const MAX_BODY_BYTES = 1_048_576;
+
+/**
+ * Whether the caller has already told us the body is too big.
+ *
+ * Cheap and worth doing first, because it refuses before a byte is read.
+ * A chunked request declares no length and slips past this, which is why the
+ * check below reads the body and then measures it. That second check is the
+ * one that matters: what it stands in front of is the decryption, and
+ * decrypting a megabyte of nonsense is the expense worth refusing, not
+ * holding it in memory.
+ */
+const declaredTooBig = (request: Request): boolean =>
+  Number.parseInt(request.headers.get('Content-Length') ?? '', 10) > MAX_BODY_BYTES;
+
+/**
  * The routes themselves, with no rate limiting and no knowledge of how the
  * request arrived.
  *
@@ -137,10 +170,18 @@ async function serve(request: Request, env: Env): Promise<Response> {
        * arrives at the node as a quoted string and fails for a reason
        * nobody would think to look for. */
       const contentType = request.headers.get('Content-Type') ?? 'application/json';
+      let body: string | undefined;
+      if (request.method === 'POST') {
+        if (declaredTooBig(request)) return problem('That is too large to relay.', 413);
+        body = await request.text();
+        /* Measured before it is forwarded, so a public node never receives
+         * something this Worker would not have accepted for itself. */
+        if (body.length > MAX_BODY_BYTES) return problem('That is too large to relay.', 413);
+      }
       const upstream = await fetch(target.url, {
         method: request.method,
         headers: { Accept: 'application/json', 'Content-Type': contentType },
-        ...(request.method === 'POST' ? { body: await request.text() } : {}),
+        ...(body === undefined ? {} : { body }),
       });
       /* Handed back as it arrived, body and status. This Worker does not
        * read chain data any more than it reads an exchange's answer: the
@@ -252,9 +293,16 @@ export default {
         return new Response(null, { status: 415 });
       }
 
+      if (declaredTooBig(request)) return new Response(null, { status: 413 });
+      const encapsulated = new Uint8Array(await request.arrayBuffer());
+      /* Before the key lookup and before any decryption. The relay handed
+       * these bytes over and already knows how many there were, so refusing
+       * by size in the clear tells it nothing it did not measure itself. */
+      if (encapsulated.length > MAX_BODY_BYTES) return new Response(null, { status: 413 });
+
       let opened;
       try {
-        opened = openEncapsulated(keys, new Uint8Array(await request.arrayBuffer()), url.origin);
+        opened = openEncapsulated(keys, encapsulated, url.origin);
       } catch {
         /* One shape for every failure, and no body. Which key is current,
          * whether a given key id exists, and whether a ciphertext was merely
