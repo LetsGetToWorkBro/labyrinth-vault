@@ -2,7 +2,7 @@
 
 ## Reporting
 
-Found something? Email **info@labyrinth.vision**. Please do not open a public
+Found something? Email **info@labyrinthwallet.com**. Please do not open a public
 issue for anything exploitable; everything else is welcome in the tracker.
 
 There is no bounty program. There is credit, gratitude, and a fix.
