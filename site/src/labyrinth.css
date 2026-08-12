@@ -265,7 +265,12 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 700px) {
   .section-pad { padding: 7rem 1.25rem; }
   .lab-nav { height: 54px; top: 8px; width: calc(100% - 16px); padding-left: 13px; }
-  .lab-brand span { display: none; }
+  /* Was `.lab-brand span`, which also matched the logo, because the mark is
+   * a span of three nested <i>. That collapsed the whole brand link to zero
+   * width and left a navigation bar containing one button. The wordmark fits
+   * at 320px next to the button with room to spare, so nothing is hidden
+   * here now; the class exists so a future rule has something specific to
+   * aim at. */
   .nav-action { min-width: 112px; height: 38px; }
   .hero-journey .scroll-scrub__chapter-pin { padding-bottom: 11rem; }
   .hero-journey .scroll-scrub__copy { width: 100%; }

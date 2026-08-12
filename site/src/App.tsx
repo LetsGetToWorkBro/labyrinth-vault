@@ -31,7 +31,7 @@ function Mark() {
 function Nav() {
   return (
     <header className="lab-nav">
-      <a className="lab-brand" href="#top" aria-label="Labyrinth home"><Mark /><span>LABYRINTH</span></a>
+      <a className="lab-brand" href="#top" aria-label="Labyrinth home"><Mark /><span className="lab-wordmark">LABYRINTH</span></a>
       <nav aria-label="Primary navigation">
         <a href="#wallet">WALLET</a><a href="#vault">VAULT</a><a href="#security">SECURITY</a><a href="#source">DOCS</a><a href="#source">GITHUB</a>
       </nav>
