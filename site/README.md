@@ -48,6 +48,14 @@ preview with no picture. `site/.env` holds the default used by local builds.
 Every push to `main` then rebuilds and deploys, and pull requests get their own
 preview URL, which is worth having for a page this visual.
 
+**Changing these settings does not deploy anything.** Workers Builds fires on a
+push to the production branch, so a corrected build command sits there doing
+nothing until the next commit or a manual retry in the dashboard. The site
+spent a while serving `index.html` straight from source for this reason: the
+page loaded, referenced `/src/main.tsx`, and rendered white, because a browser
+cannot execute TypeScript. If the deployed page ever references `/src/`
+instead of `/assets/`, that is what happened.
+
 ### What is already handled, so nothing has to be set in the dashboard
 
 - **Caching**, in `public/_headers`. Every asset Vite emits is named with a hash

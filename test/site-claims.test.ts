@@ -124,6 +124,35 @@ describe('the site carries its own media', () => {
   });
 });
 
+describe('the site reads the way everything else here reads', () => {
+  /**
+   * Comments removed first, the way `wallet/test/copy.test.ts` does it.
+   * The rule is about what a person reads on the page, and prose explaining
+   * the rule is not the rule being broken. This repository has now had five
+   * guards fail on exactly that mistake, including this one, on its first run.
+   */
+  const withoutComments = (body: string, path: string): string =>
+    path.endsWith('.html')
+      ? body.replace(/<!--[\s\S]*?-->/g, '')
+      : body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  it('has no em dashes in anything a person reads', () => {
+    /* The rule the wallet and the vault already hold, which the site was
+     * outside of: `test/copy-style.test.ts` covers the markdown and
+     * `wallet/test/copy.test.ts` covers the app's strings, and between them
+     * the loudest surface in the product was unguarded. An em dash bolts two
+     * thoughts together and lets a sentence avoid deciding which one it is
+     * making, and this page is read by somebody deciding whether to trust
+     * this with money.
+     *
+     * Both spellings, because JSX writes it as an entity and HTML as the
+     * character, and only one of those is greppable by eye. */
+    for (const { path, body } of text) {
+      expect(withoutComments(body, path), `${path} contains an em dash`).not.toMatch(/&mdash;|\u2014/);
+    }
+  });
+});
+
 describe('the site still makes the claim that is true', () => {
   it('says the binary has no network code, which is the checkable one', () => {
     const all = text.map((t) => t.body).join('\n');

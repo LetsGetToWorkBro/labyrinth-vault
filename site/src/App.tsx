@@ -74,7 +74,7 @@ export default function LabyrinthSite() {
       <section className="hero-journey" aria-label="Phone to Vault transformation">
         <ScrollScrub scenes={scrollScrubScenes} theme={scrollScrubTheme} />
         <div className="hero-ctas"><a href="#vault">EXPLORE VAULT</a><a href="#wallet">EXPLORE WALLET</a></div>
-        <p className="hero-truth">The Vault has no networking code. Not disabled &mdash; absent.</p>
+        <p className="hero-truth">The Vault has no networking code. Not disabled. Absent.</p>
       </section>
 
       <section className="idea-section section-pad">
@@ -116,7 +116,7 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="airgap section-pad">
-        <div><h2>NOTHING<br />TO CONNECT.</h2><p>The absence is inspectable. The Vault target contains no network code, and the app says so rather than claiming to read your radios &mdash; seeing those would need the very frameworks it refuses to link.</p></div>
+        <div><h2>NOTHING<br />TO CONNECT.</h2><p>The absence is inspectable. The Vault target contains no network code, and the app says so rather than claiming to read your radios. Seeing those would need the very frameworks it refuses to link.</p></div>
         <div className="airgap-facts">
           <div className="airgap-group">
             <h3>THIS BUILD, AS FACT</h3>
