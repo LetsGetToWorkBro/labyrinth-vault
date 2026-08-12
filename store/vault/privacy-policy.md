@@ -41,4 +41,4 @@ If any of the above ever changes, this policy will change first, and the
 app's privacy manifest and source tests will have to change with it - in
 public, since the application is open source.
 
-Contact: info@labyrinth.vision
+Contact: info@labyrinthwallet.com

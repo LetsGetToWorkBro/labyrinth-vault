@@ -148,10 +148,18 @@ the BIS report) are the ones to start first.
       first: it involves a D-U-N-S number and takes days, not minutes.
 - [ ] **BIS self-classification report** for the encryption (5D992.c mass
       market), emailed per the section above. Once, then annually.
-- [ ] **Host the privacy policy.** `store/vault/privacy-policy.md`, at any
-      URL you control (e.g. `https://labyrinth.vision/vault/privacy`). App
-      Store Connect requires the URL for every app; the document is written
-      and versioned here so the form is a paste.
+- [ ] **The contact address receives mail.** `info@labyrinthwallet.com` is
+      printed in the privacy policy and in SECURITY.md, which means a reviewer
+      and a security researcher both have it. Cloudflare Email Routing is free
+      and the zone is already there; it forwards, so check a test message
+      actually arrives before either document is published.
+- [ ] **Host the privacy policy.** `store/vault/privacy-policy.md`, at
+      `https://labyrinthwallet.com/vault/privacy`. App Store Connect requires
+      the URL for every app; the document is written and versioned here so the
+      form is a paste. The site is a single page today, so this needs either a
+      route added to it or a static file served beside it before the URL is
+      entered. **Check it resolves before submitting**: a reviewer following a
+      dead privacy-policy link is a rejection with a slow turnaround.
 
 **In App Store Connect, per the vault app record:**
 
