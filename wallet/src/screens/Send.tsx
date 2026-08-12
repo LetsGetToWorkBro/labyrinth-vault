@@ -56,7 +56,7 @@ import { elide, fiatCents, formatFeeRate, formatFiat, parseAmount } from '../cor
 import { maxSendable } from '../core/build';
 import { checkAddress, readPaymentUri } from '../core/addresses';
 import { frameEstimate, FRAME_MS } from '../core/wire';
-import { standInVault, PUBLISHED_TEST_WORDS } from '../demo/standin';
+import { standInVault, PUBLISHED_TEST_WORDS, DEMO } from '../demo/standin';
 import { tap } from '../design/haptics';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
@@ -636,31 +636,45 @@ function Receiving({ onBack }: { onBack: () => void }) {
           broadcast, and this device will say so.
         </Notice>
 
-        <Gap size={space.section} />
-        <LabelWide tone={color.warn}>STAND-IN VAULT · THIS BUILD HAS NO SECOND DEVICE</LabelWide>
-        <Gap size={space.step} />
-        <Body tone={color.slate}>
-          There is no vault to scan here, so this phone can sign for itself with the seed phrase
-          published in BIP84, the one every wallet tests against, which controls nothing. It is the
-          only way these last screens can be walked rather than imagined.
-        </Body>
-        <Gap size={space.step} />
-        <Action
-          label="RETURN A SIGNATURE"
-          onPress={() => draft && store.offerSignature(standInVault(draft, PUBLISHED_TEST_WORDS, 'sign'))}
-        />
-        <Gap size={space.snug} />
-        <Action
-          label="RETURN AN ALTERED TRANSACTION"
-          quiet
-          onPress={() => draft && store.offerSignature(standInVault(draft, PUBLISHED_TEST_WORDS, 'tamper'))}
-        />
-        <Gap size={space.snug} />
-        <Action
-          label="RETURN NOTHING"
-          quiet
-          onPress={() => store.offerSignature(null)}
-        />
+        {/* The stand-in, and it renders only where it can act.
+         *
+         * `standInVault` already refuses in a release build — it checks `DEMO`
+         * and returns null — but a button that silently does nothing is its own
+         * kind of lie: a reviewer who taps "RETURN A SIGNATURE" and watches the
+         * screen sit there reads a broken app, not a build without a second
+         * device. So the controls are gated on the same flag the signer is, and
+         * a release build shows only the camera above: the flow stops at the
+         * handoff, which is the true thing to show when there is no vault and
+         * exactly what `store/wallet/review-notes.md` says happens. */}
+        {DEMO && (
+          <>
+            <Gap size={space.section} />
+            <LabelWide tone={color.warn}>STAND-IN VAULT · THIS BUILD HAS NO SECOND DEVICE</LabelWide>
+            <Gap size={space.step} />
+            <Body tone={color.slate}>
+              There is no vault to scan here, so this phone can sign for itself with the seed phrase
+              published in BIP84, the one every wallet tests against, which controls nothing. It is the
+              only way these last screens can be walked rather than imagined.
+            </Body>
+            <Gap size={space.step} />
+            <Action
+              label="RETURN A SIGNATURE"
+              onPress={() => draft && store.offerSignature(standInVault(draft, PUBLISHED_TEST_WORDS, 'sign'))}
+            />
+            <Gap size={space.snug} />
+            <Action
+              label="RETURN AN ALTERED TRANSACTION"
+              quiet
+              onPress={() => draft && store.offerSignature(standInVault(draft, PUBLISHED_TEST_WORDS, 'tamper'))}
+            />
+            <Gap size={space.snug} />
+            <Action
+              label="RETURN NOTHING"
+              quiet
+              onPress={() => store.offerSignature(null)}
+            />
+          </>
+        )}
       </View>
       <Gap size={space.chapter} />
     </ScrollView>

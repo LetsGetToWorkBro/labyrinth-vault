@@ -41,7 +41,12 @@ describe('both listings are complete and fit', () => {
          * keeps it versioned next to the claims it repeats. The wallet gets
          * one when it is submitted: its policy will differ (it talks to
          * nodes), and writing it early would mean guessing. */
-        const extras = app === 'vault' ? ['review-notes.md', 'privacy-policy.md'] : ['review-notes.md'];
+        /* Both apps carry their privacy policy now. It is not a Connect form
+         * field but a URL the form demands, and keeping the document here
+         * versions it next to the claims it repeats. The wallet's waited until
+         * it had a domain to host it and a network story worth being exact
+         * about; it has both now. */
+        const extras = ['review-notes.md', 'privacy-policy.md'];
         const present = readdirSync(dir).sort();
         expect(present).toEqual([...Object.keys(LIMITS), ...extras].sort());
       });
@@ -127,6 +132,20 @@ describe('the listings say what the code does', () => {
     expect(notes).toMatch(/STAND-IN VAULT/);
     expect(notes).toMatch(/BIP84/);
     expect(notes).toMatch(/compiled out/);
+  });
+
+  it('the stand-in is compiled out where the listing says it is', () => {
+    /* The review notes and the description both tell a reviewer the stand-in
+     * signer is not in a release build. That is a claim about the code, so it
+     * is checked against the code: the signer refuses unless `DEMO`, and the
+     * screen renders its controls only under `DEMO` — a button that stayed on
+     * screen while the signer behind it returned null would be a dead control
+     * in the shipping build, which is the thing the notes promise is gone. */
+    const standin = readFileSync('wallet/src/demo/standin.ts', 'utf8');
+    expect(standin).toMatch(/export const DEMO =[^\n]*__DEV__/);
+    expect(standin).toMatch(/if \(!DEMO\) return null;/);
+    const send = readFileSync('wallet/src/screens/Send.tsx', 'utf8');
+    expect(send).toMatch(/\{DEMO && \(/);
   });
 
   it('neither listing promises something the other app does', () => {
