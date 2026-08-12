@@ -135,7 +135,7 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
   async function create() {
     if (!request.ok || !best?.toAmount) return;
     setPhase('creating');
-    const result = await createOrder(store.swapTransport, request.request, best.toAmount);
+    const result = await createOrder(store.swapTransport, request.request, best.toAmount, best);
     if (!result.ok) {
       /* Terminal, and terminal here means there is nothing to show. A refused
        * order carries no deposit address, so there is no address on this

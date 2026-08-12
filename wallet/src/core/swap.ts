@@ -534,7 +534,11 @@ export type SwapStage =
   | 'done'
   | 'refunded'
   | 'expired'
-  | 'failed';
+  | 'failed'
+  /** A status word this build does not know. Not a failure: an exchange is
+   *  free to add a state, and reporting its new word as "failed" would be
+   *  this wallet inventing bad news about somebody's money. */
+  | 'unknown';
 
 export interface SwapStatus {
   stage: SwapStage;
@@ -552,6 +556,7 @@ export const STAGE_LINES: Record<SwapStage, string> = {
   refunded: 'REFUNDED',
   expired: 'EXPIRED WITH NOTHING RECEIVED',
   failed: 'FAILED',
+  unknown: 'THE EXCHANGE USED A WORD THIS BUILD DOES NOT KNOW',
 };
 
 // ---------------------------------------------------------------------------
@@ -763,7 +768,10 @@ export function parseExolixStatus(json: unknown): SwapStatus {
     : raw === 'success' ? 'done'
     : raw === 'refunded' ? 'refunded'
     : raw === 'overdue' ? 'expired'
-    : 'failed';
+    : raw === 'failed' || raw === 'error' ? 'failed'
+    /* Anything else is a word added since this build. Say so; do not call
+     * somebody's live order dead because the vocabulary moved. */
+    : 'unknown';
   return { stage, raw: raw || 'unknown', ...(hash ? { txId: hash } : {}) };
 }
 
@@ -859,7 +867,8 @@ export function parseGodexStatus(json: unknown): SwapStatus {
     : raw === 'success' ? 'done'
     : raw === 'refunded' ? 'refunded'
     : raw === 'overdue' || raw === 'expired' ? 'expired'
-    : 'failed';
+    : raw === 'failed' || raw === 'error' ? 'failed'
+    : 'unknown';
   return { stage, raw: raw || 'unknown', ...(hash ? { txId: hash } : {}) };
 }
 
@@ -916,6 +925,33 @@ export async function quoteAll(
 }
 
 /**
+ * Is this amount inside the range the exchange quoted?
+ *
+ * The quote carries a minimum and a maximum and the screen used to only print
+ * them. Printing is not enforcing: an amount under the minimum buys an order
+ * the exchange will not fill, and the person finds out after the deposit has
+ * left, when the remedy is a refund request rather than a different number in
+ * a field. The bounds are the provider's own words, so this refuses in them.
+ *
+ * A quote that names no bound constrains nothing, which is the honest reading
+ * of a missing field rather than a reason to invent one.
+ */
+export function amountWithinQuote(amount: number, quote: SwapQuote): { ok: true } | { ok: false; problem: string } {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, problem: 'That is not an amount.' };
+  }
+  const min = quote.minAmount;
+  const max = quote.maxAmount;
+  if (Number.isFinite(min ?? NaN) && amount < (min as number)) {
+    return { ok: false, problem: `That exchange will not take less than ${min}.` };
+  }
+  if (Number.isFinite(max ?? NaN) && amount > (max as number)) {
+    return { ok: false, problem: `That exchange will not take more than ${max}.` };
+  }
+  return { ok: true };
+}
+
+/**
  * Create an order, and refuse to return one that does not match the request.
  *
  * The verification is inside this function rather than beside it so that there
@@ -926,7 +962,19 @@ export async function createOrder(
   transport: SwapTransport,
   request: SwapRequest,
   quotedOut: number,
+  quote?: SwapQuote,
 ): Promise<OrderCheck> {
+  /* The bounds check lives here, next to the verification, for the same
+   * reason: a caller cannot forget what it has no way to skip. Passing the
+   * quote is optional only so that a caller with no quote in hand is not
+   * forced to invent one, and a missing quote constrains nothing. */
+  if (quote) {
+    const bounds = amountWithinQuote(request.amount, quote);
+    if (!bounds.ok) {
+      return { ok: false, problem: bounds.problem, detail: `amount ${request.amount} outside quoted range` };
+    }
+  }
+
   let json: unknown;
   try {
     json = await transport.send(CREATE[request.provider](request));

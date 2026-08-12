@@ -36,6 +36,7 @@ import {
   parseGodexCreate,
   parseGodexRate,
   parseGodexStatus,
+  amountWithinQuote,
   chainIsAmbiguous,
   confusableChains,
   parsePair,
@@ -383,9 +384,16 @@ describe('the provider adapters', () => {
     });
     expect(parseExolixStatus({ status: 'overdue' }).stage).toBe('expired');
     expect(parseGodexStatus({ status: 'refunded' }).stage).toBe('refunded');
-    // Anything unrecognized is a failure, not a silent "probably fine".
-    expect(parseExolixStatus({ status: 'something new' }).stage).toBe('failed');
-    expect(parseGodexStatus({}).stage).toBe('failed');
+    /* Anything unrecognized is reported as unrecognized. The rule this
+     * replaces mapped it to `failed`, guarding against a silent "probably
+     * fine", which was the right instinct and the wrong lever: the status
+     * screen turns `failed` into "the exchange reports this order failed,
+     * contact them", a sentence about somebody's live money that the
+     * exchange never said. `unknown` keeps the guard (nothing is lit, the
+     * journey still reads as in flight) and drops the false claim, carrying
+     * the exchange's own word through for a person to act on. */
+    expect(parseExolixStatus({ status: 'something new' }).stage).toBe('unknown');
+    expect(parseGodexStatus({}).stage).toBe('unknown');
     // And every stage has words for a screen.
     for (const stage of Object.keys(STAGE_LINES)) expect(STAGE_LINES[stage as never]).toBeTruthy();
   });
@@ -684,5 +692,74 @@ describe('the chain a shape cannot prove', () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+describe('being wrong about somebody else\'s money', () => {
+  /* The two ways this module could have reported a falsehood about a live
+   * order, both found by asking what happens at the edges rather than in the
+   * middle. */
+
+  it('never calls a live order failed because the vocabulary moved', () => {
+    /* The old fallback was `: 'failed'`, so any status word not in the list
+     * became FAILED, and the status screen tells a person their exchange
+     * reports the order failed and to go contact them. An exchange adding a
+     * state is normal; inventing bad news about somebody's money is not. */
+    for (const word of ['verifying', 'on_hold', 'hold', 'processing', 'kyc', 'review', 'new']) {
+      const exolix = parseExolixStatus({ status: word });
+      const godex = parseGodexStatus({ status: word });
+      expect(exolix.stage, `exolix ${word}`).toBe('unknown');
+      expect(godex.stage, `godex ${word}`).toBe('unknown');
+      /* And the exchange's own word survives, so a person can act on it. */
+      expect(exolix.raw).toBe(word);
+      expect(godex.raw).toBe(word);
+    }
+  });
+
+  it('still reports a real failure as a failure', () => {
+    for (const word of ['failed', 'error']) {
+      expect(parseExolixStatus({ status: word }).stage, word).toBe('failed');
+      expect(parseGodexStatus({ status: word }).stage, word).toBe('failed');
+    }
+    expect(parseExolixStatus({ status: 'refunded' }).stage).toBe('refunded');
+    expect(parseExolixStatus({ status: 'overdue' }).stage).toBe('expired');
+    expect(parseGodexStatus({ status: 'success' }).stage).toBe('done');
+  });
+
+  it('refuses an amount the exchange said it would not take', () => {
+    const quote = { provider: 'exolix' as const, ok: true as const, toAmount: 5, minAmount: 0.1, maxAmount: 10 };
+    expect(amountWithinQuote(0.5, quote).ok).toBe(true);
+    const low = amountWithinQuote(0.05, quote);
+    const high = amountWithinQuote(50, quote);
+    expect(low.ok).toBe(false);
+    expect(high.ok).toBe(false);
+    expect(low.ok === false && low.problem).toMatch(/less than 0\.1/);
+    expect(high.ok === false && high.problem).toMatch(/more than 10/);
+  });
+
+  it('treats a quote with no bounds as constraining nothing', () => {
+    const bare = { provider: 'godex' as const, ok: true as const, toAmount: 5 };
+    expect(amountWithinQuote(0.000001, bare).ok).toBe(true);
+    expect(amountWithinQuote(999999, bare).ok).toBe(true);
+    expect(amountWithinQuote(0, bare).ok).toBe(false);
+  });
+
+  it('will not create an order outside the quoted range, whatever the caller does', async () => {
+    /* The gate is inside createOrder, so there is no call site that can skip
+     * it by forgetting. A transport that would have answered is never asked. */
+    let asked = false;
+    const transport = { send: async () => { asked = true; return {}; } };
+    const pair = parsePair('xmr', 'btc') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const built = buildRequest({
+      provider: 'exolix',
+      pair: pair.pair,
+      amount: 0.001,
+      own: { receive: (a: string) => (a === 'BTC' ? 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu' : '4' + 'A'.repeat(94)) },
+    } as never) as Extract<ReturnType<typeof buildRequest>, { ok: true }>;
+    expect(built.ok).toBe(true);
+    const quote = { provider: 'exolix' as const, ok: true as const, toAmount: 1, minAmount: 1, maxAmount: 100 };
+    const result = await createOrder(transport, built.request, 1, quote);
+    expect(result.ok).toBe(false);
+    expect(asked, 'the exchange should never have been asked').toBe(false);
   });
 });
