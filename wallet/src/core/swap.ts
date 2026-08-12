@@ -363,6 +363,34 @@ export function addressHint(coin: SwapCoin): string {
   }
 }
 
+/**
+ * The chains this coin's address shape cannot be told apart from.
+ *
+ * An address check answers "is this the right shape", and for most coins that
+ * is nearly the same question as "is this the right chain": a Monero address
+ * is not a Bitcoin address is not a Tron address. The EVM chains break that.
+ * Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche and BNB Chain all
+ * take the identical twenty-byte 0x address, so a payout address that passes
+ * for Arbitrum passes for every one of them, and nothing this wallet or the
+ * exchange can compute will notice the difference.
+ *
+ * This returns the other chains a coin could be confused with, so the screen
+ * can say so in words. It is the honest substitute for a check that cannot
+ * exist: where the machine cannot tell, the person is told that it cannot.
+ */
+export function confusableChains(coin: SwapCoin): ChainId[] {
+  const others = new Set<ChainId>();
+  for (const other of SWAP_COINS) {
+    if (other.family === coin.family && other.chain !== coin.chain) others.add(other.chain);
+  }
+  return [...others];
+}
+
+/** True when the address shape alone cannot establish the chain. */
+export function chainIsAmbiguous(coin: SwapCoin): boolean {
+  return confusableChains(coin).length > 0;
+}
+
 /** The chain in a person's words, for the one place it has to be read. */
 export function chainName(chain: ChainId): string {
   switch (chain) {

@@ -36,6 +36,8 @@ import {
   parseGodexCreate,
   parseGodexRate,
   parseGodexStatus,
+  chainIsAmbiguous,
+  confusableChains,
   parsePair,
   providerChain,
   providerHandles,
@@ -631,6 +633,56 @@ describe('the coin catalog, and the chain tables that translate it', () => {
   it('has a readable hint for every coin it lists', () => {
     for (const coin of SWAP_COINS) {
       expect(addressHint(coin).length, coin.id).toBeGreaterThan(8);
+    }
+  });
+});
+
+describe('the chain a shape cannot prove', () => {
+  /* The check every other coin gets for free: the address shape and the chain
+   * are nearly the same question. On the EVM chains they are not, and these
+   * tests pin the one place the product tells the truth about it. */
+
+  it('knows the EVM chains are confusable with each other', () => {
+    const arb = swapCoin('usdc-arbitrum')!;
+    expect(chainIsAmbiguous(arb)).toBe(true);
+    const confusable = confusableChains(arb);
+    for (const chain of ['ethereum', 'base', 'polygon', 'avalanche', 'bsc', 'optimism']) {
+      expect(confusable, `${chain} shares the 0x shape`).toContain(chain);
+    }
+    expect(confusable, 'a coin is not confusable with itself').not.toContain('arbitrum');
+  });
+
+  it('knows the coins whose shape does settle the chain', () => {
+    /* Bitcoin, Monero, Tron, TON and Solana each have an address shape no
+     * other chain in this catalog accepts, so a shape check is a chain check
+     * and no warning is owed. */
+    for (const id of ['btc', 'xmr', 'usdt-tron', 'usdt-ton', 'sol', 'usdc-solana']) {
+      expect(chainIsAmbiguous(swapCoin(id)!), id).toBe(false);
+    }
+  });
+
+  it('never calls a coin ambiguous when the shape check would catch it', () => {
+    /* The invariant behind the warning: if two coins are confusable then the
+     * same address really does pass both their shape checks. A warning shown
+     * where the machine could have checked would train people to ignore it. */
+    const sample: Record<string, string> = {
+      evm: '0x' + 'a'.repeat(40),
+      btc: 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu',
+      xmr: '4' + 'A'.repeat(94),
+      sol: '1'.repeat(40),
+      tron: 'T' + '1'.repeat(33),
+      ton: 'EQ' + 'A'.repeat(46),
+    };
+    for (const coin of SWAP_COINS) {
+      for (const chain of confusableChains(coin)) {
+        const twin = SWAP_COINS.find((c) => c.chain === chain && c.family === coin.family)!;
+        const address = sample[coin.family]!;
+        expect(addressLooksRight(coin.family, address), coin.id).toBe(true);
+        expect(
+          addressLooksRight(twin.family, address),
+          `${coin.id} and ${twin.id} are called confusable but do not accept the same address`,
+        ).toBe(true);
+      }
     }
   });
 });

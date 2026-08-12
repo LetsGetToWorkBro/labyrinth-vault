@@ -63,7 +63,9 @@ import {
   PRIVACY_NOTE,
   PROVIDERS,
   SWAP_COINS,
+  chainIsAmbiguous,
   chainName,
+  confusableChains,
   addressHint,
   buildRequest,
   createOrder,
@@ -674,6 +676,21 @@ function PayoutBlock({
         it and neither device can tell you it is right. Read it twice against
         wherever you copied it from.
       </Notice>
+      {chainIsAmbiguous(to) ? (
+        <>
+          <Gap size={space.snug} />
+          {/* The shape check passes on every chain that shares this address
+            * format, so it proves nothing about which one. Saying which chain
+            * is being paid, and naming the ones it cannot be told apart from,
+            * is the only warning available before the money moves. */}
+          <Notice title={`THIS PAYS OUT ON ${chainName(to.chain).toUpperCase()}`} tone="warn">
+            The same address is valid on {confusableChains(to).map(chainName).join(', ')} as
+            well, so checking its shape cannot tell those apart. Make sure the
+            wallet or exchange you are paying accepts {to.ticker.toUpperCase()} on{' '}
+            {chainName(to.chain)}.
+          </Notice>
+        </>
+      ) : null}
       <Gap size={space.snug} />
       <TextInput
         value={typed}
