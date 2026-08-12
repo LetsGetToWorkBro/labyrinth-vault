@@ -28,7 +28,7 @@ import Foundation
 /// screens; this enum is what the transition rules are written in terms of.
 /// Every `Route` case has exactly one kind, and `Vault.go` maps before asking.
 public enum RouteKind: String, CaseIterable, Sendable {
-    case launch, setup, home, airgap, export, scanner, acquiring, received
+    case launch, setup, unlock, home, airgap, export, scanner, acquiring, received
     case review, destination, approve, signed, signedQR, refused
     case keyImages
     case settings, bitcoin, monero, recovery
@@ -89,6 +89,16 @@ public enum Flow {
         case .launch:
             // Nothing returns to the launch gate; relaunching is the OS's job.
             return false
+        case .unlock:
+            /* Only the launch gate walks in: unlock is what a passing boot
+             * lands on when a sealed vault already exists. The *other* arrival
+             * — the forced lock when the app leaves the foreground — does not
+             * come through this table at all: `Vault.sleep()` sets the route
+             * directly, because a security preemption that a transition table
+             * could veto would mean some screen where backgrounding leaves
+             * keys warm. Locking must win from everywhere, including the
+             * states this table is strict about. */
+            return from == .launch
         default:
             return true
         }

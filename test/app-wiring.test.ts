@@ -373,7 +373,7 @@ describe('the Swift a compiler can actually check', () => {
      * inside Vault.swift next to `import SwiftUI` until they were pulled out
      * — which is why a non-exhaustive switch in `Refusal.detail`, missing five
      * of its nine cases, survived in this repository unnoticed. */
-    const appleOnly = /^import (SwiftUI|Combine|JavaScriptCore|CryptoKit|CoreImage|UIKit)\b/m;
+    const appleOnly = /^import (SwiftUI|Combine|JavaScriptCore|CryptoKit|CoreImage|UIKit|Security)\b/m;
     for (const relative of listed) {
       const text = readFileSync(`ios/LabyrinthVault/${relative}`, 'utf8');
       const found = appleOnly.exec(text)?.[1];

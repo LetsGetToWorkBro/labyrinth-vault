@@ -78,6 +78,8 @@ struct SettingsView: View {
 struct RecoveryView: View {
     @EnvironmentObject private var vault: Vault
     @State private var revealed = false
+    /// Armed by the first tap on ERASE; the second tap is the one that acts.
+    @State private var eraseArmed = false
 
     var body: some View {
         Screen {
@@ -86,19 +88,35 @@ struct RecoveryView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Eyebrow("RECOVERY").padding(.top, 16)
-                        Statement("TWELVE WORDS", "ON PAPER", size: 34).padding(.top, 12)
-                        Text("This is the only backup that exists. Write it by hand. Do not " +
-                             "photograph it. The camera roll is on a phone that has a network.")
+                        Statement("TWO PHRASES", "ON PAPER", size: 34).padding(.top, 12)
+                        Text("The Bitcoin words and the Monero seed. They are the only backup " +
+                             "that exists. Write them by hand. Do not photograph them. The " +
+                             "camera roll is on a phone that has a network.")
                             .font(Type.body())
                             .lineSpacing(5)
                             .foregroundStyle(Ink.paperDim)
                             .padding(.top, 14)
                             .padding(.bottom, 22)
 
+                        if let problem {
+                            Text(problem)
+                                .font(Type.body(13))
+                                .lineSpacing(4)
+                                .foregroundStyle(Ink.refused)
+                                .padding(.bottom, 18)
+                        }
+
                         // Concealed until held; concealed again on release.
-                        seedGrid
-                            .blur(radius: revealed ? 0 : 7)
-                            .opacity(revealed ? 1 : 0.5)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Eyebrow("BITCOIN · BIP39", color: Ink.paperFaint).padding(.bottom, 8)
+                            grid(bitcoinWords)
+                            Eyebrow("MONERO · SEED WORDS", color: Ink.paperFaint)
+                                .padding(.top, 18)
+                                .padding(.bottom, 8)
+                            grid(moneroWords)
+                        }
+                        .blur(radius: revealed ? 0 : 7)
+                        .opacity(revealed ? 1 : 0.5)
 
                         HStack {
                             Text("HOLD TO REVEAL")
@@ -125,19 +143,30 @@ struct RecoveryView: View {
                         )
 
                         Eyebrow("AT REST", color: Ink.paperDim).padding(.top, 22).padding(.bottom, 8)
-                        FieldRow(label: "ENCRYPTION", value: "ACTIVE", tone: .verified)
-                        FieldRow(label: "PASSPHRASE", value: "CONFIGURED")
-                        FieldRow(label: "SECURE HARDWARE", value: "BOUND TO THIS DEVICE")
+                        FieldRow(label: "ENCRYPTION", value: "ARGON2ID + XCHACHA20", tone: .verified)
+                        FieldRow(label: "PASSPHRASE", value: "REQUIRED TO OPEN")
+                        FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                         FieldRow(label: "EXPORTABLE", value: "NO")
 
-                        VStack(spacing: 10) {
-                            Lever(title: "CHANGE PASSPHRASE", style: .quiet) {}
-                            Lever(title: "ERASE VAULT", hint: "IRREVERSIBLE", style: .quiet) {}
+                        /* Two taps, and the first one says so. A single tap on
+                         * an irreversible action is an accident waiting for a
+                         * pocket; a system alert would be another product's
+                         * voice in this one's most serious moment. */
+                        Lever(title: eraseArmed ? "TAP AGAIN TO ERASE EVERYTHING" : "ERASE VAULT",
+                              hint: "IRREVERSIBLE",
+                              style: .quiet) {
+                            if eraseArmed {
+                                vault.eraseVault()
+                            } else {
+                                Haptic.refuse()
+                                withAnimation(.easeOut(duration: 0.25)) { eraseArmed = true }
+                            }
                         }
                         .padding(.top, 24)
 
-                        Text("Erasing destroys the key material in secure hardware. Without the " +
-                             "twelve words there is no way back, and no service to ask.")
+                        Text("Erasing removes the sealed keys from this device's keychain. " +
+                             "Without the phrases above there is no way back, and no service " +
+                             "to ask.")
                             .font(Type.body(13))
                             .lineSpacing(4)
                             .foregroundStyle(Ink.paperDim)
@@ -150,16 +179,35 @@ struct RecoveryView: View {
                     .padding(.bottom, 12)
             }
         }
+        .onAppear { load() }
+        .onDisappear {
+            /* Held in @State for as long as the screen is up and no longer.
+             * A String cannot be wiped, but it can stop being referenced. */
+            bitcoinWords = []
+            moneroWords = []
+        }
     }
 
     /// The words, fetched only when this screen asks for them.
     ///
     /// `revealBackup` is the one call that turns a secret into text, and it is
-    /// named that way on both sides of the bridge. Held in @State for as long
-    /// as the screen is up and no longer.
-    @State private var words: [String] = []
+    /// named that way on both sides of the bridge. It answers only while the
+    /// vault is unlocked, which the route to this screen already guarantees.
+    @State private var bitcoinWords: [String] = []
+    @State private var moneroWords: [String] = []
+    @State private var problem: String?
 
-    private var seedGrid: some View {
+    private func load() {
+        do {
+            let backup = try vault.revealBackup()
+            bitcoinWords = backup.bitcoin
+            moneroWords = backup.monero
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    private func grid(_ words: [String]) -> some View {
         let columns = [GridItem(.flexible(), spacing: 1), GridItem(.flexible(), spacing: 1)]
         return LazyVGrid(columns: columns, spacing: 1) {
             ForEach(words.indices, id: \.self) { i in

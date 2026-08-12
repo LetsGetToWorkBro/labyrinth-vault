@@ -90,6 +90,20 @@ final class FlowContractTests: XCTestCase {
         XCTAssertFalse(Flow.allowed(from: .keyImages, to: .signed))
     }
 
+    func testUnlockIsEnteredOnlyFromTheLaunchGate() {
+        /* The other way in — the forced lock on backgrounding — bypasses the
+         * table by design (see Flow.swift): a security preemption a table
+         * could veto would be a screen where backgrounding leaves keys warm.
+         * What the table holds is that no screen *navigates* to unlock: it is
+         * an outcome of booting or of locking, never a destination. */
+        for from in RouteKind.allCases where Flow.allowed(from: from, to: .unlock) {
+            XCTAssertEqual(from, .launch, "unlock reachable by navigation from \(from)")
+        }
+        XCTAssertTrue(Flow.allowed(from: .unlock, to: .home), "a successful unlock must open the vault")
+        XCTAssertFalse(Flow.allowed(from: .unlock, to: .approve))
+        XCTAssertFalse(Flow.allowed(from: .unlock, to: .signed))
+    }
+
     func testNothingReturnsToLaunch() {
         for from in RouteKind.allCases {
             XCTAssertFalse(Flow.allowed(from: from, to: .launch), "\(from) can reach the launch gate")
