@@ -297,6 +297,22 @@ Next, in order:
    along with the reason none of it ships until it can be tested against a real
    Monero wallet rather than against itself.
 
+## Marketing site
+
+The cinematic product site lives in [`site/`](site). It is a standalone Vite +
+React application with a scroll-controlled product film, dedicated mobile
+media, and the complete Labyrinth Wallet/Vault security story.
+
+```sh
+cd site
+npm install
+npm run dev
+```
+
+The site is [labyrinthwallet.com](https://labyrinthwallet.com), served by Cloudflare
+Pages from `site/` on `main`. [site/README.md](site/README.md) has the build
+settings, and the one that catches people is the root directory.
+
 ## Shipping
 
 [docs/shipping.md](docs/shipping.md) is the TestFlight runbook: what is done,

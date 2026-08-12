@@ -120,6 +120,9 @@ export interface SwapJourney {
   inFlight: boolean;
   /** Set when the road ended somewhere other than done. */
   ended: Extract<SwapStage, 'refunded' | 'expired' | 'failed'> | null;
+  /** Set when the provider used a status word this build does not know. The
+   *  journey is blank rather than guessed, and the screen says why. */
+  unrecognized?: boolean;
 }
 
 /**
@@ -131,6 +134,19 @@ export interface SwapJourney {
  * product's most trusted visual language.
  */
 export function journeyOf(stage: SwapStage): SwapJourney {
+  /* A word this build does not know is not a position on the road and not an
+   * ending. Nothing is lit, nothing is claimed, and the screen shows the
+   * exchange's own word instead of a stage this code invented for it. */
+  if (stage === 'unknown') {
+    return {
+      steps: JOURNEY_STAGES.map((step) => ({ stage: step, label: STAGE_LINES[step], state: 'ahead' })),
+      reached: 0,
+      inFlight: true,
+      ended: null,
+      unrecognized: true,
+    };
+  }
+
   const ended = stage === 'refunded' || stage === 'expired' || stage === 'failed' ? stage : null;
 
   if (ended) {

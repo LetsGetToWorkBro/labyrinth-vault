@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07090b" />
+    <meta name="description" content="Your old phone can become an air-gapped signing device for Bitcoin and Monero." />
+    <meta property="og:title" content="LABYRINTH" />
+    <meta property="og:description" content="Your old phone can become an air-gapped signing device for Bitcoin and Monero." />
+    <meta property="og:type" content="website" />
+    <!-- Absolute, because social scrapers will not resolve a relative one.
+         Set VITE_SITE_ORIGIN at build time for whatever host this lands on. -->
+    <meta property="og:image" content="%VITE_SITE_ORIGIN%/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- Was a 2048x2048, 4 MB PNG, fetched by every browser to draw a 32px
+         square. These are the sizes actually asked for. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>LABYRINTH: keep the keys offline</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

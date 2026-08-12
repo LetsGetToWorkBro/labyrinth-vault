@@ -28,7 +28,9 @@ import {
   buildRequest,
   createOrder,
   exolixCreate,
+  exolixRate,
   godexCreate,
+  godexRate,
   parseAmount,
   parseExolixCreate,
   parseExolixRate,
@@ -36,6 +38,10 @@ import {
   parseGodexCreate,
   parseGodexRate,
   parseGodexStatus,
+  amountWithinQuote,
+  chainCanBeProven,
+  chainIsAmbiguous,
+  confusableChains,
   parsePair,
   providerChain,
   providerHandles,
@@ -86,6 +92,12 @@ function orderFor(request: SwapRequest, overrides: Partial<SwapOrder> = {}): Swa
     depositAmount: request.amount,
     toAmount: 7.5,
     payoutAddress: request.payoutAddress,
+    /* Unechoed by default, which is what a provider that says nothing about
+     * the network looks like. Tests that care set them explicitly. */
+    fromCoin: null,
+    fromNetwork: null,
+    toCoin: null,
+    toNetwork: null,
     ...overrides,
   };
 }
@@ -381,9 +393,16 @@ describe('the provider adapters', () => {
     });
     expect(parseExolixStatus({ status: 'overdue' }).stage).toBe('expired');
     expect(parseGodexStatus({ status: 'refunded' }).stage).toBe('refunded');
-    // Anything unrecognized is a failure, not a silent "probably fine".
-    expect(parseExolixStatus({ status: 'something new' }).stage).toBe('failed');
-    expect(parseGodexStatus({}).stage).toBe('failed');
+    /* Anything unrecognized is reported as unrecognized. The rule this
+     * replaces mapped it to `failed`, guarding against a silent "probably
+     * fine", which was the right instinct and the wrong lever: the status
+     * screen turns `failed` into "the exchange reports this order failed,
+     * contact them", a sentence about somebody's live money that the
+     * exchange never said. `unknown` keeps the guard (nothing is lit, the
+     * journey still reads as in flight) and drops the false claim, carrying
+     * the exchange's own word through for a person to act on. */
+    expect(parseExolixStatus({ status: 'something new' }).stage).toBe('unknown');
+    expect(parseGodexStatus({}).stage).toBe('unknown');
     // And every stage has words for a screen.
     for (const stage of Object.keys(STAGE_LINES)) expect(STAGE_LINES[stage as never]).toBeTruthy();
   });
@@ -532,19 +551,23 @@ describe('the coin catalog, and the chain tables that translate it', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('covers the five assets that carry the volume, and nothing invented', () => {
+  it('covers the assets that carry the volume, and nothing invented', () => {
     const tickers = new Set(SWAP_COINS.map((c) => c.ticker));
-    expect([...tickers].sort()).toEqual(['btc', 'eth', 'usdc', 'usdt', 'xmr']);
+    expect([...tickers].sort()).toEqual(['btc', 'eth', 'sol', 'usdc', 'usdt', 'xmr']);
   });
 
-  it('holds only native Bitcoin and native Monero', () => {
-    /* Both exchanges list wrapped BTC and wrapped XMR under the native
-     * ticker. They are somebody else's IOU, and a person choosing "Monero"
-     * must not be able to land on a Solana token by that name. */
-    const btc = SWAP_COINS.filter((c) => c.ticker === 'btc');
-    const xmr = SWAP_COINS.filter((c) => c.ticker === 'xmr');
-    expect(btc.map((c) => c.chain)).toEqual(['bitcoin']);
-    expect(xmr.map((c) => c.chain)).toEqual(['monero']);
+  it('holds each native coin only on its own chain', () => {
+    /* The exchanges list wrapped BTC, wrapped XMR and wrapped SOL under the
+     * native ticker: Exolix alone offers SOL on Ethereum, BNB Chain and HECO,
+     * and its own data marks the Ethereum one as native, which it is not.
+     * They are somebody else's IOU, and a person choosing "Monero" must not
+     * be able to land on a Solana token wearing that name. This is why the
+     * catalog is written by hand rather than mirrored from a provider. */
+    const chainsFor = (ticker: string) =>
+      SWAP_COINS.filter((c) => c.ticker === ticker).map((c) => c.chain);
+    expect(chainsFor('btc')).toEqual(['bitcoin']);
+    expect(chainsFor('xmr')).toEqual(['monero']);
+    expect(chainsFor('sol')).toEqual(['solana']);
   });
 
   it('is the only thing the wallet itself holds', () => {
@@ -628,5 +651,526 @@ describe('the coin catalog, and the chain tables that translate it', () => {
     for (const coin of SWAP_COINS) {
       expect(addressHint(coin).length, coin.id).toBeGreaterThan(8);
     }
+  });
+});
+
+describe('the chain a shape cannot prove', () => {
+  /* The check every other coin gets for free: the address shape and the chain
+   * are nearly the same question. On the EVM chains they are not, and these
+   * tests pin the one place the product tells the truth about it. */
+
+  it('knows the EVM chains are confusable with each other', () => {
+    const arb = swapCoin('usdc-arbitrum')!;
+    expect(chainIsAmbiguous(arb)).toBe(true);
+    const confusable = confusableChains(arb);
+    for (const chain of ['ethereum', 'base', 'polygon', 'avalanche', 'bsc', 'optimism']) {
+      expect(confusable, `${chain} shares the 0x shape`).toContain(chain);
+    }
+    expect(confusable, 'a coin is not confusable with itself').not.toContain('arbitrum');
+  });
+
+  it('knows the coins whose shape does settle the chain', () => {
+    /* Bitcoin, Monero, Tron, TON and Solana each have an address shape no
+     * other chain in this catalog accepts, so a shape check is a chain check
+     * and no warning is owed. */
+    for (const id of ['btc', 'xmr', 'usdt-tron', 'usdt-ton', 'sol', 'usdc-solana']) {
+      expect(chainIsAmbiguous(swapCoin(id)!), id).toBe(false);
+    }
+  });
+
+  it('never calls a coin ambiguous when the shape check would catch it', () => {
+    /* The invariant behind the warning: if two coins are confusable then the
+     * same address really does pass both their shape checks. A warning shown
+     * where the machine could have checked would train people to ignore it. */
+    const sample: Record<string, string> = {
+      evm: '0x' + 'a'.repeat(40),
+      btc: 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu',
+      xmr: '4' + 'A'.repeat(94),
+      sol: '1'.repeat(40),
+      tron: 'T' + '1'.repeat(33),
+      ton: 'EQ' + 'A'.repeat(46),
+    };
+    for (const coin of SWAP_COINS) {
+      for (const chain of confusableChains(coin)) {
+        const twin = SWAP_COINS.find((c) => c.chain === chain && c.family === coin.family)!;
+        const address = sample[coin.family]!;
+        expect(addressLooksRight(coin.family, address), coin.id).toBe(true);
+        expect(
+          addressLooksRight(twin.family, address),
+          `${coin.id} and ${twin.id} are called confusable but do not accept the same address`,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+describe('being wrong about somebody else\'s money', () => {
+  /* The two ways this module could have reported a falsehood about a live
+   * order, both found by asking what happens at the edges rather than in the
+   * middle. */
+
+  it('never calls a live order failed because the vocabulary moved', () => {
+    /* The old fallback was `: 'failed'`, so any status word not in the list
+     * became FAILED, and the status screen tells a person their exchange
+     * reports the order failed and to go contact them. An exchange adding a
+     * state is normal; inventing bad news about somebody's money is not. */
+    for (const word of ['verifying', 'on_hold', 'hold', 'processing', 'kyc', 'review', 'new']) {
+      const exolix = parseExolixStatus({ status: word });
+      const godex = parseGodexStatus({ status: word });
+      expect(exolix.stage, `exolix ${word}`).toBe('unknown');
+      expect(godex.stage, `godex ${word}`).toBe('unknown');
+      /* And the exchange's own word survives, so a person can act on it. */
+      expect(exolix.raw).toBe(word);
+      expect(godex.raw).toBe(word);
+    }
+  });
+
+  it('still reports a real failure as a failure', () => {
+    for (const word of ['failed', 'error']) {
+      expect(parseExolixStatus({ status: word }).stage, word).toBe('failed');
+      expect(parseGodexStatus({ status: word }).stage, word).toBe('failed');
+    }
+    expect(parseExolixStatus({ status: 'refunded' }).stage).toBe('refunded');
+    expect(parseExolixStatus({ status: 'overdue' }).stage).toBe('expired');
+    expect(parseGodexStatus({ status: 'success' }).stage).toBe('done');
+  });
+
+  it('refuses an amount the exchange said it would not take', () => {
+    const quote = { provider: 'exolix' as const, ok: true as const, toAmount: 5, minAmount: 0.1, maxAmount: 10 };
+    expect(amountWithinQuote(0.5, quote).ok).toBe(true);
+    const low = amountWithinQuote(0.05, quote);
+    const high = amountWithinQuote(50, quote);
+    expect(low.ok).toBe(false);
+    expect(high.ok).toBe(false);
+    expect(low.ok === false && low.problem).toMatch(/less than 0\.1/);
+    expect(high.ok === false && high.problem).toMatch(/more than 10/);
+  });
+
+  it('treats a quote with no bounds as constraining nothing', () => {
+    const bare = { provider: 'godex' as const, ok: true as const, toAmount: 5 };
+    expect(amountWithinQuote(0.000001, bare).ok).toBe(true);
+    expect(amountWithinQuote(999999, bare).ok).toBe(true);
+    expect(amountWithinQuote(0, bare).ok).toBe(false);
+  });
+
+  it('will not create an order outside the quoted range, whatever the caller does', async () => {
+    /* The gate is inside createOrder, so there is no call site that can skip
+     * it by forgetting. A transport that would have answered is never asked. */
+    let asked = false;
+    const transport = { send: async () => { asked = true; return {}; } };
+    const pair = parsePair('xmr', 'btc') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const built = buildRequest({
+      provider: 'exolix',
+      pair: pair.pair,
+      amount: 0.001,
+      own: { receive: (a: string) => (a === 'BTC' ? 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu' : '4' + 'A'.repeat(94)) },
+    } as never) as Extract<ReturnType<typeof buildRequest>, { ok: true }>;
+    expect(built.ok).toBe(true);
+    const quote = { provider: 'exolix' as const, ok: true as const, toAmount: 1, minAmount: 1, maxAmount: 100 };
+    const result = await createOrder(transport, built.request, 1, quote);
+    expect(result.ok).toBe(false);
+    expect(asked, 'the exchange should never have been asked').toBe(false);
+  });
+});
+
+describe('the exchange naming the network back', () => {
+  /* The only check that can catch a wrong chain. Every EVM chain takes the
+   * same 0x address, so no address proves its network; the exchange saying
+   * which network it built the order on is the sole evidence there is.
+   *
+   * The response below is Exolix's own documented example, field for field,
+   * so the parser is held against the shape the API really returns rather
+   * than against a shape convenient to the parser. */
+  const DOC_RESPONSE = {
+    id: 'dsd8f65609bb20',
+    amount: 0.5,
+    amountTo: 505.631486,
+    coinFrom: {
+      coinCode: 'ETH',
+      coinName: 'Ethereum',
+      network: 'ETH',
+      networkName: 'Ethereum (ERC20)',
+      networkShortName: 'ERC20',
+      memoName: null,
+      contract: '0x0000000000000000000000000000000000000000',
+    },
+    coinTo: {
+      coinCode: 'USDT',
+      coinName: 'TetherUS',
+      network: 'ETH',
+      networkName: 'Ethereum (ERC20)',
+      networkShortName: 'ERC20',
+      memoName: null,
+      contract: '0x0000000000000000000000000000000000000000',
+    },
+    comment: null,
+    createdAt: '2022-06-02T12:45:37.623Z',
+    depositAddress: '0xDb3B8a6dd4ddfDCA3330eaebc1a20aF26fDbbCfa',
+    depositExtraId: null,
+    withdrawalAddress: '0x0E29D1E501q90649Adss982E90dd455006e4522FC',
+    withdrawalExtraId: '',
+    refundAddress: '0x0070BeBe9E30429437bD9c84C731031c27Fc7955',
+    refundExtraId: '',
+    hashIn: { hash: null, link: null },
+    hashOut: { hash: null, link: null },
+    rate: 1011.262972,
+    rateType: 'float',
+    status: 'wait',
+  };
+
+  it('reads the documented response, network and all', () => {
+    const order = parseExolixCreate(DOC_RESPONSE)!;
+    expect(order).not.toBeNull();
+    expect(order.id).toBe('dsd8f65609bb20');
+    expect(order.depositAddress).toBe('0xDb3B8a6dd4ddfDCA3330eaebc1a20aF26fDbbCfa');
+    expect(order.depositAmount).toBe(0.5);
+    expect(order.toAmount).toBe(505.631486);
+    expect(order.fromCoin).toBe('ETH');
+    expect(order.fromNetwork).toBe('ETH');
+    expect(order.toCoin).toBe('USDT');
+    expect(order.toNetwork).toBe('ETH');
+    /* An absent extra id is null, not the string "null". */
+    expect(order.depositExtra).toBeNull();
+  });
+
+  it('refuses an order the exchange built on a different chain', () => {
+    /* The failure this exists for: ask for USDT on Arbitrum, receive an
+     * order for USDT on Ethereum. Both deposit addresses are valid 0x
+     * strings, both pass every shape check, and only this comparison can
+     * tell them apart. */
+    const pair = parsePair('xmr', 'usdt-arbitrum') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const built = buildRequest({
+      provider: 'exolix',
+      pair: pair.pair,
+      amount: 1,
+      own,
+      typedPayout: '0x' + 'a'.repeat(40),
+    }) as Extract<ReturnType<typeof buildRequest>, { ok: true }>;
+    expect(built.ok).toBe(true);
+
+    const right = orderFor(built.request, {
+      fromCoin: 'XMR', fromNetwork: 'XMR', toCoin: 'USDT', toNetwork: 'ARBITRUM',
+      depositAddress: '4' + 'A'.repeat(94),
+    });
+    expect(verifyOrder(built.request, right, 7.5).ok).toBe(true);
+
+    const wrongChain = orderFor(built.request, {
+      fromCoin: 'XMR', fromNetwork: 'XMR', toCoin: 'USDT', toNetwork: 'ETH',
+      depositAddress: '4' + 'A'.repeat(94),
+    });
+    const check = verifyOrder(built.request, wrongChain, 7.5);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/different network coming back/i);
+    expect(check.ok === false && check.detail).toMatch(/ARBITRUM.*ETH/);
+  });
+
+  it('refuses an order the exchange built for a different coin', () => {
+    const request = btcToXmr();
+    const swapped = orderFor(request, { toCoin: 'LTC', toNetwork: 'XMR', fromCoin: 'BTC', fromNetwork: 'BTC' });
+    const check = verifyOrder(request, swapped, 7.5);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/different coin coming back/i);
+  });
+
+  it('treats an unechoed network as unchecked, not as agreement', () => {
+    /* Godex publishes no public schema, so its orders carry nulls. A null
+     * must not read as a match: it means nobody checked, and the pair is
+     * accepted on the strength of the other checks alone. */
+    const request = btcToXmr();
+    const silent = orderFor(request);
+    expect(silent.fromNetwork).toBeNull();
+    expect(verifyOrder(request, silent, 7.5).ok).toBe(true);
+  });
+
+  it('maps every status Exolix documents', () => {
+    /* The documented set, verbatim. `confirmed` and `refund` were both
+     * missing before these docs arrived, and both would have been reported
+     * as a failure by the old fallback. */
+    const documented: Record<string, string> = {
+      wait: 'waiting',
+      confirmation: 'confirming',
+      confirmed: 'confirming',
+      exchanging: 'exchanging',
+      sending: 'sending',
+      success: 'done',
+      overdue: 'expired',
+      refund: 'refunded',
+      refunded: 'refunded',
+    };
+    for (const [word, stage] of Object.entries(documented)) {
+      expect(parseExolixStatus({ status: word }).stage, word).toBe(stage);
+      /* And none of the documented words is ever 'unknown', which is the
+       * bucket reserved for vocabulary this build has genuinely not seen. */
+      expect(parseExolixStatus({ status: word }).stage, word).not.toBe('unknown');
+    }
+  });
+});
+
+describe('the floor on the other side of the trade', () => {
+  /* Exolix's rate reply documents two minimums, not one. `minAmount` is what
+   * must be sent; `withdrawMin` is what must arrive. Reading only the first
+   * lets through a trade the exchange cannot pay out, and it fails after the
+   * deposit has landed, which is the expensive moment to find out. */
+
+  it('reads both floors out of the documented rate reply', () => {
+    /* Exolix's own example response, verbatim. */
+    const quote = parseExolixRate({
+      toAmount: 502.352518,
+      rate: 1004.705036,
+      message: null,
+      minAmount: 0.3717403,
+      withdrawMin: 3.24760808882742,
+      maxAmount: 31811.44515,
+    });
+    expect(quote.ok).toBe(true);
+    expect(quote.toAmount).toBe(502.352518);
+    expect(quote.minAmount).toBe(0.3717403);
+    expect(quote.maxAmount).toBe(31811.44515);
+    expect(quote.withdrawMin).toBe(3.24760808882742);
+  });
+
+  it('refuses a trade that pays out less than the exchange can send', () => {
+    /* Above the send floor and below the payout floor: the case only the
+     * second check catches. */
+    const quote = {
+      provider: 'exolix' as const,
+      ok: true as const,
+      toAmount: 2,
+      minAmount: 0.1,
+      maxAmount: 100,
+      withdrawMin: 3.2,
+    };
+    const check = amountWithinQuote(1, quote);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/pays out less than the exchange can send/i);
+  });
+
+  it('accepts once enough is arriving', () => {
+    const quote = {
+      provider: 'exolix' as const,
+      ok: true as const,
+      toAmount: 500,
+      minAmount: 0.1,
+      maxAmount: 100,
+      withdrawMin: 3.2,
+    };
+    expect(amountWithinQuote(1, quote).ok).toBe(true);
+  });
+
+  it('lets a provider that names no payout floor constrain nothing', () => {
+    const quote = { provider: 'godex' as const, ok: true as const, toAmount: 0.0001, minAmount: 0.1 };
+    expect(amountWithinQuote(1, quote).ok).toBe(true);
+  });
+});
+
+describe('what Godex names back, and what it does not', () => {
+  /* Godex's documented create reply, field for field from the reference.
+   * It echoes the coins and says nothing about the networks: the request
+   * accepts coin_from_network and coin_to_network, the response returns
+   * neither. That asymmetry is the whole point of these tests. */
+  const DOC_RESPONSE = {
+    status: 'wait',
+    coin_from: 'LTC',
+    coin_to: 'ETH',
+    deposit_amount: 1,
+    withdrawal: '0x5aadfa328D778383d1134F7530f9feaC676',
+    withdrawal_extra_id: 'qbGDbH9gwrAkJTM6gxsfQpWYMfe8',
+    return: 'LsZK2wfxvXrfsfB6L39qmCcV5DK29ismmAwN41',
+    return_extra_id: 'qbGDbH9gwrAkfJTM6gxsfQpWYMfe8zRu',
+    withdrawal_amount: 0.25281436,
+    deposit: 'LsZK2wfxvXrdffsfB6L39qmCcV5DK29ismmAwN41',
+    deposit_extra_id: null,
+    rate: 0.26011493,
+    fee: 0.00730057,
+    transaction_id: '5bb4d99cd44a5',
+    float: true,
+  };
+
+  it('reads the documented reply', () => {
+    const order = parseGodexCreate(DOC_RESPONSE)!;
+    expect(order).not.toBeNull();
+    expect(order.id).toBe('5bb4d99cd44a5');
+    expect(order.depositAddress).toBe('LsZK2wfxvXrdffsfB6L39qmCcV5DK29ismmAwN41');
+    expect(order.payoutAddress).toBe('0x5aadfa328D778383d1134F7530f9feaC676');
+    expect(order.depositAmount).toBe(1);
+    expect(order.toAmount).toBe(0.25281436);
+    expect(order.depositExtra).toBeNull();
+  });
+
+  it('carries the coins it was told, and no network at all', () => {
+    const order = parseGodexCreate(DOC_RESPONSE)!;
+    expect(order.fromCoin).toBe('LTC');
+    expect(order.toCoin).toBe('ETH');
+    /* Null because the API does not say, not because the parser skipped it.
+     * verifyOrder reads null as unchecked, so a Godex order is never treated
+     * as having proven a chain it never mentioned. */
+    expect(order.fromNetwork).toBeNull();
+    expect(order.toNetwork).toBeNull();
+  });
+
+  it('catches a Godex order built for the wrong coin', () => {
+    const request = btcToXmr();
+    const wrong = orderFor(request, { fromCoin: 'BTC', toCoin: 'LTC' });
+    const check = verifyOrder(request, wrong, 7.5);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/different coin coming back/i);
+  });
+
+  it('maps every status Godex documents', () => {
+    const documented: Record<string, string> = {
+      wait: 'waiting',
+      confirmation: 'confirming',
+      exchanging: 'exchanging',
+      sending: 'sending',
+      sending_confirmation: 'sending',
+      success: 'done',
+      overdue: 'expired',
+      error: 'failed',
+      refunded: 'refunded',
+    };
+    for (const [word, stage] of Object.entries(documented)) {
+      expect(parseGodexStatus({ status: word }).stage, word).toBe(stage);
+      expect(parseGodexStatus({ status: word }).stage, word).not.toBe('unknown');
+    }
+  });
+});
+
+describe('which provider can prove a chain', () => {
+  it('says Exolix can, because it names the network back', () => {
+    expect(chainCanBeProven('exolix', swapCoin('usdc-arbitrum')!)).toBe(true);
+    expect(chainCanBeProven('exolix', swapCoin('btc')!)).toBe(true);
+  });
+
+  it('says Godex cannot, for a coin that rides more than one chain', () => {
+    expect(chainCanBeProven('godex', swapCoin('usdc-arbitrum')!)).toBe(false);
+    expect(chainCanBeProven('godex', swapCoin('usdt-eth')!)).toBe(false);
+    expect(chainCanBeProven('godex', swapCoin('eth-base')!)).toBe(false);
+  });
+
+  it('says Godex can, where the coin itself settles the chain', () => {
+    /* One chain in the catalog means echoing the coin names the network by
+     * elimination, so the missing network field costs nothing here. */
+    for (const id of ['btc', 'xmr', 'sol', 'usdt-tron', 'usdt-ton']) {
+      expect(chainCanBeProven('godex', swapCoin(id)!), id).toBe(true);
+    }
+  });
+});
+
+/**
+ * The things only a live endpoint could tell us.
+ *
+ * Every other test in this file runs against a fixture somebody wrote, which
+ * means it can only confirm what was already believed. These four came from
+ * querying Exolix and Godex for a real BTC to XMR rate and reading what came
+ * back, and each one was wrong in the code before that call was made. The
+ * response bodies below are the real ones, trimmed.
+ */
+describe('anchored to what the exchanges actually answered', () => {
+  /* Exolix, GET /api/v2/rate?coinFrom=BTC&networkFrom=BTC&coinTo=XMR
+     &networkTo=XMR&amount=0.1&rateType=float */
+  const EXOLIX_LIVE = {
+    fromAmount: 0.1,
+    toAmount: 16.57563972,
+    rate: 165.75639473,
+    message: null,
+    minAmount: 0.0007681,
+    withdrawMin: 0.0007088,
+    maxAmount: 10,
+    priceImpact: '0',
+  };
+
+  /* Godex, POST /api/v1/info with float: true. Numbers arrive as strings. */
+  const GODEX_LIVE = {
+    min_amount: '0.003',
+    max_amount: '190',
+    amount: '16.36855067',
+    fee: '0',
+    rate: '163.743821885609848',
+    float: true,
+    withdrawal_fee: '0.00583151',
+    rate_uuid: '37d778fd-6edd-45c6-8430-886828570d05',
+    rate_expired_at: '1786508416898',
+  };
+
+  it('reads every field Exolix really sends, under the names it really uses', () => {
+    const quote = parseExolixRate(EXOLIX_LIVE);
+    expect(quote.ok).toBe(true);
+    expect(quote.toAmount).toBe(16.57563972);
+    expect(quote.minAmount).toBe(0.0007681);
+    expect(quote.maxAmount).toBe(10);
+    /* The payout floor, which is the one that is easy to miss: an order can
+     * clear minAmount and still be unable to pay out. */
+    expect(quote.withdrawMin).toBe(0.0007088);
+  });
+
+  it('reads Godex numbers that arrive as strings', () => {
+    const quote = parseGodexRate(GODEX_LIVE);
+    expect(quote.ok).toBe(true);
+    expect(quote.toAmount).toBe(16.36855067);
+    expect(quote.minAmount).toBe(0.003);
+    expect(quote.maxAmount).toBe(190);
+  });
+
+  it('keeps the quote handle and expiry Godex issues', () => {
+    /* Without the handle the exchange reprices at creation, the payout
+     * drifts, and verifyOrder refuses an order the person did nothing wrong
+     * to deserve. */
+    const quote = parseGodexRate(GODEX_LIVE);
+    expect(quote.rateUuid).toBe('37d778fd-6edd-45c6-8430-886828570d05');
+    expect(quote.expiresAt).toBe(1786508416898);
+    expect(quote.floating).toBe(true);
+  });
+
+  it('asks Godex for a floating rate, the same kind it asks Exolix for', () => {
+    /* Live, the default is a fixed rate: the reply carries float: false and a
+     * worse number. Ranking that against a floating Exolix quote by payout
+     * was comparing two different promises and letting the wrong one win. */
+    const pair = parsePair('btc', 'xmr') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    expect((godexRate(pair.pair, 0.1).body as Record<string, unknown>)['float']).toBe(true);
+    expect(new URL(exolixRate(pair.pair, 0.1).url).searchParams.get('rateType')).toBe('float');
+  });
+
+  it('carries the handle into the order, so the shown number is the ordered one', () => {
+    const pair = parsePair('btc', 'xmr') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const request: SwapRequest = {
+      provider: 'godex',
+      pair: pair.pair,
+      amount: 0.1,
+      payoutAddress: '4' + 'A'.repeat(94),
+      refundAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+      payoutIsOurs: false,
+    };
+    const body = godexCreate(request, parseGodexRate(GODEX_LIVE)).body as Record<string, unknown>;
+    expect(body['rate_uuid']).toBe('37d778fd-6edd-45c6-8430-886828570d05');
+    expect(body['float']).toBe(true);
+  });
+
+  it('refuses an expired quote before an order exists, not after', async () => {
+    /* The drift check downstream would catch the repricing anyway, but only
+     * once the exchange had opened an order. A refusal that leaves no
+     * wreckage beats one that does. */
+    const pair = parsePair('btc', 'xmr') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const quote = parseGodexRate(GODEX_LIVE);
+    const transport = {
+      send: async () => {
+        throw new Error('should never be asked');
+      },
+    };
+    const result = await createOrder(
+      transport,
+      {
+        provider: 'godex',
+        pair: pair.pair,
+        amount: 0.1,
+        payoutAddress: '4' + 'A'.repeat(94),
+        refundAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+        payoutIsOurs: false,
+      },
+      16.36855067,
+      quote,
+      1786508416899,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problem).toMatch(/expired/);
   });
 });

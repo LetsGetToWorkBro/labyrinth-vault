@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "npm run build:bundle && vitest run && npm run swift:check",
+    "test": "npm run build:bundle && vitest run && npm run swift:check && npm run typecheck",
     "typecheck": "tsc --noEmit",
     "build:bundle": "node scripts/build-bundle.mjs && node scripts/emit-swift-fixtures.mjs && node scripts/make-icons.mjs",
     "bench:kdf": "node scripts/bench-kdf.mjs",

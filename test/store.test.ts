@@ -36,12 +36,12 @@ describe('both listings are complete and fit', () => {
       const dir = `store/${app}`;
 
       it('has every field App Store Connect asks for', () => {
-        /* The vault also carries its privacy policy, which is not a Connect
-         * form field but a URL the form demands; keeping the document here
-         * keeps it versioned next to the claims it repeats. The wallet gets
-         * one when it is submitted: its policy will differ (it talks to
-         * nodes), and writing it early would mean guessing. */
-        const extras = app === 'vault' ? ['review-notes.md', 'privacy-policy.md'] : ['review-notes.md'];
+        /* Both apps carry their privacy policy. It is not a Connect form
+         * field but a URL the form demands, and keeping the document here
+         * versions it next to the claims it repeats. The wallet's waited
+         * until it had a domain to host it and a network story worth being
+         * exact about; it has both now. */
+        const extras = ['review-notes.md', 'privacy-policy.md'];
         const present = readdirSync(dir).sort();
         expect(present).toEqual([...Object.keys(LIMITS), ...extras].sort());
       });
@@ -127,6 +127,56 @@ describe('the listings say what the code does', () => {
     expect(notes).toMatch(/STAND-IN VAULT/);
     expect(notes).toMatch(/BIP84/);
     expect(notes).toMatch(/compiled out/);
+  });
+
+  it('the stand-in is compiled out where the listing says it is', () => {
+    /* The review notes and the description both tell a reviewer the stand-in
+     * signer is not in a release build. That is a claim about the code, so it
+     * is checked against the code: the signer refuses unless `DEMO`, and the
+     * screen renders its controls only under `DEMO` — a button that stayed on
+     * screen while the signer behind it returned null would be a dead control
+     * in the shipping build, which is the thing the notes promise is gone. */
+    const standin = readFileSync('wallet/src/demo/standin.ts', 'utf8');
+    expect(standin).toMatch(/export const DEMO =[^\n]*__DEV__/);
+    expect(standin).toMatch(/if \(!DEMO\) return null;/);
+    const send = readFileSync('wallet/src/screens/Send.tsx', 'utf8');
+    expect(send).toMatch(/\{DEMO && \(/);
+  });
+
+  it('the privacy policy does not describe a protection this build does not have', () => {
+    /* The policy explains the swap proxy and Oblivious HTTP, and both are real
+     * arrangements with real code behind them. Neither is switched on: the
+     * proxy address is an empty string and the relay list is empty, because a
+     * relay run by the same company as the gateway would be theatre and no
+     * other operator is agreed yet.
+     *
+     * A privacy policy is the one document where a reader takes the
+     * description as the product, so the rule this repository already applies
+     * in `worker/README.md` applies hardest here: say which arrangement is
+     * actually in force rather than describing the better one. The policy
+     * carries that sentence now, and this holds the two together.
+     *
+     * Note which direction it fails in. The day either one is switched on,
+     * this test fails and points at a paragraph that has just become wrong in
+     * the other direction, which is the only moment anybody would think to
+     * reread it. */
+    const policy = read('store/wallet/privacy-policy.md');
+    if (!/Oblivious HTTP|routed through a proxy/.test(policy)) return;
+
+    const proxyOff = /export const SWAP_PROXY = ''/.test(
+      readFileSync('wallet/src/net/swapproxy.ts', 'utf8'),
+    );
+    const relaysOff = /export const RELAYS: Relay\[\] = \[\]/.test(
+      readFileSync('wallet/src/net/oblivious.ts', 'utf8'),
+    );
+    expect(
+      proxyOff && relaysOff,
+      'the swap proxy or the relay list is configured now, so the policy paragraph saying neither is in force has to be rewritten before this check can go',
+    ).toBe(true);
+    expect(
+      policy,
+      'the policy describes the proxy and Oblivious HTTP without saying that neither is switched on in this build',
+    ).toMatch(/Neither is in force in this release/);
   });
 
   it('neither listing promises something the other app does', () => {

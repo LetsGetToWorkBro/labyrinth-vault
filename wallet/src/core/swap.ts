@@ -120,7 +120,7 @@ export interface SwapCoin {
 }
 
 /**
- * What this wallet will trade: the five assets that carry essentially all
+ * What this wallet will trade: the six assets that carry essentially all
  * swap volume, each on the chains people actually use.
  *
  * Deliberately not every coin every exchange lists. A catalog of thousands is
@@ -142,6 +142,8 @@ export const SWAP_COINS: SwapCoin[] = [
   { id: 'eth-arbitrum', ticker: 'eth', label: 'Ethereum on Arbitrum', chain: 'arbitrum', family: 'evm', ours: null },
   { id: 'eth-optimism', ticker: 'eth', label: 'Ethereum on Optimism', chain: 'optimism', family: 'evm', ours: null },
   { id: 'eth-base', ticker: 'eth', label: 'Ethereum on Base', chain: 'base', family: 'evm', ours: null },
+
+  { id: 'sol', ticker: 'sol', label: 'Solana', chain: 'solana', family: 'sol', ours: null },
 
   { id: 'usdt-tron', ticker: 'usdt', label: 'USDT on Tron', chain: 'tron', family: 'tron', ours: null },
   { id: 'usdt-eth', ticker: 'usdt', label: 'USDT on Ethereum', chain: 'ethereum', family: 'evm', ours: null },
@@ -183,6 +185,7 @@ const EXOLIX_CHAIN: Record<string, string> = {
   'eth-arbitrum': 'ARBITRUM',
   'eth-optimism': 'OPTIMISM',
   'eth-base': 'BASE',
+  sol: 'SOL',
   'usdt-tron': 'TRX',
   'usdt-eth': 'ETH',
   'usdt-bsc': 'BSC',
@@ -209,6 +212,7 @@ const GODEX_CHAIN: Record<string, string> = {
   'eth-arbitrum': 'ARBITRUM',
   'eth-optimism': 'OPTIMISM',
   'eth-base': 'BASE',
+  sol: 'SOL',
   'usdt-tron': 'TRX',
   'usdt-eth': 'ETH',
   'usdt-bsc': 'BSC',
@@ -359,6 +363,63 @@ export function addressHint(coin: SwapCoin): string {
   }
 }
 
+/**
+ * The chains this coin's address shape cannot be told apart from.
+ *
+ * An address check answers "is this the right shape", and for most coins that
+ * is nearly the same question as "is this the right chain": a Monero address
+ * is not a Bitcoin address is not a Tron address. The EVM chains break that.
+ * Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche and BNB Chain all
+ * take the identical twenty-byte 0x address, so a payout address that passes
+ * for Arbitrum passes for every one of them, and nothing this wallet or the
+ * exchange can compute will notice the difference.
+ *
+ * This returns the other chains a coin could be confused with, so the screen
+ * can say so in words. It is the honest substitute for a check that cannot
+ * exist: where the machine cannot tell, the person is told that it cannot.
+ */
+export function confusableChains(coin: SwapCoin): ChainId[] {
+  const others = new Set<ChainId>();
+  for (const other of SWAP_COINS) {
+    if (other.family === coin.family && other.chain !== coin.chain) others.add(other.chain);
+  }
+  return [...others];
+}
+
+/**
+ * Does this exchange name the network back when it creates an order?
+ *
+ * Exolix returns coinFrom and coinTo objects carrying `network`, so an order
+ * can be held against the chain it was asked for. Godex's documented reply
+ * echoes `coin_from` and `coin_to` and nothing about networks, even though
+ * its request accepts them, so the same check has nothing to read.
+ *
+ * Read from each provider's own reference, and false is the safe default for
+ * anyone added later: a provider is assumed unable to prove a chain until
+ * somebody has seen it do so.
+ */
+export const PROVIDER_ECHOES_NETWORK: Record<ProviderId, boolean> = {
+  exolix: true,
+  godex: false,
+};
+
+/**
+ * Can this provider prove the order was built on the chain requested?
+ *
+ * Two ways it can. It names the network back, or the coin only lives on one
+ * chain in this catalog, in which case echoing the coin settles the network
+ * by elimination. Neither holds for USDT, USDC or ETH on Godex, because each
+ * of those rides seven EVM chains here and Godex names none of them.
+ */
+export function chainCanBeProven(provider: ProviderId, coin: SwapCoin): boolean {
+  return PROVIDER_ECHOES_NETWORK[provider] || !chainIsAmbiguous(coin);
+}
+
+/** True when the address shape alone cannot establish the chain. */
+export function chainIsAmbiguous(coin: SwapCoin): boolean {
+  return confusableChains(coin).length > 0;
+}
+
 /** The chain in a person's words, for the one place it has to be read. */
 export function chainName(chain: ChainId): string {
   switch (chain) {
@@ -474,6 +535,43 @@ export interface SwapQuote {
   toAmount?: number;
   minAmount?: number;
   maxAmount?: number;
+  /**
+   * The least the exchange can pay *out*, when it says.
+   *
+   * A second floor, on the other side of the trade, and the one that is easy
+   * to miss: `minAmount` is what you must send, `withdrawMin` is what must
+   * arrive. A trade can clear the first and fail the second, and the way it
+   * fails is an order that cannot pay out after the deposit has landed.
+   * Exolix documents it; a provider that does not say leaves this undefined,
+   * which constrains nothing.
+   */
+  withdrawMin?: number;
+  /**
+   * The provider's own handle for this quote, when it issues one.
+   *
+   * Godex returns a `rate_uuid` and honors the quoted rate only for an order
+   * that carries it back. Without it the order is priced at whatever the rate
+   * is at creation time, which drifts, which `verifyOrder` then refuses.
+   * Failing safe is right, and being refused for no reason is still a bad
+   * afternoon for somebody who did nothing wrong, so the handle is carried.
+   */
+  rateUuid?: string;
+  /**
+   * When this stops being the quote, in epoch milliseconds.
+   *
+   * Godex says so plainly and it is worth believing. A quote used after this
+   * is not a quote, and the honest move is to say so before an order exists
+   * rather than to discover it in a drift check afterwards.
+   */
+  expiresAt?: number;
+  /**
+   * Whether the rate floats with the market or is fixed for the order.
+   *
+   * Recorded because the screen ranks quotes by payout, and a fixed rate and
+   * a floating one are not the same promise: comparing them without saying
+   * which is which is how a worse trade wins a comparison.
+   */
+  floating?: boolean;
   /** Why there is no quote, in words fit for a screen. */
   reason?: string;
 }
@@ -492,6 +590,26 @@ export interface SwapOrder {
   /** The payout address the provider recorded. Echoed so it can be compared
    *  against the one that was sent, which is the point of the whole file. */
   payoutAddress: string;
+  /**
+   * What the exchange says it actually created the order for.
+   *
+   * This is the only thing that can catch a wrong chain. Every EVM chain
+   * takes the same 0x address, so a deposit or payout address proves nothing
+   * about which network an order lives on; the exchange naming the network
+   * back to us does. Exolix echoes `coinFrom`/`coinTo` objects carrying
+   * `coinCode` and `network`, and `verifyOrder` holds them against what was
+   * asked for.
+   *
+   * Null where a provider does not echo it, and null means unchecked rather
+   * than checked-and-fine. Godex publishes no public API documentation (the
+   * schema comes with partner onboarding), so its fields are null until
+   * somebody reads the real thing: guessing field names would produce a
+   * check that silently never fires, which is worse than a recorded gap.
+   */
+  fromCoin: string | null;
+  fromNetwork: string | null;
+  toCoin: string | null;
+  toNetwork: string | null;
 }
 
 export type SwapStage =
@@ -502,7 +620,11 @@ export type SwapStage =
   | 'done'
   | 'refunded'
   | 'expired'
-  | 'failed';
+  | 'failed'
+  /** A status word this build does not know. Not a failure: an exchange is
+   *  free to add a state, and reporting its new word as "failed" would be
+   *  this wallet inventing bad news about somebody's money. */
+  | 'unknown';
 
 export interface SwapStatus {
   stage: SwapStage;
@@ -520,6 +642,7 @@ export const STAGE_LINES: Record<SwapStage, string> = {
   refunded: 'REFUNDED',
   expired: 'EXPIRED WITH NOTHING RECEIVED',
   failed: 'FAILED',
+  unknown: 'THE EXCHANGE USED A WORD THIS BUILD DOES NOT KNOW',
 };
 
 // ---------------------------------------------------------------------------
@@ -577,6 +700,29 @@ export function verifyOrder(request: SwapRequest, order: SwapOrder, quotedOut: n
     );
   }
 
+  /* The chain check, and the only one that can exist.
+   *
+   * An address proves nothing about its network once EVM chains are in play,
+   * so the exchange naming the network back is the sole evidence that the
+   * order lives where it was asked to live. Checked in the provider's own
+   * spelling, since that is what was sent. Fields the provider does not echo
+   * are skipped and recorded as unchecked rather than treated as agreement. */
+  const echoed: [string, string | null, string | null][] = [
+    ['coin being sent', order.fromCoin, request.pair.from.ticker.toUpperCase()],
+    ['network being sent', order.fromNetwork, providerChain(request.provider, request.pair.from)],
+    ['coin coming back', order.toCoin, request.pair.to.ticker.toUpperCase()],
+    ['network coming back', order.toNetwork, providerChain(request.provider, request.pair.to)],
+  ];
+  for (const [what, said, asked] of echoed) {
+    if (said === null || asked === null) continue;
+    if (said.toUpperCase() !== asked.toUpperCase()) {
+      return fail(
+        `The exchange created this order for a different ${what}.`,
+        `asked ${asked}, order says ${said}`,
+      );
+    }
+  }
+
   if (order.depositAddress === request.payoutAddress) {
     /* An exchange asking you to deposit to the same address it will pay out
      * to is either broken or arranging for you to pay yourself while it keeps
@@ -629,9 +775,60 @@ export interface HttpRequest {
   body?: Record<string, unknown>;
 }
 
-/** Whatever actually performs a request. Injected, never imported. */
+/**
+ * What the wallet asks a proxy for, when it is asking a proxy.
+ *
+ * An intent rather than a URL, because the relay builds the upstream request
+ * itself from these same adapters. A proxy that forwarded whatever URL it was
+ * handed would be a free anonymizer for whoever found it.
+ */
+export interface SwapIntent {
+  provider: ProviderId;
+  from: string;
+  to: string;
+  amount: number;
+  payoutAddress?: string;
+  refundAddress?: string;
+  /** The provider's quote handle, so the order is priced at the shown rate. */
+  rateUuid?: string;
+}
+
+/**
+ * Whatever actually performs a request. Injected, never imported.
+ *
+ * Two shapes, and the second is why this interface is not one method.
+ *
+ * `send` takes a built request and is what a direct transport, a fixture and
+ * every test in the suite use. The optional trio takes an *intent* and is what
+ * a transport through the Labyrinth relay uses, because that relay refuses
+ * URLs by design and builds the upstream call from the same adapter functions
+ * on its own side.
+ *
+ * The calls below prefer the intent methods when a transport offers them. What
+ * does not change either way is everything that matters: the same
+ * `PARSE_RATE`, the same `PARSE_CREATE`, the same `verifyOrder`, the same
+ * bounds and expiry checks. Only who assembles the URL moves. Two paths
+ * through the parsing would be two places for a chain check to be subtly
+ * different, and that is the one thing this file exists to prevent.
+ */
 export interface SwapTransport {
   send(request: HttpRequest): Promise<unknown>;
+  quote?(intent: SwapIntent): Promise<unknown>;
+  create?(intent: SwapIntent): Promise<unknown>;
+  status?(provider: ProviderId, id: string): Promise<unknown>;
+}
+
+/** The intent behind a built request, for a transport that wants one. */
+function intentOf(request: SwapRequest, quote?: SwapQuote): SwapIntent {
+  return {
+    provider: request.provider,
+    from: request.pair.from.id,
+    to: request.pair.to.id,
+    amount: request.amount,
+    payoutAddress: request.payoutAddress,
+    refundAddress: request.refundAddress,
+    ...(quote?.rateUuid ? { rateUuid: quote.rateUuid } : {}),
+  };
 }
 
 const number = (value: unknown): number => {
@@ -660,6 +857,7 @@ export function parseExolixRate(json: unknown): SwapQuote {
   const toAmount = number(body['toAmount']);
   const min = number(body['minAmount']);
   const max = number(body['maxAmount']);
+  const payoutFloor = number(body['withdrawMin']);
   if (!Number.isFinite(toAmount) || toAmount <= 0) {
     const message = text(body['message']) || text(body['error']);
     return {
@@ -668,6 +866,7 @@ export function parseExolixRate(json: unknown): SwapQuote {
       reason: message || 'No rate for that pair and amount.',
       ...(Number.isFinite(min) ? { minAmount: min } : {}),
       ...(Number.isFinite(max) ? { maxAmount: max } : {}),
+      ...(Number.isFinite(payoutFloor) ? { withdrawMin: payoutFloor } : {}),
     };
   }
   return {
@@ -676,6 +875,7 @@ export function parseExolixRate(json: unknown): SwapQuote {
     toAmount,
     ...(Number.isFinite(min) ? { minAmount: min } : {}),
     ...(Number.isFinite(max) ? { maxAmount: max } : {}),
+    ...(Number.isFinite(payoutFloor) ? { withdrawMin: payoutFloor } : {}),
   };
 }
 
@@ -704,6 +904,16 @@ export function parseExolixCreate(json: unknown): SwapOrder | null {
   const toAmount = number(body['amountTo']);
   const payoutAddress = text(body['withdrawalAddress']);
   if (!id || !depositAddress || !payoutAddress) return null;
+  /* The documented shape: coinFrom and coinTo are objects carrying coinCode
+   * and network. Read as untrusted, like everything else that crossed a
+   * network: a missing or malformed side reads as null, which verifyOrder
+   * treats as unchecked rather than as agreement. */
+  const side = (value: unknown) => {
+    const it = (value ?? {}) as Record<string, unknown>;
+    return { coin: text(it['coinCode']) || null, network: text(it['network']) || null };
+  };
+  const from = side(body['coinFrom']);
+  const to = side(body['coinTo']);
   return {
     provider: 'exolix',
     id,
@@ -712,6 +922,10 @@ export function parseExolixCreate(json: unknown): SwapOrder | null {
     depositAmount: amount,
     toAmount,
     payoutAddress,
+    fromCoin: from.coin,
+    fromNetwork: from.network,
+    toCoin: to.coin,
+    toNetwork: to.network,
   };
 }
 
@@ -725,13 +939,25 @@ export function parseExolixStatus(json: unknown): SwapStatus {
   const hash = text((body['hashOut'] as Record<string, unknown> | undefined)?.['hash']);
   const stage: SwapStage =
     raw === 'wait' ? 'waiting'
-    : raw === 'confirmation' ? 'confirming'
+    /* Exolix documents both `confirmation` and `confirmed`. The second sits
+     * between confirming and exchanging, and is read as the earlier of the
+     * two on purpose: understating progress costs a person nothing, while
+     * claiming the exchange has started when it has not is a claim this
+     * wallet cannot support. The raw word travels either way. */
+    : raw === 'confirmation' || raw === 'confirmed' ? 'confirming'
     : raw === 'exchanging' ? 'exchanging'
     : raw === 'sending' ? 'sending'
     : raw === 'success' ? 'done'
-    : raw === 'refunded' ? 'refunded'
+    /* `refund` is the refund under way, `refunded` is it done. Both mean the
+     * trade is not completing and the coins are coming back, which is one
+     * ending as far as the journey is concerned; the exchange's own word is
+     * shown so the difference is not lost. */
+    : raw === 'refunded' || raw === 'refund' ? 'refunded'
     : raw === 'overdue' ? 'expired'
-    : 'failed';
+    : raw === 'failed' || raw === 'error' ? 'failed'
+    /* Anything else is a word added since this build. Say so; do not call
+     * somebody's live order dead because the vocabulary moved. */
+    : 'unknown';
   return { stage, raw: raw || 'unknown', ...(hash ? { txId: hash } : {}) };
 }
 
@@ -747,6 +973,13 @@ export function godexRate(pair: SwapPair, amount: number): HttpRequest {
       amount: String(amount),
       coin_from_network: providerChain('godex', pair.from) ?? pair.from.chain,
       coin_to_network: providerChain('godex', pair.to) ?? pair.to.chain,
+      /* Asked for explicitly, because the default is a fixed rate and Exolix
+       * is asked for a floating one. Two providers answering different
+       * questions were being ranked against each other by payout, and the
+       * fixed answer is the worse number, so Godex was losing a comparison it
+       * had not been entered into. Checked against the live endpoint: without
+       * this the reply carries `float: false`. */
+      float: true,
     },
   };
 }
@@ -766,16 +999,21 @@ export function parseGodexRate(json: unknown): SwapQuote {
       ...(Number.isFinite(max) ? { maxAmount: max } : {}),
     };
   }
+  const uuid = text(body['rate_uuid']);
+  const expires = number(body['rate_expired_at']);
   return {
     provider: 'godex',
     ok: true,
     toAmount,
     ...(Number.isFinite(min) ? { minAmount: min } : {}),
     ...(Number.isFinite(max) ? { maxAmount: max } : {}),
+    ...(uuid ? { rateUuid: uuid } : {}),
+    ...(Number.isFinite(expires) && expires > 0 ? { expiresAt: expires } : {}),
+    floating: body['float'] === true,
   };
 }
 
-export function godexCreate(request: SwapRequest): HttpRequest {
+export function godexCreate(request: SwapRequest, quote?: SwapQuote): HttpRequest {
   return {
     method: 'POST',
     url: 'https://api.godex.io/api/v1/transaction',
@@ -787,6 +1025,15 @@ export function godexCreate(request: SwapRequest): HttpRequest {
       return: request.refundAddress,
       coin_from_network: providerChain('godex', request.pair.from) ?? request.pair.from.chain,
       coin_to_network: providerChain('godex', request.pair.to) ?? request.pair.to.chain,
+      /* The same rate type the quote was asked for. An order created as
+       * fixed against a floating quote is a different trade than the one on
+       * the screen. */
+      float: true,
+      /* And the quote's own handle, which is what makes the exchange honor
+       * the number the person was shown rather than repricing at creation.
+       * Omitted when there is no quote in hand, which is a caller that has
+       * nothing to be held to. */
+      ...(quote?.rateUuid ? { rate_uuid: quote.rateUuid } : {}),
     },
   };
 }
@@ -805,6 +1052,21 @@ export function parseGodexCreate(json: unknown): SwapOrder | null {
     depositAmount: number(body['deposit_amount']),
     toAmount: number(body['withdrawal_amount']),
     payoutAddress,
+    /* Godex echoes the coins and, per its own response table, nothing about
+     * the networks: the request takes `coin_from_network` and
+     * `coin_to_network`, and the reply names neither back. So the coin check
+     * is available here and the chain check is not, and that is a fact about
+     * the API rather than a gap in this parser.
+     *
+     * The consequence is worth stating where somebody will read it: for a
+     * coin that lives on one chain the coin echo settles it, but for USDT,
+     * USDC and ETH, which this catalog carries on seven EVM chains each, a
+     * Godex order cannot be proven to have been built on the chain it was
+     * asked for. Exolix names the network back and is checked on it. */
+    fromCoin: text(body['coin_from']).toUpperCase() || null,
+    fromNetwork: null,
+    toCoin: text(body['coin_to']).toUpperCase() || null,
+    toNetwork: null,
   };
 }
 
@@ -823,11 +1085,14 @@ export function parseGodexStatus(json: unknown): SwapStatus {
     raw === 'wait' ? 'waiting'
     : raw === 'confirmation' || raw === 'confirming' ? 'confirming'
     : raw === 'exchanging' ? 'exchanging'
-    : raw === 'sending' ? 'sending'
+    /* `sending_confirmation` is the outgoing transaction waiting for network
+     * confirmations: still the sending stage, and the last one before done. */
+    : raw === 'sending' || raw === 'sending_confirmation' ? 'sending'
     : raw === 'success' ? 'done'
     : raw === 'refunded' ? 'refunded'
     : raw === 'overdue' || raw === 'expired' ? 'expired'
-    : 'failed';
+    : raw === 'failed' || raw === 'error' ? 'failed'
+    : 'unknown';
   return { stage, raw: raw || 'unknown', ...(hash ? { txId: hash } : {}) };
 }
 
@@ -842,7 +1107,7 @@ const PARSE_RATE: Record<ProviderId, (json: unknown) => SwapQuote> = {
   exolix: parseExolixRate,
   godex: parseGodexRate,
 };
-const CREATE: Record<ProviderId, (request: SwapRequest) => HttpRequest> = {
+const CREATE: Record<ProviderId, (request: SwapRequest, quote?: SwapQuote) => HttpRequest> = {
   exolix: exolixCreate,
   godex: godexCreate,
 };
@@ -875,12 +1140,53 @@ export async function quoteAll(
         return { provider: id, ok: false as const, reason: 'Does not trade that pair.' };
       }
       try {
-        return PARSE_RATE[id](await transport.send(RATE[id](pair, amount)));
+        const json = transport.quote
+          ? await transport.quote({ provider: id, from: pair.from.id, to: pair.to.id, amount })
+          : await transport.send(RATE[id](pair, amount));
+        return PARSE_RATE[id](json);
       } catch (error) {
         return { provider: id, ok: false as const, reason: (error as Error)?.message ?? 'No answer.' };
       }
     }),
   );
+}
+
+/**
+ * Is this amount inside the range the exchange quoted?
+ *
+ * The quote carries a minimum and a maximum and the screen used to only print
+ * them. Printing is not enforcing: an amount under the minimum buys an order
+ * the exchange will not fill, and the person finds out after the deposit has
+ * left, when the remedy is a refund request rather than a different number in
+ * a field. The bounds are the provider's own words, so this refuses in them.
+ *
+ * A quote that names no bound constrains nothing, which is the honest reading
+ * of a missing field rather than a reason to invent one.
+ */
+export function amountWithinQuote(amount: number, quote: SwapQuote): { ok: true } | { ok: false; problem: string } {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, problem: 'That is not an amount.' };
+  }
+  const min = quote.minAmount;
+  const max = quote.maxAmount;
+  if (Number.isFinite(min ?? NaN) && amount < (min as number)) {
+    return { ok: false, problem: `That exchange will not take less than ${min}.` };
+  }
+  if (Number.isFinite(max ?? NaN) && amount > (max as number)) {
+    return { ok: false, problem: `That exchange will not take more than ${max}.` };
+  }
+  /* The floor on the other side. Checked against what the quote says will
+   * arrive, not against what is being sent, because they are different coins
+   * and only one of them is what the exchange has to be able to pay out. */
+  const floor = quote.withdrawMin;
+  const arriving = quote.toAmount;
+  if (Number.isFinite(floor ?? NaN) && Number.isFinite(arriving ?? NaN) && (arriving as number) < (floor as number)) {
+    return {
+      ok: false,
+      problem: `That trade pays out less than the exchange can send (${floor} minimum). Send more.`,
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -894,10 +1200,38 @@ export async function createOrder(
   transport: SwapTransport,
   request: SwapRequest,
   quotedOut: number,
+  quote?: SwapQuote,
+  /* The clock is an argument, like the randomness in decoys.ts, so that the
+   * expiry check below is testable without waiting for one. */
+  now: number = Date.now(),
 ): Promise<OrderCheck> {
+  /* The bounds check lives here, next to the verification, for the same
+   * reason: a caller cannot forget what it has no way to skip. Passing the
+   * quote is optional only so that a caller with no quote in hand is not
+   * forced to invent one, and a missing quote constrains nothing. */
+  if (quote) {
+    const bounds = amountWithinQuote(request.amount, quote);
+    if (!bounds.ok) {
+      return { ok: false, problem: bounds.problem, detail: `amount ${request.amount} outside quoted range` };
+    }
+    /* An expired quote is refused before an order exists rather than after.
+     * The drift check downstream would catch the repricing anyway, but it
+     * would catch it once the exchange had already opened an order, and a
+     * refusal that leaves no wreckage is better than one that does. */
+    if (Number.isFinite(quote.expiresAt) && (quote.expiresAt as number) <= now) {
+      return {
+        ok: false,
+        problem: 'That quote expired before the order was placed. Ask for quotes again.',
+        detail: `quote expired at ${quote.expiresAt}`,
+      };
+    }
+  }
+
   let json: unknown;
   try {
-    json = await transport.send(CREATE[request.provider](request));
+    json = transport.create
+      ? await transport.create(intentOf(request, quote))
+      : await transport.send(CREATE[request.provider](request, quote));
   } catch (error) {
     return {
       ok: false,
@@ -918,7 +1252,10 @@ export async function readStatus(
   id: string,
 ): Promise<SwapStatus> {
   try {
-    return PARSE_STATUS[provider](await transport.send(STATUS[provider](id)));
+    const json = transport.status
+      ? await transport.status(provider, id)
+      : await transport.send(STATUS[provider](id));
+    return PARSE_STATUS[provider](json);
   } catch (error) {
     return { stage: 'failed', raw: (error as Error)?.message ?? 'no answer' };
   }

@@ -178,6 +178,21 @@ export function SwapStatusScreen({ navigation }: Nav<'SwapStatus'>) {
           </>
         ) : null}
 
+        {journey.unrecognized ? (
+          <>
+            <Gap size={space.section} />
+            {/* Not an alarm. The order is very likely fine and simply in a
+              * state this build has no word for; saying it failed would be
+              * this wallet inventing bad news. What it can honestly do is
+              * quote the exchange and point at the one authority there is. */}
+            <Notice title="THIS BUILD DOES NOT KNOW THAT WORD" tone="warn">
+              {check
+                ? `The exchange answered "${check.status.raw}", which this version does not recognize. That is not a failure and not a completion: it is a state added since this build, so nothing above is lit. The exchange is the authority on this order, and the id is below.`
+                : 'The exchange answered with a state this version does not recognize. Nothing above is lit, because there is nothing this build can honestly claim about it.'}
+            </Notice>
+          </>
+        ) : null}
+
         <Gap size={space.section} />
         <FactRow label="RATE">{`1 ${(from?.ticker ?? '').toUpperCase()} ≈ ${trimmed(rate)} ${(to?.ticker ?? '').toUpperCase()}`}</FactRow>
         <FactRow label="ROUTE">{provider.label}</FactRow>

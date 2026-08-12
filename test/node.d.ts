@@ -4,8 +4,8 @@
  * Deliberately not `@types/node`. That package declares `fetch`, `WebSocket`
  * and the rest as globals, which would quietly undo the thing
  * `src/platform.d.ts` exists to enforce: in the vault's source, reaching for
- * the network should not typecheck. Three functions declared here cost less
- * than losing that.
+ * the network should not typecheck. A handful of functions declared here cost
+ * less than losing that.
  */
 
 declare module 'node:fs' {
@@ -25,6 +25,10 @@ declare module 'node:fs' {
     length: number;
     equals(other: { length: number }): boolean;
   };
+  /** A file's size without reading it. The site guards weigh media, and some
+   *  of that media is megabytes of video; pulling it into memory to measure
+   *  it would be an odd way to check it is not too big. */
+  export function statSync(path: string): { size: number };
 }
 
 declare module 'node:crypto' {

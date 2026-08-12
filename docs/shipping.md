@@ -205,6 +205,87 @@ the BIS report) are the ones to start first.
    reviewer the core flow in under a minute. If a reviewer reports a dead
    end, it is a bug. Treat it as one rather than arguing.
 
+### 7. Submission day, wallet
+
+The same shape as the vault's list, and the differences are the point: the
+wallet answers export compliance the other way, hosts its policy on its own
+domain, and carries one review risk the vault does not.
+
+**Prerequisites, once ever:**
+
+- [ ] **Organization enrollment.** The same 3.1.5(b) gate as the vault, and the
+      same account, so doing it for one does it for both. Start it first if the
+      account is still an individual.
+- [ ] **No BIS report for this app.** The wallet is watch-only and answers the
+      encryption question `no` (see the export-compliance section above), so the
+      5D992.c self-classification the vault needs does not apply here. Nothing
+      to file.
+- [ ] **Host the privacy policy.** `store/wallet/privacy-policy.md`, at
+      `https://labyrinthwallet.com/privacy`, the wallet's own domain, now that
+      it exists. App Store Connect requires the URL; the document is written and
+      versioned here so the form is a paste. **Check it resolves before
+      submitting.** A dead privacy-policy link is a slow-turnaround rejection.
+- [ ] **The contact address receives mail.** `info@labyrinthwallet.com` is in
+      the policy; send a test message and confirm it arrives before the URL is
+      entered anywhere.
+
+**In App Store Connect, per the wallet app record:**
+
+- [ ] Category: **Finance** primary, **Utilities** secondary.
+- [ ] Name, subtitle, description, keywords, promotional text: paste from
+      [`store/wallet/`](../store/wallet). Lengths are tested against Apple's
+      limits, so the form accepts them as-is.
+- [ ] **App Privacy questionnaire: "Data Not Collected."** The app has no
+      analytics, no crash reporting and no account, which its four empty
+      privacy-manifest lists assert and `wallet/test/` guards. The nuance to
+      understand before you tick it: the wallet *connects* to a chain node and,
+      for a swap, to an exchange, and those third parties see an IP address and
+      addresses. That is the *user* reaching a third party they chose, not the
+      developer collecting data, and the swap proxy Labyrinth runs is built to
+      forward and keep nothing (no logs, and HMAC-keyed rate counters that a
+      test over the Worker source enforces). So "Data Not Collected" is the
+      honest and defensible answer, and the third-party exposure is disclosed in
+      full in the privacy policy rather than hidden behind the checkbox.
+- [ ] **Age rating:** every content question None; result 4+. No web view, no
+      gambling, no user-generated content.
+- [ ] **Privacy policy URL:** from the hosting step above.
+- [ ] **App Review notes:** paste [`store/wallet/review-notes.md`](../store/wallet/review-notes.md)
+      whole, and **attach the round-trip demo video** (see risk 1 below). The
+      notes lead with the two facts that decide the review: the numbers are
+      fixtures until a node is set, and the app is the online half of a
+      two-device pair.
+- [ ] **Export compliance** is answered in the Info.plist
+      (`ITSAppUsesNonExemptEncryption: false`), so Connect does not re-ask per
+      build.
+- [ ] **Screenshots**, one required size class (6.9-inch iPhone). From the shot
+      list: the home screen with its `DEMO DATA` chip, receive showing an
+      address and its derivation path, the send review screen, the **QR
+      transmit frames** (the airgap handoff, the screenshot that explains the
+      product), and a swap quote with its derived payout address. Dark,
+      portrait.
+
+**The review risks that remain, named:**
+
+1. **The signed round-trip cannot be completed on the release build.** The
+   stand-in signer is compiled out of release on purpose, because it holds a
+   published seed and a demo signer left in a shipping wallet is how a product
+   like this fails. So a reviewer with no second device can walk everything up
+   to and including the QR handoff but cannot reach the signature-verify and
+   mismatch screens. This is the wallet's one material review risk and it has no
+   in-app fix that is not a security regression. The mitigation is the review
+   notes plus a **short screen recording of the full round-trip** (a real
+   vault, and the mismatch case) attached to the submission, and an offer of a
+   development build on request. Apple reviews hardware-companion apps this way
+   routinely; the video is the standard answer and it should be attached, not
+   held in reserve.
+2. **Fixture data reads as a broken wallet.** Every number is `DEMO DATA` until
+   a node is set, and an external tester who skipped the notes will believe the
+   balances. Ship internal TestFlight first (it skips Beta App Review), and gate
+   external testing on a node client landing.
+3. **2.1 completeness.** With the stand-in controls now gated on `__DEV__`, a
+   release build has no button that does nothing; the receive screen simply
+   waits for a vault. If a reviewer still finds a dead end, it is a bug.
+
 ## What is not ready, honestly
 
 **The wallet has no chain behind it.** `src/core/demo.ts` supplies every

@@ -118,6 +118,18 @@ const decoder = new TextDecoder();
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
+ * An array entry as something safe to read fields off.
+ *
+ * The same guard `keyimages.ts` keeps, for the same reason: `JSON.parse` will
+ * produce `[null]` from a hostile payload, and reading a field off `null` is a
+ * TypeError thrown out of a parser whose contract is to refuse in a sentence.
+ * A non-object entry becomes an empty one and fails the ordinary checks.
+ */
+function fields(entry: unknown): Record<string, unknown> {
+  return entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {};
+}
+
+/**
  * Read an unsigned set, refusing anything malformed.
  *
  * The strictness mirrors `parseKeyImageRequest`: everything over the airgap is
@@ -161,7 +173,7 @@ export function parseUnsignedSet(
 
   const inputs: VaultUnsignedInput[] = [];
   for (const entry of raw['inputs']) {
-    const input = entry as Record<string, unknown>;
+    const input = fields(entry);
     const amt = amount(input['amount']);
     if (!hex64(input['txPublicKey']) || amt === null) return { ok: false, problem: 'An input is malformed.' };
     const indexInTx = Number(input['indexInTx']);
@@ -172,7 +184,7 @@ export function parseUnsignedSet(
     if (!Array.isArray(input['ring']) || input['ring'].length !== ringSize) return { ok: false, problem: 'An input ring is the wrong size.' };
     const ring: VaultRingMember[] = [];
     for (const memberEntry of input['ring']) {
-      const m = memberEntry as Record<string, unknown>;
+      const m = fields(memberEntry);
       const memberIndex = Number(m['globalIndex']);
       if (!hex64(m['key']) || !hex64(m['commitment']) || !Number.isInteger(memberIndex) || memberIndex < 0) {
         return { ok: false, problem: 'A ring member is malformed.' };
@@ -195,7 +207,7 @@ export function parseUnsignedSet(
 
   const outputs: VaultUnsignedOutput[] = [];
   for (const entry of raw['outputs']) {
-    const output = entry as Record<string, unknown>;
+    const output = fields(entry);
     const amt = amount(output['amount']);
     if (typeof output['address'] !== 'string' || amt === null) return { ok: false, problem: 'An output is malformed.' };
     outputs.push({ address: output['address'], amount: amt.toString(), change: output['change'] === true, dummy: output['dummy'] === true });

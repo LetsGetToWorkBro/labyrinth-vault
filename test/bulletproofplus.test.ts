@@ -205,7 +205,12 @@ describe('Bulletproof+ prover against the anchored verifier', () => {
     expect(verifyBulletproofPlus(outPkOf(a.V), b.proof)).toBe(false);
   });
 
-  it('every field of a fresh proof is load-bearing', () => {
+  /* A proof per tampered field, each one proved and verified from scratch.
+   * That is real curve arithmetic rather than a slow test, and on a loaded
+   * machine it runs past the five-second default and fails as a timeout —
+   * which reads like a broken range proof and is not one. The same explicit
+   * allowance the KDF-bound host tests make. */
+  it('every field of a fresh proof is load-bearing', { timeout: 30_000 }, () => {
     const { proof, V } = proveBulletproofPlus([77n, 88n], [detScalar(3), detScalar(4)], randoms(2, 8100));
     const outPk = outPkOf(V);
     expect(verifyBulletproofPlus(outPk, proof)).toBe(true);

@@ -63,7 +63,10 @@ import {
   PRIVACY_NOTE,
   PROVIDERS,
   SWAP_COINS,
+  chainCanBeProven,
+  chainIsAmbiguous,
   chainName,
+  confusableChains,
   addressHint,
   buildRequest,
   createOrder,
@@ -74,6 +77,7 @@ import {
   type SwapCoin,
   type SwapQuote,
 } from '../core/swap';
+import { swapConfigured } from '../net/swapproxy';
 
 type Phase = 'compose' | 'quoting' | 'quoted' | 'creating' | 'refused';
 
@@ -133,7 +137,7 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
   async function create() {
     if (!request.ok || !best?.toAmount) return;
     setPhase('creating');
-    const result = await createOrder(store.swapTransport, request.request, best.toAmount);
+    const result = await createOrder(store.swapTransport, request.request, best.toAmount, best);
     if (!result.ok) {
       /* Terminal, and terminal here means there is nothing to show. A refused
        * order carries no deposit address, so there is no address on this
@@ -341,12 +345,16 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
           </ActionRow>
         )}
 
-        <Gap />
-        <Notice title="DEMO DATA" tone="plain">
-          There is no network client in this build, so the quotes above come
-          from a fixture. It answers in the shape a real exchange answers in,
-          so the checks around it are the real ones.
-        </Notice>
+        {swapConfigured() ? null : (
+          <>
+            <Gap />
+            <Notice title="DEMO DATA" tone="plain">
+              No relay is configured in this build, so the quotes above come
+              from a fixture. It answers in the shape a real exchange answers
+              in, so the checks around it are the real ones.
+            </Notice>
+          </>
+        )}
         <Gap size={space.chapter} />
       </ScrollView>
     </Screen>
@@ -607,7 +615,17 @@ function QuoteFacts({
       {Number.isFinite(quote.maxAmount ?? NaN) ? (
         <FactLine label="MAXIMUM" value={`${quote.maxAmount} ${fromTicker}`} />
       ) : null}
-      <FactLine label="ROUTE" value={provider.label} last />
+      <FactLine label="ROUTE" value={provider.label} />
+      {/* What this exchange can and cannot be held to. Exolix names the
+        * network back when it creates an order, so the chain can be checked
+        * against the one asked for; Godex's reply names only the coin. For a
+        * coin that lives on one chain that costs nothing, so the line only
+        * appears where it is actually true. */}
+      <FactLine
+        label="CHAIN CHECKED"
+        value={chainCanBeProven(quote.provider, to) ? 'YES' : 'NOT BY THIS EXCHANGE'}
+        last
+      />
     </View>
   );
 }
@@ -674,6 +692,21 @@ function PayoutBlock({
         it and neither device can tell you it is right. Read it twice against
         wherever you copied it from.
       </Notice>
+      {chainIsAmbiguous(to) ? (
+        <>
+          <Gap size={space.snug} />
+          {/* The shape check passes on every chain that shares this address
+            * format, so it proves nothing about which one. Saying which chain
+            * is being paid, and naming the ones it cannot be told apart from,
+            * is the only warning available before the money moves. */}
+          <Notice title={`THIS PAYS OUT ON ${chainName(to.chain).toUpperCase()}`} tone="warn">
+            The same address is valid on {confusableChains(to).map(chainName).join(', ')} as
+            well, so checking its shape cannot tell those apart. Make sure the
+            wallet or exchange you are paying accepts {to.ticker.toUpperCase()} on{' '}
+            {chainName(to.chain)}.
+          </Notice>
+        </>
+      ) : null}
       <Gap size={space.snug} />
       <TextInput
         value={typed}

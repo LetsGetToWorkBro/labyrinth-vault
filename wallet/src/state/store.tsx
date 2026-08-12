@@ -34,6 +34,7 @@ import { openAccount, type ScanState } from '../core/moneroscan';
 import { acceptAccount, type Pairing } from '../core/pairing';
 import { NodeWatcher, type MoneroStatus, type RefreshResult, type WatcherNodes } from '../core/watcher';
 import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../core/demo';
+import { proxyTransport, swapConfigured } from '../net/swapproxy';
 import { DEMO, standInAccountExport, standInKeyImages } from '../demo/standin';
 import { restoreHeight, revealSecretHex } from '@vault/keys/monero';
 import { digestOf } from '@vault/airgap/envelope';
@@ -632,6 +633,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return acceptWirePayload('XMRKEYIMAGES', reply);
   }, [watcher, acceptWirePayload]);
 
+  /**
+   * The swap network, chosen once.
+   *
+   * A deployed relay means the real one; no relay means the fixture. Decided
+   * from configuration rather than from a flag somebody has to remember to
+   * flip, so that filling in SWAP_PROXY is the whole act of going live and
+   * the screen's own honesty note follows from the same fact.
+   */
+  const swapNetwork = useMemo(() => (swapConfigured() ? proxyTransport() : demoSwapTransport), []);
+
   const depositForSwap = useCallback(
     (order: SwapOrder, from: Asset, toId: string) => {
       setAsset(from);
@@ -657,7 +668,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshSwap = useCallback(async () => {
     if (!pendingSwap) return;
-    const status = await readStatus(demoSwapTransport, pendingSwap.provider, pendingSwap.id);
+    const status = await readStatus(swapNetwork, pendingSwap.provider, pendingSwap.id);
     setSwapCheck({ status, at: Date.now() });
   }, [pendingSwap]);
 
@@ -681,7 +692,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     offerSignature,
     broadcast,
     own,
-    swapTransport: demoSwapTransport,
+    swapTransport: swapNetwork,
     depositForSwap,
     pendingSwap,
     swapCheck,
