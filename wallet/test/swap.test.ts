@@ -902,3 +902,60 @@ describe('the exchange naming the network back', () => {
     }
   });
 });
+
+describe('the floor on the other side of the trade', () => {
+  /* Exolix's rate reply documents two minimums, not one. `minAmount` is what
+   * must be sent; `withdrawMin` is what must arrive. Reading only the first
+   * lets through a trade the exchange cannot pay out, and it fails after the
+   * deposit has landed, which is the expensive moment to find out. */
+
+  it('reads both floors out of the documented rate reply', () => {
+    /* Exolix's own example response, verbatim. */
+    const quote = parseExolixRate({
+      toAmount: 502.352518,
+      rate: 1004.705036,
+      message: null,
+      minAmount: 0.3717403,
+      withdrawMin: 3.24760808882742,
+      maxAmount: 31811.44515,
+    });
+    expect(quote.ok).toBe(true);
+    expect(quote.toAmount).toBe(502.352518);
+    expect(quote.minAmount).toBe(0.3717403);
+    expect(quote.maxAmount).toBe(31811.44515);
+    expect(quote.withdrawMin).toBe(3.24760808882742);
+  });
+
+  it('refuses a trade that pays out less than the exchange can send', () => {
+    /* Above the send floor and below the payout floor: the case only the
+     * second check catches. */
+    const quote = {
+      provider: 'exolix' as const,
+      ok: true as const,
+      toAmount: 2,
+      minAmount: 0.1,
+      maxAmount: 100,
+      withdrawMin: 3.2,
+    };
+    const check = amountWithinQuote(1, quote);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/pays out less than the exchange can send/i);
+  });
+
+  it('accepts once enough is arriving', () => {
+    const quote = {
+      provider: 'exolix' as const,
+      ok: true as const,
+      toAmount: 500,
+      minAmount: 0.1,
+      maxAmount: 100,
+      withdrawMin: 3.2,
+    };
+    expect(amountWithinQuote(1, quote).ok).toBe(true);
+  });
+
+  it('lets a provider that names no payout floor constrain nothing', () => {
+    const quote = { provider: 'godex' as const, ok: true as const, toAmount: 0.0001, minAmount: 0.1 };
+    expect(amountWithinQuote(1, quote).ok).toBe(true);
+  });
+});

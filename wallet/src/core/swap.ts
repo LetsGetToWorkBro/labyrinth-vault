@@ -506,6 +506,17 @@ export interface SwapQuote {
   toAmount?: number;
   minAmount?: number;
   maxAmount?: number;
+  /**
+   * The least the exchange can pay *out*, when it says.
+   *
+   * A second floor, on the other side of the trade, and the one that is easy
+   * to miss: `minAmount` is what you must send, `withdrawMin` is what must
+   * arrive. A trade can clear the first and fail the second, and the way it
+   * fails is an order that cannot pay out after the deposit has landed.
+   * Exolix documents it; a provider that does not say leaves this undefined,
+   * which constrains nothing.
+   */
+  withdrawMin?: number;
   /** Why there is no quote, in words fit for a screen. */
   reason?: string;
 }
@@ -740,6 +751,7 @@ export function parseExolixRate(json: unknown): SwapQuote {
   const toAmount = number(body['toAmount']);
   const min = number(body['minAmount']);
   const max = number(body['maxAmount']);
+  const payoutFloor = number(body['withdrawMin']);
   if (!Number.isFinite(toAmount) || toAmount <= 0) {
     const message = text(body['message']) || text(body['error']);
     return {
@@ -748,6 +760,7 @@ export function parseExolixRate(json: unknown): SwapQuote {
       reason: message || 'No rate for that pair and amount.',
       ...(Number.isFinite(min) ? { minAmount: min } : {}),
       ...(Number.isFinite(max) ? { maxAmount: max } : {}),
+      ...(Number.isFinite(payoutFloor) ? { withdrawMin: payoutFloor } : {}),
     };
   }
   return {
@@ -756,6 +769,7 @@ export function parseExolixRate(json: unknown): SwapQuote {
     toAmount,
     ...(Number.isFinite(min) ? { minAmount: min } : {}),
     ...(Number.isFinite(max) ? { maxAmount: max } : {}),
+    ...(Number.isFinite(payoutFloor) ? { withdrawMin: payoutFloor } : {}),
   };
 }
 
@@ -1022,6 +1036,17 @@ export function amountWithinQuote(amount: number, quote: SwapQuote): { ok: true 
   }
   if (Number.isFinite(max ?? NaN) && amount > (max as number)) {
     return { ok: false, problem: `That exchange will not take more than ${max}.` };
+  }
+  /* The floor on the other side. Checked against what the quote says will
+   * arrive, not against what is being sent, because they are different coins
+   * and only one of them is what the exchange has to be able to pay out. */
+  const floor = quote.withdrawMin;
+  const arriving = quote.toAmount;
+  if (Number.isFinite(floor ?? NaN) && Number.isFinite(arriving ?? NaN) && (arriving as number) < (floor as number)) {
+    return {
+      ok: false,
+      problem: `That trade pays out less than the exchange can send (${floor} minimum). Send more.`,
+    };
   }
   return { ok: true };
 }
