@@ -278,9 +278,17 @@ struct Screen<Content: View>: View {
     }
 }
 
-/// The vault's status bar: the wordmark and the airgap state. No clock, no
+/// The vault's status bar: the wordmark and the standing claim. No clock, no
 /// battery theatre, no carrier — there is no carrier.
+///
+/// The claim is about the build, not the radios: NO NETWORK CODE is true on
+/// any device and checkable against the binary, where "airgap verified" would
+/// be a reading this app has no instrument for. The radios are the person's
+/// half, and the one screen that talks about them says exactly that. During
+/// setup, before the radios walk is even offered, the bar shows the airgap as
+/// the unfinished work it is.
 struct VaultBar: View {
+    @EnvironmentObject private var vault: Vault
     enum Airgap { case verified, unverified, hidden }
     var airgap: Airgap = .verified
 
@@ -296,11 +304,25 @@ struct VaultBar: View {
                     .kerning(2.2)
                     .foregroundStyle(Ink.paperFaint)
             }
+
+            /* The demo walk is real cryptography against demo keys, and no
+             * screen it crosses is allowed to look like ordinary use. */
+            if vault.demoActive {
+                Text("DEMO")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .kerning(1.8)
+                    .foregroundStyle(Ink.attention)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .overlay { Rectangle().strokeBorder(Ink.attention.opacity(0.6), lineWidth: 1) }
+                    .padding(.leading, 12)
+            }
+
             Spacer()
             if airgap != .hidden {
                 HStack(spacing: 7) {
                     PulseDot(active: airgap == .verified)
-                    Text(airgap == .verified ? "AIRGAP  VERIFIED" : "AIRGAP  UNVERIFIED")
+                    Text(airgap == .verified ? "NO NETWORK CODE" : "AIRGAP  NOT YET MADE")
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         .kerning(1.6)
                         .foregroundStyle(Ink.paperDim)

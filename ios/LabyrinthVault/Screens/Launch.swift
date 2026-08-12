@@ -104,7 +104,7 @@ struct LaunchView: View {
 
             Spacer()
 
-            Text("NO NETWORK INTERFACE PRESENT")
+            Text("NO NETWORK CODE IN THIS BUILD")
                 .font(Type.mono(9))
                 .kerning(1.8)
                 .foregroundStyle(Ink.paperGhost)

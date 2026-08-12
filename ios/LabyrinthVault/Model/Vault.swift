@@ -211,6 +211,13 @@ final class Vault: ObservableObject {
     @Published private(set) var creation: Creation = .idle
     /// True while an unlock's key stretching is running off the main thread.
     @Published private(set) var opening = false
+    /// True while the built-in demo transaction is being walked. Set by the
+    /// explicit lever on the scanner (and by the Simulator, which has no
+    /// camera); cleared by `endDemo`, which also relocks — see `go(_:)`.
+    @Published private(set) var demoActive = false
+    /// One sentence for the unlock screen about why it is being shown, when
+    /// the reason is not obvious. Cleared on a successful unlock.
+    @Published private(set) var notice: String?
 
     enum Creation: Equatable {
         case idle, working, done
@@ -423,6 +430,7 @@ final class Vault: ObservableObject {
             // and tested off-device.
             vaultID = Identity.vaultID(fromAccountKey: opened.btcAccount.zpub)
             fingerprint = Identity.fingerprint(fromFirstAddress: opened.btcAccount.first)
+            notice = nil
             Haptic.signed()
             go(.home)
             return nil
@@ -452,6 +460,7 @@ final class Vault: ObservableObject {
     func sleep() {
         lock()
         creation = .idle
+        demoActive = false
         guard hasVault else { return }         // mid-setup: nothing to gate yet
         if case .launch = route { return }     // still behind the boot gate
         route = .unlock
@@ -489,11 +498,13 @@ final class Vault: ObservableObject {
         go(.scanner)
     }
 
-    /// STAGED, Simulator only. The demo transaction's frames from the engine,
-    /// which also opens the demo vault so the sign that follows is genuine.
-    /// Feeding these through `offer(frame:)` drives the same describe-and-route
-    /// path a scanned transaction takes, so the whole flow can be walked where
-    /// there is no camera and no companion.
+    /// The demo transaction's frames from the engine, which also opens the
+    /// demo vault so the sign that follows is genuine. Feeding these through
+    /// `offer(frame:)` drives the same describe-and-route path a scanned
+    /// transaction takes, so the whole flow can be walked with no companion:
+    /// automatically in the Simulator, which has no camera, and on device
+    /// behind the lever on the scanner that names it a demo. `beginDemo` and
+    /// `endDemo` bracket the session swap either way.
     func demoFrames() -> [String] {
         guard let engine else { return [] }
         return (try? engine.demoUnsigned())?.frames ?? []
@@ -594,6 +605,17 @@ final class Vault: ObservableObject {
     /// builds stop on it, and a release build refuses to move, which leaves
     /// the person on a coherent screen rather than an impossible one.
     func go(_ to: Route) {
+        /* A demo walk ends where a real walk would return to ordinary use —
+         * home, or the scanner for another read. Both exits relock instead:
+         * the demo opened the demo vault into the engine's session, and no
+         * screen outside the walk may run against those keys. Scanning a
+         * real transaction over a demo session would attribute ownership
+         * with the wrong wallet, which is the exact lie this app exists to
+         * refuse. */
+        if demoActive, kind(of: to) == .home || kind(of: to) == .scanner {
+            endDemo()
+            return
+        }
         guard Flow.allowed(from: kind(of: route), to: kind(of: to)) else {
             assertionFailure("illegal route transition: \(kind(of: route)) -> \(kind(of: to))")
             return
@@ -601,6 +623,26 @@ final class Vault: ObservableObject {
         withAnimation(.timingCurve(0.16, 0.84, 0.24, 1, duration: 0.42)) {
             route = to
         }
+    }
+
+    /// Start the built-in demo walk: a deterministic, unbroadcastable
+    /// transaction from the engine, fed through the same scan-describe-sign
+    /// path a real one takes. Genuine cryptography against the demo vault's
+    /// keys — which is why entering and leaving are both explicit.
+    func beginDemo() {
+        guard engine != nil, !demoActive else { return }
+        demoActive = true
+        go(.acquiring)
+    }
+
+    /// The demo is over: wipe the demo session and put the passphrase screen
+    /// up, with the sentence that says why. Sets the route directly for the
+    /// same reason `sleep()` does — a relock must win from anywhere.
+    private func endDemo() {
+        demoActive = false
+        lock()
+        notice = "The demo session was wiped. Enter your passphrase to reopen your own vault."
+        route = .unlock
     }
 
     private func kind(of route: Route) -> RouteKind {

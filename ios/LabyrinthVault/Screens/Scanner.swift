@@ -28,8 +28,14 @@ struct ScannerView: View {
                         Statement("POINT AT", "THE COMPANION", size: 36).padding(.top, 12).padding(.bottom, 20)
 
                         CameraViewfinder(status: $status) {
+                            #if targetEnvironment(simulator)
+                            // No camera: the recognized frame is simulated, and
+                            // what follows is the built-in demo walk.
+                            vault.beginDemo()
+                            #else
                             // A recognized LV1/UR frame begins acquisition.
                             vault.go(.acquiring)
+                            #endif
                         }
                         .aspectRatio(1, contentMode: .fit)
 
@@ -43,6 +49,19 @@ struct ScannerView: View {
                             .lineSpacing(4)
                             .foregroundStyle(Ink.paperDim)
                             .padding(.vertical, 18)
+
+                        /* The one path through the signing flow that needs no
+                         * companion device: a deterministic transaction from
+                         * the engine, walked through the same read, review,
+                         * approve and sign a real one takes. Real cryptography
+                         * against the demo vault's keys — unbroadcastable by
+                         * construction — which is why the walk ends by wiping
+                         * the demo session and asking for your passphrase
+                         * back. Labeled for what it is, here and on every exit. */
+                        Lever(title: "WALK A DEMO TRANSACTION", hint: "NO COMPANION NEEDED", style: .quiet) {
+                            vault.beginDemo()
+                        }
+                        .padding(.bottom, 18)
                     }
                     .padding(.horizontal, 24)
                 }
@@ -204,10 +223,8 @@ struct CameraLayer: UIViewRepresentable {
 struct AcquiringView: View {
     @EnvironmentObject private var vault: Vault
     @State private var log: [String] = []
-    #if targetEnvironment(simulator)
     @State private var frames: [String] = []
     @State private var fed = 0
-    #endif
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 3), count: 14)
 
@@ -224,10 +241,14 @@ struct AcquiringView: View {
                 // On device the camera keeps running here, handing every frame
                 // to the engine. Aiming stays possible: acquisition is the few
                 // seconds an animated code takes to cycle, not a single moment.
-                CameraLayer(onFrame: { vault.offer(frame: $0) })
-                    .frame(height: 150)
-                    .clipped()
-                    .overlay(alignment: .bottom) { Hairline() }
+                // Except during the demo walk, whose frames come from the
+                // engine rather than the lens.
+                if !vault.demoActive {
+                    CameraLayer(onFrame: { vault.offer(frame: $0) })
+                        .frame(height: 150)
+                        .clipped()
+                        .overlay(alignment: .bottom) { Hairline() }
+                }
                 #endif
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -288,21 +309,19 @@ struct AcquiringView: View {
             }
         }
         .onAppear {
-            #if targetEnvironment(simulator)
-            // No camera to scan a companion: the engine hands over a real demo
-            // transaction (and opens the demo vault), and we feed its frames
-            // through the same path a scanned one takes.
+            guard vault.demoActive else { return }
+            // The demo walk, on any hardware: the engine hands over a real
+            // demo transaction (and opens the demo vault), and its frames
+            // feed through the same path a scanned one takes.
             frames = vault.demoFrames()
             if frames.isEmpty {
                 vault.go(.refused(.unreadable))
             } else {
                 feedNext()
             }
-            #endif
         }
     }
 
-    #if targetEnvironment(simulator)
     /// Feed the demo frames through `offer` one at a time, so the lattice fills
     /// the way a real scan fills it. `offer` describes and routes to review on
     /// the frame that completes the payload, and this view goes with it.
@@ -316,7 +335,6 @@ struct AcquiringView: View {
         if log.count > 4 { log.removeLast() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { feedNext() }
     }
-    #endif
 }
 
 // MARK: - Received

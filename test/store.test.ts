@@ -36,8 +36,14 @@ describe('both listings are complete and fit', () => {
       const dir = `store/${app}`;
 
       it('has every field App Store Connect asks for', () => {
+        /* The vault also carries its privacy policy, which is not a Connect
+         * form field but a URL the form demands; keeping the document here
+         * keeps it versioned next to the claims it repeats. The wallet gets
+         * one when it is submitted: its policy will differ (it talks to
+         * nodes), and writing it early would mean guessing. */
+        const extras = app === 'vault' ? ['review-notes.md', 'privacy-policy.md'] : ['review-notes.md'];
         const present = readdirSync(dir).sort();
-        expect(present).toEqual([...Object.keys(LIMITS).sort(), 'review-notes.md'].sort());
+        expect(present).toEqual([...Object.keys(LIMITS), ...extras].sort());
       });
 
       for (const [file, limit] of Object.entries(LIMITS)) {
@@ -80,13 +86,30 @@ describe('the listings say what the code does', () => {
     expect(existsSync('test/no-network.test.ts')).toBe(true);
   });
 
-  it('the vault does not claim Monero signing, because it cannot do it', () => {
-    /* The most tempting overclaim in the product. Monero is keys, addresses
-     * and recovery phrases; spending needs four layers that are named in
-     * docs/monero-signing.md and not built. */
-    const description = read('store/vault/description.txt');
+  it('the vault claims Monero signing only while the engine exports it', () => {
+    /* This guard used to point the other way: the listing said "cannot
+     * spend" while the layers docs/monero-signing.md names were unbuilt.
+     * They are built now — CLSAG signing over an unsigned set, tested in
+     * test/host-monerosign.test.ts — so the listing says so, and what this
+     * checks is that the claim and the capability stay attached: if
+     * `moneroSign` ever leaves the bridge, the sentence claiming it has to
+     * leave the listing in the same commit. */
+    const host = readFileSync('src/bridge/host.ts', 'utf8');
+    expect(host).toMatch(/moneroSign:\s*guarded\(/);
     const whatsNew = read('store/vault/whats-new.txt');
-    expect(`${description}\n${whatsNew}`).toMatch(/cannot spend|Monero is keys/i);
+    expect(whatsNew).toMatch(/Monero unsigned sets/);
+  });
+
+  it('the demo walk the listing sells is the one the scanner offers', () => {
+    /* The description tells a person they can try the flow with nothing but
+     * this app. That is a screen, not a sentence: the lever has to exist,
+     * and it has to be labeled a demo on the way in. */
+    const description = read('store/vault/description.txt');
+    expect(description).toMatch(/demo transaction/i);
+    const scanner = readFileSync('ios/LabyrinthVault/Screens/Scanner.swift', 'utf8');
+    expect(scanner).toMatch(/WALK A DEMO TRANSACTION/);
+    const notes = read('store/vault/review-notes.md');
+    expect(notes).toMatch(/WALK A DEMO TRANSACTION/);
   });
 
   it('the wallet says its numbers are fixtures, in the listing and on screen', () => {

@@ -138,16 +138,23 @@ private struct RadiosView: View {
 
 // MARK: 03 — airgap verification
 
+/// The app's half of the airgap, stated as fact. Not a probe: the radios are
+/// unreadable from inside this build, on purpose — seeing their switches
+/// would need frameworks the binary refuses to link — so what walks in here
+/// is only what the build can stand behind. The person's half was the
+/// previous screen, done by hand, and the copy says which half is which.
 private struct VerifyAirgapView: View {
     @EnvironmentObject private var vault: Vault
     @State private var shown = 0
     @State private var verdict = false
 
-    private let probes: [(String, String)] = [
-        ("WI-FI INTERFACE", "DOWN"), ("CELLULAR RADIO", "DOWN"),
-        ("BLUETOOTH STACK", "DOWN"), ("NETWORK ENTITLEMENT", "NOT REQUESTED"),
-        ("LINKED SOCKETS", "NONE"), ("CLOUD CONTAINER", "NONE"),
+    private let facts: [(String, String)] = [
+        ("NETWORK CODE IN BINARY", "NONE"),
+        ("NETWORK PERMISSION", "NOT REQUESTED"),
+        ("LINKED SOCKETS", "NONE"),
+        ("CLOUD CONTAINER", "NONE"),
         ("ACCOUNT SESSION", "NONE"),
+        ("RADIO SWITCHES", "YOURS · SETTINGS"),
     ]
 
     var body: some View {
@@ -155,23 +162,24 @@ private struct VerifyAirgapView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VaultBar(airgap: verdict ? .verified : .unverified)
                 VStack(alignment: .leading, spacing: 0) {
-                    Eyebrow("VERIFYING").padding(.top, 20)
+                    Eyebrow("THE APP'S HALF").padding(.top, 20)
                     Statement("NETWORK", "ACCESS", size: 42).padding(.top, 16)
-                    Text(verdict ? "NONE" : "· · ·")
-                        .font(Type.readout(44))
+                    Text(verdict ? "NONE TO HAVE" : "· · ·")
+                        .font(Type.readout(40))
                         .foregroundStyle(verdict ? Ink.verified : Ink.paperGhost)
                         .padding(.top, 16)
                         .padding(.bottom, 26)
 
                     ForEach(0..<shown, id: \.self) { i in
-                        FieldRow(label: probes[i].0, value: probes[i].1, tone: .verified)
+                        FieldRow(label: facts[i].0, value: facts[i].1,
+                                 tone: i == facts.count - 1 ? .dim : .verified)
                             .transition(.opacity.combined(with: .offset(y: 8)))
                     }
                     Spacer()
                     // Reached from first-run and from Settings' re-run; only
                     // first-run continues into the rest of setup.
                     Lever(title: "CONTINUE",
-                          hint: verdict ? "VERIFIED" : "VERIFYING",
+                          hint: verdict ? "STATED" : "READING",
                           enabled: verdict) {
                         vault.go(vault.hasVault ? .airgap : .setup(.boundary))
                     }
@@ -184,7 +192,7 @@ private struct VerifyAirgapView: View {
     }
 
     private func advance() {
-        guard shown < probes.count else {
+        guard shown < facts.count else {
             Haptic.signed()
             withAnimation(.easeOut(duration: 0.4)) { verdict = true }
             return

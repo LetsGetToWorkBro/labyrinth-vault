@@ -1,8 +1,10 @@
 //  Airgap.swift
-//  The diagnostic. Every line is a property of the device a person can check
-//  in Settings; the vault asserts nothing here it cannot be caught lying
-//  about. The absence of networking is the product, so absence is set like
-//  an instrument reading, not buried in a list.
+//  The diagnostic, split along the one line that matters: what the build can
+//  claim about itself, and what only the person holding the phone can make
+//  true. The app has no instrument for the radios — reading their switches
+//  would need the very frameworks it refuses to link — so it does not
+//  pretend to a reading. It states its half as fact and hands the other half
+//  over, named, checkable in Settings.
 
 import SwiftUI
 
@@ -18,7 +20,7 @@ struct AirgapView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             Eyebrow("DIAGNOSTIC")
                             Statement("AIRGAP", "STATUS", size: 40)
-                            Text("VERIFIED")
+                            Text("NO PATH OUT")
                                 .font(Type.readout(38))
                                 .foregroundStyle(Ink.verified)
                                 .padding(.top, 10)
@@ -26,30 +28,32 @@ struct AirgapView: View {
                         .padding(.top, 26)
                         .padding(.bottom, 26)
 
-                        section("NETWORK")
-                        FieldRow(label: "NETWORK PERMISSION", value: "NONE", tone: .verified)
-                        FieldRow(label: "WI-FI", value: "DISABLED")
-                        FieldRow(label: "BLUETOOTH", value: "DISABLED")
-                        FieldRow(label: "CELLULAR", value: "DISABLED")
-                        FieldRow(label: "SIM", value: "NOT PRESENT")
-                        FieldRow(label: "CLOUD", value: "NONE")
+                        section("THIS BUILD, AS FACT")
+                        FieldRow(label: "NETWORK CODE IN BINARY", value: "NONE", tone: .verified)
+                        FieldRow(label: "NETWORK PERMISSION", value: "NONE REQUESTED", tone: .verified)
+                        FieldRow(label: "CLOUD CONTAINER", value: "NONE")
                         FieldRow(label: "ACCOUNT", value: "NONE")
 
+                        section("YOURS TO KEEP TRUE")
+                        FieldRow(label: "WI-FI OFF", value: "CHECK IN SETTINGS", tone: .dim)
+                        FieldRow(label: "BLUETOOTH OFF", value: "CHECK IN SETTINGS", tone: .dim)
+                        FieldRow(label: "CELLULAR OFF", value: "CHECK IN SETTINGS", tone: .dim)
+                        FieldRow(label: "SIM OUT", value: "THE TRAY, NOT A SETTING", tone: .dim)
+
                         section("KEY STORAGE")
-                        FieldRow(label: "DEVICE SECURE HARDWARE", value: "ACTIVE", tone: .verified)
                         FieldRow(label: "ENCRYPTION AT REST", value: "ACTIVE", tone: .verified)
-                        FieldRow(label: "PASSPHRASE", value: "CONFIGURED", tone: .verified)
-                        FieldRow(label: "KEY EXPORTABLE", value: "NO")
+                        FieldRow(label: "PASSPHRASE", value: "REQUIRED TO OPEN", tone: .verified)
+                        FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                         FieldRow(label: "BACKUP SERVICE", value: "NONE")
 
                         section("BUILD")
-                        FieldRow(label: "NETWORK CODE IN BINARY", value: "NONE", tone: .verified)
                         FieldRow(label: "WIRE", value: "LV1 · BC-UR")
                         FieldRow(label: "VAULT ID", value: vault.vaultID)
 
-                        Text("Every reading above is checkable on this phone, in Settings, by you. " +
-                             "The vault requests no network permission, so the absence is a fact " +
-                             "about the device rather than a promise from an app.")
+                        Text("The app cannot see the radio switches, on purpose: reading them " +
+                             "would need frameworks this build refuses to link. Its half of the " +
+                             "airgap is compiled in and checkable against the binary. Your half " +
+                             "is in Settings, and it is the half that finishes the job.")
                             .font(Type.body(13.5))
                             .lineSpacing(4)
                             .foregroundStyle(Ink.paperDim)
