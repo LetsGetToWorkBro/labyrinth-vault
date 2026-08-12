@@ -524,6 +524,26 @@ export interface SwapOrder {
   /** The payout address the provider recorded. Echoed so it can be compared
    *  against the one that was sent, which is the point of the whole file. */
   payoutAddress: string;
+  /**
+   * What the exchange says it actually created the order for.
+   *
+   * This is the only thing that can catch a wrong chain. Every EVM chain
+   * takes the same 0x address, so a deposit or payout address proves nothing
+   * about which network an order lives on; the exchange naming the network
+   * back to us does. Exolix echoes `coinFrom`/`coinTo` objects carrying
+   * `coinCode` and `network`, and `verifyOrder` holds them against what was
+   * asked for.
+   *
+   * Null where a provider does not echo it, and null means unchecked rather
+   * than checked-and-fine. Godex publishes no public API documentation (the
+   * schema comes with partner onboarding), so its fields are null until
+   * somebody reads the real thing: guessing field names would produce a
+   * check that silently never fires, which is worse than a recorded gap.
+   */
+  fromCoin: string | null;
+  fromNetwork: string | null;
+  toCoin: string | null;
+  toNetwork: string | null;
 }
 
 export type SwapStage =
@@ -612,6 +632,29 @@ export function verifyOrder(request: SwapRequest, order: SwapOrder, quotedOut: n
       `The deposit address is not ${addressHint(request.pair.from)}.`,
       order.depositAddress || '(empty)',
     );
+  }
+
+  /* The chain check, and the only one that can exist.
+   *
+   * An address proves nothing about its network once EVM chains are in play,
+   * so the exchange naming the network back is the sole evidence that the
+   * order lives where it was asked to live. Checked in the provider's own
+   * spelling, since that is what was sent. Fields the provider does not echo
+   * are skipped and recorded as unchecked rather than treated as agreement. */
+  const echoed: [string, string | null, string | null][] = [
+    ['coin being sent', order.fromCoin, request.pair.from.ticker.toUpperCase()],
+    ['network being sent', order.fromNetwork, providerChain(request.provider, request.pair.from)],
+    ['coin coming back', order.toCoin, request.pair.to.ticker.toUpperCase()],
+    ['network coming back', order.toNetwork, providerChain(request.provider, request.pair.to)],
+  ];
+  for (const [what, said, asked] of echoed) {
+    if (said === null || asked === null) continue;
+    if (said.toUpperCase() !== asked.toUpperCase()) {
+      return fail(
+        `The exchange created this order for a different ${what}.`,
+        `asked ${asked}, order says ${said}`,
+      );
+    }
   }
 
   if (order.depositAddress === request.payoutAddress) {
@@ -741,6 +784,16 @@ export function parseExolixCreate(json: unknown): SwapOrder | null {
   const toAmount = number(body['amountTo']);
   const payoutAddress = text(body['withdrawalAddress']);
   if (!id || !depositAddress || !payoutAddress) return null;
+  /* The documented shape: coinFrom and coinTo are objects carrying coinCode
+   * and network. Read as untrusted, like everything else that crossed a
+   * network: a missing or malformed side reads as null, which verifyOrder
+   * treats as unchecked rather than as agreement. */
+  const side = (value: unknown) => {
+    const it = (value ?? {}) as Record<string, unknown>;
+    return { coin: text(it['coinCode']) || null, network: text(it['network']) || null };
+  };
+  const from = side(body['coinFrom']);
+  const to = side(body['coinTo']);
   return {
     provider: 'exolix',
     id,
@@ -749,6 +802,10 @@ export function parseExolixCreate(json: unknown): SwapOrder | null {
     depositAmount: amount,
     toAmount,
     payoutAddress,
+    fromCoin: from.coin,
+    fromNetwork: from.network,
+    toCoin: to.coin,
+    toNetwork: to.network,
   };
 }
 
@@ -762,11 +819,20 @@ export function parseExolixStatus(json: unknown): SwapStatus {
   const hash = text((body['hashOut'] as Record<string, unknown> | undefined)?.['hash']);
   const stage: SwapStage =
     raw === 'wait' ? 'waiting'
-    : raw === 'confirmation' ? 'confirming'
+    /* Exolix documents both `confirmation` and `confirmed`. The second sits
+     * between confirming and exchanging, and is read as the earlier of the
+     * two on purpose: understating progress costs a person nothing, while
+     * claiming the exchange has started when it has not is a claim this
+     * wallet cannot support. The raw word travels either way. */
+    : raw === 'confirmation' || raw === 'confirmed' ? 'confirming'
     : raw === 'exchanging' ? 'exchanging'
     : raw === 'sending' ? 'sending'
     : raw === 'success' ? 'done'
-    : raw === 'refunded' ? 'refunded'
+    /* `refund` is the refund under way, `refunded` is it done. Both mean the
+     * trade is not completing and the coins are coming back, which is one
+     * ending as far as the journey is concerned; the exchange's own word is
+     * shown so the difference is not lost. */
+    : raw === 'refunded' || raw === 'refund' ? 'refunded'
     : raw === 'overdue' ? 'expired'
     : raw === 'failed' || raw === 'error' ? 'failed'
     /* Anything else is a word added since this build. Say so; do not call
@@ -845,6 +911,15 @@ export function parseGodexCreate(json: unknown): SwapOrder | null {
     depositAmount: number(body['deposit_amount']),
     toAmount: number(body['withdrawal_amount']),
     payoutAddress,
+    /* Godex publishes no public API reference: the create-transaction schema
+     * arrives with partner onboarding. Reading a field name we have not seen
+     * would build a check that silently never fires, so these stay null and
+     * verifyOrder records the pair as unchecked. When the partner docs land,
+     * this is the one place to fill in. */
+    fromCoin: null,
+    fromNetwork: null,
+    toCoin: null,
+    toNetwork: null,
   };
 }
 

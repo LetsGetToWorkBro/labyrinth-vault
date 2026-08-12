@@ -89,6 +89,12 @@ function orderFor(request: SwapRequest, overrides: Partial<SwapOrder> = {}): Swa
     depositAmount: request.amount,
     toAmount: 7.5,
     payoutAddress: request.payoutAddress,
+    /* Unechoed by default, which is what a provider that says nothing about
+     * the network looks like. Tests that care set them explicitly. */
+    fromCoin: null,
+    fromNetwork: null,
+    toCoin: null,
+    toNetwork: null,
     ...overrides,
   };
 }
@@ -761,5 +767,138 @@ describe('being wrong about somebody else\'s money', () => {
     const result = await createOrder(transport, built.request, 1, quote);
     expect(result.ok).toBe(false);
     expect(asked, 'the exchange should never have been asked').toBe(false);
+  });
+});
+
+describe('the exchange naming the network back', () => {
+  /* The only check that can catch a wrong chain. Every EVM chain takes the
+   * same 0x address, so no address proves its network; the exchange saying
+   * which network it built the order on is the sole evidence there is.
+   *
+   * The response below is Exolix's own documented example, field for field,
+   * so the parser is held against the shape the API really returns rather
+   * than against a shape convenient to the parser. */
+  const DOC_RESPONSE = {
+    id: 'dsd8f65609bb20',
+    amount: 0.5,
+    amountTo: 505.631486,
+    coinFrom: {
+      coinCode: 'ETH',
+      coinName: 'Ethereum',
+      network: 'ETH',
+      networkName: 'Ethereum (ERC20)',
+      networkShortName: 'ERC20',
+      memoName: null,
+      contract: '0x0000000000000000000000000000000000000000',
+    },
+    coinTo: {
+      coinCode: 'USDT',
+      coinName: 'TetherUS',
+      network: 'ETH',
+      networkName: 'Ethereum (ERC20)',
+      networkShortName: 'ERC20',
+      memoName: null,
+      contract: '0x0000000000000000000000000000000000000000',
+    },
+    comment: null,
+    createdAt: '2022-06-02T12:45:37.623Z',
+    depositAddress: '0xDb3B8a6dd4ddfDCA3330eaebc1a20aF26fDbbCfa',
+    depositExtraId: null,
+    withdrawalAddress: '0x0E29D1E501q90649Adss982E90dd455006e4522FC',
+    withdrawalExtraId: '',
+    refundAddress: '0x0070BeBe9E30429437bD9c84C731031c27Fc7955',
+    refundExtraId: '',
+    hashIn: { hash: null, link: null },
+    hashOut: { hash: null, link: null },
+    rate: 1011.262972,
+    rateType: 'float',
+    status: 'wait',
+  };
+
+  it('reads the documented response, network and all', () => {
+    const order = parseExolixCreate(DOC_RESPONSE)!;
+    expect(order).not.toBeNull();
+    expect(order.id).toBe('dsd8f65609bb20');
+    expect(order.depositAddress).toBe('0xDb3B8a6dd4ddfDCA3330eaebc1a20aF26fDbbCfa');
+    expect(order.depositAmount).toBe(0.5);
+    expect(order.toAmount).toBe(505.631486);
+    expect(order.fromCoin).toBe('ETH');
+    expect(order.fromNetwork).toBe('ETH');
+    expect(order.toCoin).toBe('USDT');
+    expect(order.toNetwork).toBe('ETH');
+    /* An absent extra id is null, not the string "null". */
+    expect(order.depositExtra).toBeNull();
+  });
+
+  it('refuses an order the exchange built on a different chain', () => {
+    /* The failure this exists for: ask for USDT on Arbitrum, receive an
+     * order for USDT on Ethereum. Both deposit addresses are valid 0x
+     * strings, both pass every shape check, and only this comparison can
+     * tell them apart. */
+    const pair = parsePair('xmr', 'usdt-arbitrum') as Extract<ReturnType<typeof parsePair>, { ok: true }>;
+    const built = buildRequest({
+      provider: 'exolix',
+      pair: pair.pair,
+      amount: 1,
+      own,
+      typedPayout: '0x' + 'a'.repeat(40),
+    }) as Extract<ReturnType<typeof buildRequest>, { ok: true }>;
+    expect(built.ok).toBe(true);
+
+    const right = orderFor(built.request, {
+      fromCoin: 'XMR', fromNetwork: 'XMR', toCoin: 'USDT', toNetwork: 'ARBITRUM',
+      depositAddress: '4' + 'A'.repeat(94),
+    });
+    expect(verifyOrder(built.request, right, 7.5).ok).toBe(true);
+
+    const wrongChain = orderFor(built.request, {
+      fromCoin: 'XMR', fromNetwork: 'XMR', toCoin: 'USDT', toNetwork: 'ETH',
+      depositAddress: '4' + 'A'.repeat(94),
+    });
+    const check = verifyOrder(built.request, wrongChain, 7.5);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/different network coming back/i);
+    expect(check.ok === false && check.detail).toMatch(/ARBITRUM.*ETH/);
+  });
+
+  it('refuses an order the exchange built for a different coin', () => {
+    const request = btcToXmr();
+    const swapped = orderFor(request, { toCoin: 'LTC', toNetwork: 'XMR', fromCoin: 'BTC', fromNetwork: 'BTC' });
+    const check = verifyOrder(request, swapped, 7.5);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.problem).toMatch(/different coin coming back/i);
+  });
+
+  it('treats an unechoed network as unchecked, not as agreement', () => {
+    /* Godex publishes no public schema, so its orders carry nulls. A null
+     * must not read as a match: it means nobody checked, and the pair is
+     * accepted on the strength of the other checks alone. */
+    const request = btcToXmr();
+    const silent = orderFor(request);
+    expect(silent.fromNetwork).toBeNull();
+    expect(verifyOrder(request, silent, 7.5).ok).toBe(true);
+  });
+
+  it('maps every status Exolix documents', () => {
+    /* The documented set, verbatim. `confirmed` and `refund` were both
+     * missing before these docs arrived, and both would have been reported
+     * as a failure by the old fallback. */
+    const documented: Record<string, string> = {
+      wait: 'waiting',
+      confirmation: 'confirming',
+      confirmed: 'confirming',
+      exchanging: 'exchanging',
+      sending: 'sending',
+      success: 'done',
+      overdue: 'expired',
+      refund: 'refunded',
+      refunded: 'refunded',
+    };
+    for (const [word, stage] of Object.entries(documented)) {
+      expect(parseExolixStatus({ status: word }).stage, word).toBe(stage);
+      /* And none of the documented words is ever 'unknown', which is the
+       * bucket reserved for vocabulary this build has genuinely not seen. */
+      expect(parseExolixStatus({ status: word }).stage, word).not.toBe('unknown');
+    }
   });
 });
