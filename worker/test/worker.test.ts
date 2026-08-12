@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
+import { nodeTarget } from '../src/nodes';
 import { bucketKey, checkLimit } from '../src/ratelimit';
 import { ALLOWED_HOSTS, buildCreate, buildQuote, buildStatus, knownProvider, send } from '../src/upstream';
 
@@ -275,5 +276,56 @@ describe('the keys stay here, and travel where each provider wants them', () => 
     const answer = await send(built.request, 'godex', {}, fetcher);
     expect(answer.status).toBe(503);
     expect(answer.body).toMatchObject({ problem: expect.stringContaining('down') });
+  });
+});
+
+describe('the chain node relay', () => {
+  it('relays only to the nodes this app suggests', () => {
+    for (const host of ['mempool.space', 'blockstream.info', 'xmr-node.cakewallet.com', 'node.monerodevs.org']) {
+      expect(nodeTarget(host, '/blocks/tip/height').ok, host).toBe(true);
+    }
+  });
+
+  it('refuses a host it was not given, however it is asked', () => {
+    /* An open relay is a free anonymiser for whoever finds it. A node
+     * somebody runs themselves is reached directly by the app and never
+     * arrives here at all. */
+    for (const host of ['evil.example', 'localhost', '127.0.0.1', '', 'mempool.space.evil.example']) {
+      expect(nodeTarget(host, '/x').ok, host).toBe(false);
+    }
+  });
+
+  it('will not be walked out of its own origin', () => {
+    const escapes = [
+      '/../../etc/passwd',
+      '/..%2f..%2fadmin',
+      '//evil.example/x',
+      '/%2e%2e/%2e%2e/x',
+      '\\evil',
+      'no-leading-slash',
+      'https://evil.example/x',
+      '/x\\..\\y',
+    ];
+    for (const path of escapes) {
+      const target = nodeTarget('mempool.space', path);
+      if (target.ok) {
+        /* If it was allowed at all, it must still be the same origin. */
+        expect(new URL(target.url).origin, path).toBe('https://mempool.space');
+      } else {
+        expect(target.ok, path).toBe(false);
+      }
+    }
+  });
+
+  it('keeps the caller off the origin entirely', () => {
+    const target = nodeTarget('mempool.space', '/address/bc1qexample/utxo');
+    expect(target.ok).toBe(true);
+    if (target.ok) {
+      expect(target.url).toBe('https://mempool.space/api/address/bc1qexample/utxo');
+    }
+  });
+
+  it('bounds the path', () => {
+    expect(nodeTarget('mempool.space', '/' + 'a'.repeat(600)).ok).toBe(false);
   });
 });

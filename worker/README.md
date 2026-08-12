@@ -1,6 +1,6 @@
-# The swap proxy
+# The Labyrinth relay
 
-One Worker, three routes, and a short list of things it refuses to do.
+One Worker, five routes, and a short list of things it refuses to do.
 
 A swap is the only part of this product that talks to a stranger about coins
 somebody owns. Done from the phone, it hands an exchange that person's IP
@@ -18,6 +18,31 @@ represents.
 | `/v1/create` | POST | the above, plus `payoutAddress` and `refundAddress` |
 | `/v1/status` | GET | `provider`, `id` |
 | `/v1/health` | GET | nothing, answers nothing about configuration |
+| `/v1/node` | GET, POST | `host`, `path`: relays to a published public chain node |
+
+## The chain nodes, which leak more than the swap did
+
+Asking a public Esplora server about your addresses tells that server your
+whole Bitcoin wallet: every address, at once, from one IP. The swap only ever
+exposed a single trade. And broadcasting from the phone puts the address that
+first announced a transaction next to the transaction, on either chain, which
+is the ordinary way somebody is found. So `/v1/node` stands in front of both.
+
+Two rules keep that from becoming its own problem:
+
+**A node somebody runs themselves is never relayed.** The wallet decides this,
+in `wallet/src/net/nodeproxy.ts`, because the wallet is the side that knows
+whose machine it is. Traffic to a person's own node already goes somewhere
+they trust over a network they control, and putting Labyrinth in that path
+would take a private arrangement and hand it to a stranger. It is the
+opposite of a privacy feature wearing the same word.
+
+**Only the nodes this app suggests may be relayed.** Not any URL. The origin
+comes from a table here and never from the caller, the path is taken as a
+path and nothing else, and a test walks the escapes (`..`, encoded `..`,
+`//host`, a scheme in the path) to prove the origin holds. A custom node that
+is neither theirs nor suggested is reached directly, and the app says so
+rather than quietly rerouting it.
 
 It takes an **intent**, never a URL. The upstream request is built here by the
 same functions the wallet uses, imported from `wallet/src/core/swap.ts`, so

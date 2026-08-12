@@ -33,6 +33,7 @@
  * infrastructure does not have to be trusted.
  */
 
+import { nodeTarget } from './nodes';
 import { checkLimit } from './ratelimit';
 import { buildCreate, buildQuote, buildStatus, knownProvider, send, type Intent, type Keys } from './upstream';
 
@@ -112,6 +113,40 @@ export default {
     }
 
     try {
+      /* The chain node relay. A public node learns every address it is
+       * asked about and, on a broadcast, which address announced a
+       * transaction first; this puts Cloudflare in front of both. A node
+       * somebody runs themselves never arrives here, because the wallet
+       * sends that traffic straight there rather than through a stranger. */
+      if (url.pathname === '/v1/node') {
+        const target = nodeTarget(url.searchParams.get('host') ?? '', url.searchParams.get('path') ?? '');
+        if (!target.ok) return problem(target.problem, 400);
+        if (request.method !== 'GET' && request.method !== 'POST') {
+          return problem('That method is not relayed.', 405);
+        }
+        /* The content type is carried across rather than assumed. Esplora
+         * takes a broadcast as text/plain: a raw transaction retyped as JSON
+         * arrives at the node as a quoted string and fails for a reason
+         * nobody would think to look for. */
+        const contentType = request.headers.get('Content-Type') ?? 'application/json';
+        const upstream = await fetch(target.url, {
+          method: request.method,
+          headers: { Accept: 'application/json', 'Content-Type': contentType },
+          ...(request.method === 'POST' ? { body: await request.text() } : {}),
+        });
+        /* Handed back as it arrived, body and status. This Worker does not
+         * read chain data any more than it reads an exchange's answer: the
+         * wallet scans, verifies and decides, on the device. */
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') ?? 'application/json',
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        });
+      }
+
       if (url.pathname === '/v1/status' && request.method === 'GET') {
         const provider = knownProvider(url.searchParams.get('provider'));
         if (!provider) return problem('Unknown exchange.', 400);
