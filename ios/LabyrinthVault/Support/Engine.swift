@@ -202,6 +202,8 @@ final class Engine {
         let account: Account
         struct Account: Decodable { let zpub: String? }
     }
+    /// Simulator only. The demo transaction's frames.
+    struct DemoReply: Decodable { let frames: [String] }
     struct BackupReply: Decodable { let bitcoin: [String]; let monero: [String] }
     struct ScanReply: Decodable {
         let format: String?
@@ -277,6 +279,11 @@ final class Engine {
     func isUnlocked() -> Bool { ((try? call("unlocked")) as UnlockedReply?)?.unlocked ?? false }
 
     func exportAccount(chain: String) throws -> ExportReply { try call("exportAccount", [chain]) }
+
+    /// Simulator only: a demo transaction as scannable frames. Opens the demo
+    /// vault into the session as a side effect, so `describe` and `sign` then
+    /// work on it exactly as they would for a scanned one. See host.ts.
+    func demoUnsigned() throws -> DemoReply { try call("demoUnsigned") }
     func revealBackup() throws -> BackupReply { try call("revealBackup") }
 
     func scan(_ text: String) throws -> ScanReply { try call("scan", [text]) }

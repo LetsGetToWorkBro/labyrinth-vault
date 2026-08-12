@@ -263,6 +263,16 @@ final class Vault: ObservableObject {
         go(.scanner)
     }
 
+    /// STAGED, Simulator only. The demo transaction's frames from the engine,
+    /// which also opens the demo vault so the sign that follows is genuine.
+    /// Feeding these through `offer(frame:)` drives the same describe-and-route
+    /// path a scanned transaction takes, so the whole flow can be walked where
+    /// there is no camera and no companion.
+    func demoFrames() -> [String] {
+        guard let engine else { return [] }
+        return (try? engine.demoUnsigned())?.frames ?? []
+    }
+
     /// Offer one frame from the camera.
     ///
     /// When a payload completes, it is described immediately and the result

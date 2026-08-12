@@ -690,3 +690,30 @@ export function signPsbt(psbt: Uint8Array, wallet: BtcWallet, approval: PsbtSumm
   if (txid !== undefined) result.txid = txid;
   return result;
 }
+
+/**
+ * A demo unsigned transaction for a wallet, for the Simulator only.
+ *
+ * The Simulator has no camera, so there is no companion to scan a real spend
+ * from. This stands one in: a genuine PSBT, built by the same
+ * `@scure/btc-signer` the online wallet uses, with one input the wallet owns,
+ * a payment to a well-known address, and change re-derived back to the wallet.
+ * Because it is a real PSBT for the real (demo) keys, the vault reads it,
+ * describes it, and signs it through the ordinary path with no shortcut, which
+ * is the whole point: the flow a tester walks is the flow that ships.
+ *
+ * It is not broadcastable and never could be. The input names a txid that
+ * exists on no chain, so the signature it produces spends nothing. That is
+ * exactly right for something a Simulator hands itself.
+ */
+export function demoUnsignedPsbt(wallet: BtcWallet): Uint8Array {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({
+    txid: new Uint8Array(32).fill(5),
+    index: 0,
+    witnessUtxo: { script: addressAt(wallet, 0, 0).script, amount: 200_000n },
+  });
+  tx.addOutputAddress('bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', 150_000n);
+  tx.addOutput({ script: addressAt(wallet, 1, 0).script, amount: 45_000n });
+  return tx.toPSBT();
+}

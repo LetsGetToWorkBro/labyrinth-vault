@@ -73,7 +73,7 @@ import {
   type Wallet as MoneroWallet,
 } from '../keys/monero';
 import { MONERO_UNSUPPORTED, readContainer, readContainerText } from '../keys/monerotx';
-import { describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
+import { demoUnsignedPsbt, describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
 import { calibrateKdf, looksSealed, seal, unseal, type KdfParams } from '../keys/seal';
 import { wipe } from '../keys/wipe';
 import { allChecksPass, selfTest } from '../selftest';
@@ -376,6 +376,26 @@ export const api = {
     const account = chain === 'xmr' ? moneroAccount(open.xmr) : bitcoinAccount(open.btc);
     const frames = encodeParts('ACCOUNT' satisfies PayloadKind, encodeAccount(account));
     return done({ account, frames });
+  }),
+
+  /**
+   * A deterministic demo vault and a real transaction for it, as the frames a
+   * Simulator scans itself. There is no camera in the Simulator, so the whole
+   * confirmation flow would have nothing to render; this gives it something
+   * genuine. The randomness is fixed, so it is the same vault and the same
+   * transaction every run, and it is opened into the session exactly as
+   * `unlock` opens a real one, so `describe` and `sign` then behave with no
+   * special case. The transaction is unbroadcastable by construction (see
+   * `demoUnsignedPsbt`); nothing here can move a coin.
+   */
+  demoUnsigned: guarded('demoUnsigned', () => {
+    const random = new Uint8Array(88);
+    for (let i = 0; i < random.length; i++) random[i] = (i * 7 + 11) & 0xff;
+    const secret = deriveSecret(random, new Uint8Array(0));
+    session = openSession(secret);
+    wipe(secret, random);
+    const frames = encodeParts('PSBT' satisfies PayloadKind, demoUnsignedPsbt(session.btc));
+    return done({ frames });
   }),
 
   /**

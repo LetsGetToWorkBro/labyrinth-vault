@@ -352,3 +352,42 @@ describe('nothing crosses the bridge as an exception', () => {
     expect(result.params.p).toBe(1);
   });
 });
+
+describe('the simulator demo transaction, through the bundle', () => {
+  /* The Simulator has no camera, so `demoUnsigned` stands in a real, signable
+   * transaction and opens the demo vault. This walks the exact path the app
+   * walks: reassemble the frames the scanner would, describe them, sign them.
+   * If this passes, a Simulator can walk scan -> review -> sign end to end. */
+  const api = loadBundle();
+
+  it('hands back a real transaction, opens the session, and signs through the scan path', () => {
+    const demo = call(api, 'demoUnsigned');
+    expect(demo.ok, demo.problem).toBe(true);
+    expect(Array.isArray(demo.frames)).toBe(true);
+    expect(demo.frames[0]).toMatch(/^LV1:PSBT:/);
+    // Opened into the session exactly as unlock would.
+    expect(call(api, 'unlocked').unlocked).toBe(true);
+
+    // Reassemble like the scanner, then read what arrived.
+    call(api, 'scanReset');
+    let payload = '';
+    for (const frame of demo.frames) {
+      const r = call(api, 'scan', frame);
+      expect(r.ok).toBe(true);
+      if (r.payload) payload = r.payload;
+    }
+    expect(payload, 'the frames did not reassemble into a payload').not.toBe('');
+
+    const read = call(api, 'describe', payload);
+    expect(read.ok, read.problem).toBe(true);
+    expect(read.summary.signable).toBe(true);
+    expect(read.summary.outputs).toHaveLength(2);
+    expect(read.summary.outputs.some((o: { mine: boolean }) => !o.mine)).toBe(true);
+    expect(read.summary.outputs.some((o: { mine: boolean }) => o.mine)).toBe(true);
+
+    const signed = call(api, 'sign', payload, read.summary.digest);
+    expect(signed.ok, signed.problem).toBe(true);
+    expect(signed.signed).toBe(1);
+    expect(signed.frames[0]).toMatch(/^LV1:TXSIGNED:/);
+  });
+});

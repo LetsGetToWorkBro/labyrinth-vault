@@ -203,51 +203,60 @@ struct CameraLayer: UIViewRepresentable {
 
 struct AcquiringView: View {
     @EnvironmentObject private var vault: Vault
-
-    private let total = 42
-    @State private var order: [Int] = Array(1...42).shuffled()
-    @State private var received: Set<Int> = []
-    @State private var newest: Int? = nil
-    @State private var repeats = 0
     @State private var log: [String] = []
-    @State private var complete = false
+    #if targetEnvironment(simulator)
+    @State private var frames: [String] = []
+    @State private var fed = 0
+    #endif
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 3), count: 14)
+
+    /// Real progress, from the engine's reassembly, not a simulated count.
+    private var have: Int { vault.scanProgress.have }
+    private var total: Int { max(vault.scanProgress.total, have) }
+    private var complete: Bool { total > 0 && have >= total }
 
     var body: some View {
         Screen {
             VStack(alignment: .leading, spacing: 0) {
                 VaultBar()
+                #if !targetEnvironment(simulator)
+                // On device the camera keeps running here, handing every frame
+                // to the engine. Aiming stays possible: acquisition is the few
+                // seconds an animated code takes to cycle, not a single moment.
+                CameraLayer(onFrame: { vault.offer(frame: $0) })
+                    .frame(height: 150)
+                    .clipped()
+                    .overlay(alignment: .bottom) { Hairline() }
+                #endif
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Eyebrow("RECEIVING TRANSACTION").padding(.top, 16)
 
                         // The count, set like an instrument readout.
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text("\(received.count)").foregroundStyle(Ink.paper)
+                            Text("\(have)").foregroundStyle(Ink.paper)
                             Text("/").foregroundStyle(Ink.paperGhost)
-                            Text("\(total)").foregroundStyle(Ink.paper)
+                            Text(total > 0 ? "\(total)" : "?").foregroundStyle(Ink.paper)
                         }
                         .font(Type.readout(56))
                         .padding(.top, 12)
                         Eyebrow("FRAGMENTS ACQUIRED").padding(.top, 10).padding(.bottom, 22)
 
-                        // The lattice. Out-of-order fill is the point.
-                        LazyVGrid(columns: columns, spacing: 3) {
-                            ForEach(1...total, id: \.self) { i in
-                                Rectangle()
-                                    .fill(cellColor(i))
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .scaleEffect(i == newest ? 1.2 : 1)
-                                    .animation(.easeOut(duration: 0.35), value: received)
-                                    .animation(.easeOut(duration: 0.35), value: newest)
+                        // The lattice fills as fragments arrive.
+                        if total > 0 {
+                            LazyVGrid(columns: columns, spacing: 3) {
+                                ForEach(1...total, id: \.self) { i in
+                                    Rectangle()
+                                        .fill(i <= have ? Ink.paper : Ink.paper.opacity(0.07))
+                                        .aspectRatio(1, contentMode: .fit)
+                                        .animation(.easeOut(duration: 0.3), value: have)
+                                }
                             }
                         }
 
-                        FieldRow(label: "RECEIVED", value: "\(received.count)").padding(.top, 22)
-                        FieldRow(label: "MISSING", value: "\(total - received.count)")
-                        FieldRow(label: "REPEATS DISCARDED", value: "\(repeats)")
-                        FieldRow(label: "DIGEST", value: "9F2A1C04…")
+                        FieldRow(label: "RECEIVED", value: "\(have)").padding(.top, 22)
+                        FieldRow(label: "MISSING", value: total > 0 ? "\(max(total - have, 0))" : "UNKNOWN")
 
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(log.indices, id: \.self) { i in
@@ -278,44 +287,36 @@ struct AcquiringView: View {
                     .overlay(alignment: .top) { Hairline() }
             }
         }
-        .onAppear { pump() }
-    }
-
-    private func cellColor(_ i: Int) -> Color {
-        if i == newest { return Ink.attention }
-        return received.contains(i) ? Ink.paper : Ink.paper.opacity(0.07)
-    }
-
-    /// STAGED: the simulated wire. On device this is fed by the scanner's
-    /// frame callback; the presentation is identical.
-    private func pump() {
-        guard !complete else { return }
-        guard received.count < total else {
-            complete = true
-            Haptic.signed()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { vault.go(.received) }
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.105) {
-            // The camera occasionally re-reads a frame it already has; shown
-            // as normal traffic, never as an error.
-            if received.count > 2, Int.random(in: 0..<6) == 0 {
-                repeats += 1
-                push("FRAME \(received.randomElement() ?? 1) · REPEAT, DISCARDED")
-            } else if let next = order.popLast() {
-                received.insert(next)
-                newest = next
-                if received.count % 4 == 0 { Haptic.frame() }
-                push("FRAME \(next) · VERIFIED")
+        .onAppear {
+            #if targetEnvironment(simulator)
+            // No camera to scan a companion: the engine hands over a real demo
+            // transaction (and opens the demo vault), and we feed its frames
+            // through the same path a scanned one takes.
+            frames = vault.demoFrames()
+            if frames.isEmpty {
+                vault.go(.refused(.unreadable))
+            } else {
+                feedNext()
             }
-            pump()
+            #endif
         }
     }
 
-    private func push(_ line: String) {
-        log.insert(line, at: 0)
+    #if targetEnvironment(simulator)
+    /// Feed the demo frames through `offer` one at a time, so the lattice fills
+    /// the way a real scan fills it. `offer` describes and routes to review on
+    /// the frame that completes the payload, and this view goes with it.
+    private func feedNext() {
+        guard fed < frames.count else { return }
+        let frame = frames[fed]
+        fed += 1
+        vault.offer(frame: frame)
+        if fed % 4 == 0 { Haptic.frame() }
+        log.insert("FRAME \(fed) · VERIFIED", at: 0)
         if log.count > 4 { log.removeLast() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { feedNext() }
     }
+    #endif
 }
 
 // MARK: - Received

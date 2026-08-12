@@ -15602,6 +15602,17 @@ zoo`.split("\n"));
     if (txid !== void 0) result.txid = txid;
     return result;
   }
+  function demoUnsignedPsbt(wallet) {
+    const tx = new Transaction({ allowUnknownOutputs: true });
+    tx.addInput({
+      txid: new Uint8Array(32).fill(5),
+      index: 0,
+      witnessUtxo: { script: addressAt(wallet, 0, 0).script, amount: 200000n }
+    });
+    tx.addOutputAddress("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu", 150000n);
+    tx.addOutput({ script: addressAt(wallet, 1, 0).script, amount: 45000n });
+    return tx.toPSBT();
+  }
 
   // node_modules/@noble/hashes/_blake.js
   var BSIGMA = /* @__PURE__ */ Uint8Array.from([
@@ -17609,6 +17620,25 @@ zoo`.split("\n"));
       const account = chain2 === "xmr" ? moneroAccount(open.xmr) : bitcoinAccount(open.btc);
       const frames = encodeParts("ACCOUNT", encodeAccount(account));
       return done({ account, frames });
+    }),
+    /**
+     * A deterministic demo vault and a real transaction for it, as the frames a
+     * Simulator scans itself. There is no camera in the Simulator, so the whole
+     * confirmation flow would have nothing to render; this gives it something
+     * genuine. The randomness is fixed, so it is the same vault and the same
+     * transaction every run, and it is opened into the session exactly as
+     * `unlock` opens a real one, so `describe` and `sign` then behave with no
+     * special case. The transaction is unbroadcastable by construction (see
+     * `demoUnsignedPsbt`); nothing here can move a coin.
+     */
+    demoUnsigned: guarded("demoUnsigned", () => {
+      const random = new Uint8Array(88);
+      for (let i = 0; i < random.length; i++) random[i] = i * 7 + 11 & 255;
+      const secret = deriveSecret(random, new Uint8Array(0));
+      session = openSession(secret);
+      wipe(secret, random);
+      const frames = encodeParts("PSBT", demoUnsignedPsbt(session.btc));
+      return done({ frames });
     }),
     /**
      * The recovery words, for the screen that asks somebody to write them down.
