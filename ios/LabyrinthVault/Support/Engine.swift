@@ -24,45 +24,6 @@ import JavaScriptCore
 import Security
 
 /// What the bundle answered, before it means anything.
-private struct Envelope: Decodable {
-    let ok: Bool
-    let problem: String?
-    /// Set when the refusal is one the screen has a case for. See
-    /// `failCoded` in src/bridge/host.ts.
-    let code: String?
-}
-
-enum EngineError: LocalizedError {
-    case bundleMissing
-    case bundleTampered(String)
-    case bundleFailed(String)
-    case versionMismatch(Int, Int)
-    case refused(String)
-    /// A refusal the engine named. The words may change; the code is the contract.
-    case refusedAs(code: String, why: String)
-    case undecodable(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .bundleMissing:
-            "The vault engine is missing from this build."
-        case .bundleTampered(let got):
-            "The vault engine is not the one this app was built with (\(got.prefix(16))…). "
-            + "Nothing was run. Reinstall from a source you trust."
-        case .bundleFailed(let why):
-            "The vault engine did not load: \(why)"
-        case .versionMismatch(let got, let want):
-            "This app expects engine \(want) and the bundle is \(got). Reinstall rather than guess."
-        case .refused(let why):
-            why
-        case .refusedAs(_, let why):
-            why
-        case .undecodable(let what):
-            "The engine answered with something this app could not read (\(what))."
-        }
-    }
-}
-
 /// The vault engine.
 ///
 /// One instance, created at launch, held for the life of the process. Keys live
@@ -145,19 +106,11 @@ final class Engine {
         return result?.toString() ?? #"{"ok":false,"problem":"the engine answered nothing"}"#
     }
 
+    /* The reading itself, including the rule that a refusal is read before a
+     * payload, is in EngineReplies.swift under test. This is only the
+     * decoder instance. */
     private func decode<T: Decodable>(_ json: String) throws -> T {
-        guard let data = json.data(using: .utf8) else { throw EngineError.undecodable("not text") }
-        // The refusal shape first: a failure carries no payload to decode.
-        if let envelope = try? decoder.decode(Envelope.self, from: data), !envelope.ok {
-            let why = envelope.problem ?? "The vault refused."
-            if let code = envelope.code { throw EngineError.refusedAs(code: code, why: why) }
-            throw EngineError.refused(why)
-        }
-        do {
-            return try decoder.decode(T.self, from: data)
-        } catch {
-            throw EngineError.undecodable(String(describing: T.self))
-        }
+        try decodeReply(json, using: decoder)
     }
 
     private func call<T: Decodable>(_ name: String, _ arguments: [Any] = []) throws -> T {
@@ -167,83 +120,33 @@ final class Engine {
     /// For calls whose only interesting answer is "did it work".
     @discardableResult
     private func callVoid(_ name: String, _ arguments: [Any] = []) throws -> Bool {
-        let _: Envelope = try decode(raw(name, arguments))
+        let _: EngineEnvelope = try decode(raw(name, arguments))
         return true
     }
 
     // MARK: - Reply shapes
     // Each mirrors what the matching function in host.ts returns.
 
-    private struct VersionReply: Decodable { let version: Int }
-    struct SelfTestReply: Decodable {
-        let passed: Bool
-        let checks: [Check]
-        struct Check: Decodable, Identifiable {
-            let name: String
-            let proves: String
-            let ok: Bool
-            let detail: String
-            var id: String { name }
-        }
-    }
-    struct CreateReply: Decodable { let sealed: String }
-    struct UnlockReply: Decodable {
-        let btcAccount: BtcAccount
-        let xmrAddress: String
-        struct BtcAccount: Decodable { let zpub: String; let first: String }
-    }
-    struct UnlockedReply: Decodable { let unlocked: Bool }
-    /// The watch-only export: the frames to animate, and the account they
-    /// carry. `zpub` is optional because the same reply shape serves a Monero
-    /// export, which has an address rather than an account key; the one screen
-    /// that reads it exports Bitcoin, where it is always present.
-    struct ExportReply: Decodable {
-        let frames: [String]
-        let account: Account
-        struct Account: Decodable { let zpub: String? }
-    }
-    /// Simulator only. The demo transaction's frames.
-    struct DemoReply: Decodable { let frames: [String] }
-    struct BackupReply: Decodable { let bitcoin: [String]; let monero: [String] }
-    struct ScanReply: Decodable {
-        let format: String?
-        let have: Int
-        let total: Int
-        let kind: String?
-        let problem: String?
-        let payload: String?
-    }
-    struct DescribeReply: Decodable { let summary: TxSummary }
-    /// Equatable because `Route.xmrSigned` carries it, same as `SignReply`.
-    /// The reply also carries the outputs for the record; the screen renders
-    /// the summary a person approved, not a re-statement of it, so they are
-    /// deliberately not decoded here.
-    struct MoneroSignReply: Decodable, Equatable {
-        let txid: String
-        let network: String
-        let keyImages: [String]
-        let frames: [String]
-    }
-    /// Equatable because `Route` carries it and `Route` is Equatable: the
-    /// screens compare routes for their animation identity, and a reply that
-    /// was not comparable would make the enum uncompilable rather than merely
-    /// awkward. Every field already is.
-    struct SignReply: Decodable, Equatable {
-        let signed: Int
-        let txid: String?
-        let frames: [String]?
-    }
-    struct CalibrateReply: Decodable {
-        let params: Params
-        struct Params: Decodable { let t: Int; let m: Int; let p: Int }
-    }
-    struct CheckReply: Decodable { let state: String; let note: String? }
-    /// Equatable for the same reason as `SignReply`: `Route.keyImages` carries it.
-    struct KeyImagesReply: Decodable, Equatable {
-        let answered: Int
-        let refused: Int
-        let frames: [String]
-    }
+    /* The shapes themselves are in EngineReplies.swift, which a compiler can
+     * reach without Xcode. These aliases keep every call site written as
+     * `Engine.SignReply` and make this list the manifest of what the engine
+     * can answer: a reply added without an entry here fails to compile where
+     * it is used, which is where somebody will be looking. */
+    typealias VersionReply = EngineReply.Version
+    typealias SelfTestReply = EngineReply.SelfTest
+    typealias CreateReply = EngineReply.Create
+    typealias UnlockReply = EngineReply.Unlock
+    typealias UnlockedReply = EngineReply.Unlocked
+    typealias ExportReply = EngineReply.Export
+    typealias DemoReply = EngineReply.Demo
+    typealias BackupReply = EngineReply.Backup
+    typealias ScanReply = EngineReply.Scan
+    typealias DescribeReply = EngineReply.Describe
+    typealias MoneroSignReply = EngineReply.MoneroSign
+    typealias SignReply = EngineReply.Sign
+    typealias CalibrateReply = EngineReply.Calibrate
+    typealias CheckReply = EngineReply.Check
+    typealias KeyImagesReply = EngineReply.KeyImages
 
     // MARK: - The API
     //
