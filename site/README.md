@@ -82,6 +82,23 @@ Fine for a one-off. The Git connection is better for anything ongoing, because
 it deploys what is on `main` rather than what happened to be in somebody's
 working tree.
 
+## Sizing the display type
+
+Every headline is set `clamp(floor, Nvw, ceiling)`, and on a phone **only the
+floor is doing anything**. At 320px wide, `8.5vw` is 27px, so a `4rem` floor
+wins at every width below about 750px: the vw term looks responsive and is
+decorative, and one fixed number decides how the page reads on every phone
+there is. That is how a 12-character word ended up 490px wide in a 350px
+column, cut off at the screen edge.
+
+So the sizes in the `max-width: 700px` block are not taste. Each one was
+picked by measuring that heading's longest unbreakable word in em, in the
+browser, at its own weight and tracking, then dividing the width the heading
+actually gets at 320px by it. `test/site-claims.test.ts` holds the table of
+those measurements and re-does the arithmetic against the stylesheet on every
+run, so a size that grows fails, and so does a copy change that makes a word
+longer. **Re-measure the word before changing a number in that table.**
+
 ## Media
 
 `src/assets/README.md` records what each file is, how it was encoded, and why

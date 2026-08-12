@@ -153,6 +153,131 @@ describe('the site carries its own media', () => {
   });
 });
 
+describe('the display type fits the phone it is read on', () => {
+  /**
+   * Three rounds of "some phones are cut off" and "SHOW THE TRANSACTIO" came
+   * from one mistake repeated across the stylesheet, and it is not the one it
+   * looks like.
+   *
+   * Every headline here is sized `clamp(floor, Nvw, ceiling)`, which reads as
+   * responsive. It is not, on a phone. At 320px wide, `8.5vw` is 27px and the
+   * floor is `4rem`, so the floor wins at every width below about 750px: the
+   * vw term is decorative and a fixed 64px decides how the page looks on
+   * every phone there is. Nobody had checked those floors against the words
+   * they had to hold, and `.philosophy` was setting a 12-character word at
+   * 70px in a 350px column, which is 490px of word.
+   *
+   * ## What this test knows and how it knows it
+   *
+   * `em` below is that heading's longest unbreakable word, measured in the
+   * browser at its own weight and letter-spacing, with `Range.getBoundingClientRect`
+   * over each whitespace- and hyphen-delimited run. `column` is the width the
+   * heading actually gets at a 320px viewport: the viewport less two 1.25rem
+   * gutters, less any padding of a panel it sits inside.
+   *
+   * So the check is arithmetic on a measurement, not a guess: the size the
+   * CSS resolves to at 320px, times the word's width in em, must fit the
+   * column. It fails on a size that grew and on a copy change that made a
+   * word longer, and the fix for the second is to re-measure the table, not
+   * to raise the number until it passes.
+   *
+   * It cannot see wrapping, sticky positioning, or anything above 320px. It
+   * is one shape of bug, held still.
+   */
+  const measured: Array<{ sel: string; word: string; em: number; column: number }> = [
+    { sel: '.idea-copy h2', word: 'HARDWARE', em: 5.33, column: 280 },
+    { sel: '.half h2', word: 'OFFLINE', em: 3.79, column: 280 },
+    { sel: '.architecture h2', word: 'EXPOSURE.', em: 5.2, column: 280 },
+    { sel: '.sacred-copy h2', word: 'PERSON.', em: 3.98, column: 280 },
+    { sel: '.fail-section h2', word: 'CANNOT', em: 3.83, column: 280 },
+    { sel: '.failure-stack b', word: 'CANNOT', em: 3.83, column: 240 },
+    { sel: '.airgap h2', word: 'CONNECT.', em: 4.51, column: 280 },
+    { sel: '.qr-copy h2', word: 'LANGUAGE.', em: 5.37, column: 230 },
+    { sel: '.wallet-copy h2', word: 'WALLET', em: 3.66, column: 280 },
+    { sel: '.swap-title h2', word: 'WITHOUT', em: 4.18, column: 280 },
+    { sel: '.chains-section > h2', word: 'DIFFERENT', em: 4.94, column: 280 },
+    { sel: '.chain-worlds h3', word: 'BITCOIN', em: 3.69, column: 216 },
+    { sel: '.drawer-section h2', word: 'DRAWER', em: 4.02, column: 280 },
+    { sel: '.manifesto h2', word: 'NETWORK', em: 4.68, column: 280 },
+    { sel: '.verify-call', word: 'VERIFY', em: 3.11, column: 280 },
+    { sel: '.source-section h2', word: 'VERIFY.', em: 3.25, column: 280 },
+    { sel: '.philosophy p', word: 'COMPROMISED.', em: 6.98, column: 280 },
+    { sel: '.comparison > h2', word: 'WATCHES.', em: 4.64, column: 280 },
+    { sel: '.start-section > h2', word: 'SYSTEM.', em: 3.86, column: 280 },
+    { sel: '.product-panels h3', word: 'LABYRINTH', em: 5.19, column: 216 },
+    { sel: '.final-cta h2', word: 'OFFLINE.', em: 3.92, column: 280 },
+  ];
+
+  const css = readFileSync('site/src/labyrinth.css', 'utf8');
+  const mobileAt = css.indexOf('@media (max-width: 700px)');
+  const base = css.slice(0, mobileAt);
+  const mobile = css.slice(mobileAt, css.indexOf('\n}', mobileAt));
+
+  /* One rule per line is the house style in this stylesheet, which is what
+   * makes a regex honest here rather than the usual mistake. */
+  const fontSizeOf = (selector: string, scope: string): string | null => {
+    let found: string | null = null;
+    for (const line of scope.split('\n')) {
+      const rule = /^\s*([^{@}]+)\{(.*)\}\s*$/.exec(line);
+      if (!rule) continue;
+      const selectors = (rule[1] ?? '').split(',').map((s) => s.trim().replace(/\s+/g, ' '));
+      if (!selectors.includes(selector)) continue;
+      const declared = /font-size:\s*([^;]+);/.exec(rule[2] ?? '');
+      if (declared?.[1]) found = declared[1].trim();
+    }
+    return found;
+  };
+
+  const at320 = (value: string): number => {
+    const px = (term: string): number => {
+      const t = term.trim();
+      if (t.endsWith('rem')) return Number.parseFloat(t) * 16;
+      if (t.endsWith('vw')) return Number.parseFloat(t) * 3.2;
+      if (t.endsWith('px')) return Number.parseFloat(t);
+      throw new Error(`cannot resolve "${t}" at a 320px viewport`);
+    };
+    const clamped = /^clamp\(([^,]+),([^,]+),([^)]+)\)$/.exec(value);
+    if (!clamped) return px(value);
+    return Math.max(px(clamped[1]!), Math.min(px(clamped[2]!), px(clamped[3]!)));
+  };
+
+  it('gives every measured heading a size the stylesheet actually resolves', () => {
+    /* A selector that has been renamed away silently stops being checked,
+     * which is the failure mode of every table like this one. */
+    for (const { sel } of measured) {
+      const declared = fontSizeOf(sel, mobile) ?? fontSizeOf(sel, base);
+      expect(declared, `${sel} has no font-size in site/src/labyrinth.css, so this table is stale`).not.toBeNull();
+    }
+  });
+
+  it('fits the longest word of each heading in the column it gets at 320px', () => {
+    for (const { sel, word, em, column } of measured) {
+      const declared = fontSizeOf(sel, mobile) ?? fontSizeOf(sel, base);
+      if (!declared) continue;
+      const size = at320(declared);
+      const width = size * em;
+      expect(
+        width,
+        `${sel} sets "${word}" at ${size.toFixed(1)}px on a 320px screen, which is ` +
+          `${width.toFixed(0)}px of word in a ${column}px column. Re-measure the word ` +
+          `in em before changing the number in the table.`,
+      ).toBeLessThanOrEqual(column);
+    }
+  });
+
+  it('does not bleed a device mockup off the edge of a container that clips', () => {
+    /* `.half` hides its overflow and `.device-compact` was translated down by
+     * a fifth of its own height, which took 56px off the bottom of the phone
+     * at 320 and 75px at 390. Bleeding a mockup past a section edge is a real
+     * technique; doing it inside a bordered half just looks like a bug, and
+     * was reported as one twice. */
+    const half = /\.half\s*\{[^}]*\}/.exec(css)?.[0] ?? '';
+    const compact = /\.device-compact\s*\{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(half, 'the .half rule moved; this guard is checking nothing').toMatch(/overflow:\s*hidden/);
+    expect(compact, '.device-compact is transformed inside a container that clips it').not.toMatch(/transform:/);
+  });
+});
+
 describe('the site reads the way everything else here reads', () => {
   /**
    * Comments removed first, the way `wallet/test/copy.test.ts` does it.

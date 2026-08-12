@@ -16,7 +16,12 @@ body { margin: 0; background: var(--lab-bg); color: var(--lab-ink); font-family:
 * { box-sizing: border-box; }
 a { color: inherit; text-decoration: none; }
 .lab-site { overflow: clip; background: var(--lab-bg); }
-.lab-site h2, .lab-site h3, .lab-site p { margin-top: 0; }
+/* A backstop, not the fix. Every display size below is chosen so the longest
+ * word in its own copy fits the column it is given, measured at 320px; this
+ * line only decides what happens the day somebody writes a longer word. A
+ * break mid-word is ugly and a word sliced off at the screen edge is a bug,
+ * and the second one is what shipped: "SHOW THE TRANSACTIO". */
+.lab-site h2, .lab-site h3, .lab-site p { margin-top: 0; overflow-wrap: break-word; }
 .section-pad { padding: clamp(7rem, 14vw, 14rem) clamp(1.25rem, 6vw, 6rem); }
 
 .lab-nav {
@@ -74,7 +79,7 @@ a { color: inherit; text-decoration: none; }
 .hero-truth { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100dvh + 1.75rem); left: clamp(1.25rem, 6vw, 6rem); right: clamp(1.25rem, 6vw, 6rem); color: var(--lab-muted); font: 11px/1.5 var(--lab-mono); }
 
 .idea-section { min-height: 130dvh; display: grid; grid-template-columns: 1.05fr 0.95fr; align-items: center; gap: 6vw; background: var(--lab-bg); }
-.idea-copy h2 { max-width: 8ch; font-size: clamp(4rem, 8.6vw, 9rem); line-height: 0.82; letter-spacing: -0.07em; }
+.idea-copy h2 { max-width: 9ch; font-size: clamp(4rem, 7.4vw, 9rem); line-height: 0.82; letter-spacing: -0.07em; }
 .idea-copy p { max-width: 34rem; color: var(--lab-muted); font-size: clamp(1rem, 1.5vw, 1.3rem); line-height: 1.6; }
 .exploded-phone { position: relative; height: 760px; perspective: 1600px; }
 .phone-layer { position: absolute; top: 50%; left: 50%; width: min(300px, 65vw); height: 600px; border: 1px solid rgb(241 243 244 / 0.25); border-radius: 45px; background: linear-gradient(145deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.015)); box-shadow: 0 50px 100px rgb(0 0 0 / 0.45); transform: translate(-50%, -50%) rotateY(-22deg) translateZ(var(--z)); }
@@ -95,9 +100,16 @@ a { color: inherit; text-decoration: none; }
 .product-name { display: block; margin-bottom: 2rem; color: var(--lab-muted); font: 11px/1 var(--lab-mono); letter-spacing: 0.13em; }
 .vault-half { background: var(--lab-bg); }
 .wallet-half { background: var(--lab-surface); }
-.qr-bridge { position: absolute; z-index: 5; top: 50%; left: 50%; display: grid; place-items: center; width: 108px; height: 108px; border: 1px solid var(--lab-line); background: rgb(7 9 11 / 0.88); transform: translate(-50%, -50%) rotate(45deg); }
-.qr-bridge span { font: 700 12px/1 var(--lab-mono); transform: rotate(-45deg); }
-.qr-core { position: absolute; width: 45px; height: 45px; background: repeating-conic-gradient(var(--lab-ink) 0 25%, transparent 0 50%) 0 0/12px 12px; animation: qrShift 2.6s steps(4) infinite; }
+/* The seal between the two halves. It was a square rotated 45 degrees with a
+ * four-step checkerboard animating inside it, which was meant to read as a QR
+ * code and read instead as a broken image: a black and white square sitting on
+ * top of the phone. A ring says the same thing without pretending to be a
+ * scannable code, and it borrows the dashed spin already used by the final
+ * call to action, so the page has one idling-ring motif rather than two
+ * unrelated ones. */
+.qr-bridge { position: absolute; z-index: 5; top: 50%; left: 50%; display: grid; place-items: center; width: 132px; height: 132px; border: 1px solid var(--lab-line); border-radius: 50%; background: var(--lab-bg); transform: translate(-50%, -50%); }
+.qr-bridge span { font: 700 11px/1 var(--lab-mono); letter-spacing: 0.16em; }
+.qr-core { position: absolute; inset: 13px; border: 1px dashed var(--lab-red); border-radius: 50%; animation: spin 16s linear infinite; }
 
 .architecture { background: var(--lab-surface); }
 .architecture h2 { max-width: 11ch; font-size: clamp(3.6rem, 8vw, 8rem); line-height: 0.86; letter-spacing: -0.07em; }
@@ -113,7 +125,13 @@ a { color: inherit; text-decoration: none; }
 .sacred-copy p { max-width: 35rem; color: var(--lab-muted); font-size: 1.2rem; line-height: 1.6; }
 .boundary { grid-column: 1 / -1; text-align: center; color: var(--lab-muted); font: 11px/1 var(--lab-mono); letter-spacing: 0.15em; }
 .device { position: relative; width: min(430px, 82vw); aspect-ratio: 0.51; margin-inline: auto; padding: 12px; border: 1px solid rgb(241 243 244 / 0.27); border-radius: 64px; background: linear-gradient(120deg, #4c5258, #111418 18%, #31363b 50%, #0a0c0e 80%); box-shadow: 0 80px 180px rgb(0 0 0 / 0.65), inset 0 0 0 1px rgb(255 255 255 / 0.08); transform: rotateY(-5deg) rotateX(2deg); }
-.device-compact { width: min(285px, 70vw); border-radius: 44px; padding: 8px; transform: translateY(20%); }
+/* No `translateY(20%)` here. It pushed the phone a fifth of its own height
+ * past the foot of the half it sits in, and `.half` clips, so the device came
+ * out with 56px of its bottom edge sliced off at 320 and 75px at 390. Bleeding
+ * a mockup off the edge of a section is a real technique, but it only reads as
+ * one when the section boundary is visible; inside a bordered half it reads as
+ * a rendering fault, which is how it was reported. */
+.device-compact { width: min(285px, 70vw); border-radius: 44px; padding: 8px; }
 .device-speaker { position: absolute; z-index: 3; top: 21px; left: 50%; width: 32%; height: 28px; border-radius: 18px; background: #050607; transform: translateX(-50%); }
 .device-screen { height: 100%; padding: 48px 22px 24px; border-radius: 52px; background: radial-gradient(circle at 50% -10%, rgb(241 243 244 / 0.08), transparent 34%), #090b0d; overflow: hidden; }
 .device-compact .device-screen { padding: 36px 14px 16px; border-radius: 38px; }
@@ -162,7 +180,7 @@ a { color: inherit; text-decoration: none; }
 .qr-language { position: relative; min-height: 120dvh; display: grid; align-items: center; }
 .qr-language img { width: 100%; height: 86dvh; object-fit: cover; border-radius: var(--lab-radius); filter: grayscale(0.95) contrast(1.08); }
 .qr-copy { position: absolute; left: 10vw; max-width: 36rem; padding: 42px; background: rgb(7 9 11 / 0.78); backdrop-filter: blur(18px); border-left: 2px solid var(--lab-red); }
-.qr-copy h2 { font-size: clamp(3.5rem, 7vw, 7rem); line-height: 0.86; letter-spacing: -0.07em; }
+.qr-copy h2 { font-size: clamp(3.5rem, 6.2vw, 7rem); line-height: 0.86; letter-spacing: -0.07em; }
 .qr-copy strong { color: var(--lab-red); font-size: 3rem; }
 .qr-copy p { margin: 24px 0 0; color: var(--lab-muted); line-height: 1.6; }
 
@@ -199,8 +217,12 @@ a { color: inherit; text-decoration: none; }
 .drawer-section strong { margin-top: 4rem; font-size: 1.2rem; letter-spacing: 0.1em; }
 
 .manifesto { background: var(--lab-surface); }
-.manifesto h2 { max-width: 13ch; font-size: clamp(3.8rem, 8vw, 8rem); line-height: 0.9; letter-spacing: -0.07em; }
-.verify-call { margin-top: 6rem; color: var(--lab-red); font-size: clamp(5rem, 16vw, 18rem); font-weight: 800; line-height: 0.7; letter-spacing: -0.08em; }
+/* Eight lines of it, so the size compounds: at 8vw this headline was 1140px
+ * tall in a 900px window and 875px tall on a 390px phone, which means nobody
+ * ever saw the whole of the one paragraph on this page that lists what the
+ * product refuses to do. */
+.manifesto h2 { max-width: 13ch; font-size: clamp(3.8rem, 5.9vw, 8rem); line-height: 0.9; letter-spacing: -0.07em; }
+.verify-call { margin-top: 6rem; color: var(--lab-red); font-size: clamp(4rem, 12vw, 13rem); font-weight: 800; line-height: 0.7; letter-spacing: -0.08em; }
 .audit-warning { max-width: 70rem; margin: 8rem 0 0; padding-top: 2rem; border-top: 1px solid var(--lab-red); color: var(--lab-ink); font: 13px/1.7 var(--lab-mono); }
 
 .source-section { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 8vw; }
@@ -213,7 +235,7 @@ a { color: inherit; text-decoration: none; }
 .source-action:hover { color: var(--lab-red); transform: skewX(-1.5deg) translateX(2px); }
 
 .philosophy { background: var(--lab-ink); color: var(--lab-bg); }
-.philosophy p { margin: 0 0 22vh; font-size: clamp(4rem, 12vw, 13rem); font-weight: 760; line-height: 0.79; letter-spacing: -0.08em; }
+.philosophy p { margin: 0 0 22vh; font-size: clamp(4rem, 10.5vw, 13rem); font-weight: 760; line-height: 0.79; letter-spacing: -0.08em; }
 .philosophy p:nth-child(even) { margin-left: 18vw; }
 .philosophy strong { color: var(--lab-red); font-weight: inherit; }
 
@@ -246,7 +268,6 @@ a { color: inherit; text-decoration: none; }
 .footer-links { position: relative; display: flex; gap: 30px; margin-top: 7rem; font: 10px/1 var(--lab-mono); }
 .final-cta small { position: relative; margin-top: 2rem; color: var(--lab-muted); font: 9px/1 var(--lab-mono); }
 
-@keyframes qrShift { 50% { transform: translate(7px, -7px) rotate(90deg); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 980px) {
@@ -282,28 +303,62 @@ a { color: inherit; text-decoration: none; }
    * this on is the wrong half to drop. */
   .hero-truth { display: block; bottom: calc(100% - 100dvh + 1.25rem); left: 1.25rem; right: 1.25rem; font-size: 10px; }
   .idea-section { min-height: auto; }
-  .idea-copy h2 { font-size: clamp(3.4rem, 17vw, 5.8rem); }
+  /* ## The display scale on a phone
+   *
+   * Every size in this block was picked the same way: measure the longest
+   * unbreakable word in that heading's own copy, in em, then divide the width
+   * the heading actually gets at 320px by it. That width is the viewport less
+   * two 1.25rem gutters, less any padding the heading sits inside, which is
+   * why the panel headings here are smaller than the section headings.
+   *
+   * It was not done that way before, and the sizes below the `clamp` floors
+   * were doing all the work on a phone: a `clamp(4rem, 8.5vw, 9rem)` heading
+   * is 64px at every width under 750px, because 8.5vw never reaches the
+   * floor. So the vw term, the part that looks responsive, was decorative,
+   * and the fixed floor decided how it looked on every phone there is. That
+   * is how "COMPROMISED." came out 490px wide in a 350px column.
+   *
+   * They are also smaller than a proportional fix would need, deliberately.
+   * Headlines set at a fifth of the screen do not read as confident on a
+   * phone, they read as unfinished, and the page had eight of them stacked.
+   */
+  .idea-copy h2 { font-size: clamp(2.6rem, 14vw, 5.2rem); }
   .exploded-phone { height: 540px; transform: scale(0.82); }
   .phone-layer span { display: none; }
   .halves-section { grid-template-columns: 1fr; }
   .half { min-height: 100dvh; }
-  .qr-bridge { top: 50%; }
+  /* Room under the phone for the ring to land on the seam rather than on the
+   * device, now that the phone is no longer pushed off the bottom edge. */
+  .half { padding-bottom: 5.5rem; }
+  .architecture h2 { font-size: clamp(2.4rem, 13.5vw, 5rem); }
   .architecture-track { grid-auto-columns: 80vw; margin-top: 4rem; }
   .screen-security { min-height: auto; }
-  .sacred-copy h2 { font-size: clamp(3.8rem, 18vw, 6rem); }
+  .sacred-copy h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
+  .fail-section h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .failure-stack article { min-height: 55dvh; padding: 2rem 1.25rem; }
   .failure-stack b { font-size: clamp(3.1rem, 17vw, 5.5rem); }
+  .airgap h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .qr-language { padding-inline: 0; }
   .qr-language img { height: 85dvh; border-radius: 0; }
   .qr-copy { left: 1.25rem; right: 1.25rem; bottom: 8rem; padding: 25px; }
+  .qr-copy h2 { font-size: clamp(2rem, 11.5vw, 4.2rem); }
+  .wallet-copy h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
+  .swap-title h2 { font-size: clamp(2.6rem, 15vw, 5.2rem); }
   .swap-route { grid-template-columns: 1fr; }
+  .chains-section > h2 { font-size: clamp(2.8rem, 15.5vw, 5.4rem); }
   .chain-worlds, .comparison-grid, .product-panels { grid-template-columns: 1fr; }
   .chain-worlds article { min-height: 48dvh; }
   .drawer-section > div { padding: 5rem 1.25rem; }
-  .verify-call { font-size: 23vw; }
+  .drawer-section h2 { font-size: clamp(2.6rem, 15vw, 5rem); }
+  .manifesto h2 { font-size: clamp(2.5rem, 14vw, 4.8rem); }
+  .verify-call { font-size: 20vw; }
   .source-grid { grid-template-columns: 1fr; }
-  .philosophy p { margin-bottom: 15vh; font-size: 18vw; }
+  .philosophy p { margin-bottom: 15vh; font-size: clamp(2rem, 11.5vw, 4.2rem); }
+  .comparison > h2 { font-size: clamp(2.6rem, 15vw, 5.2rem); }
+  .start-section > h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .product-panels article { min-height: 58dvh; }
+  .product-panels h3 { font-size: clamp(2rem, 11.5vw, 4rem); }
+  .final-cta h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .final-action { width: 190px; height: 190px; }
   .footer-links { flex-wrap: wrap; justify-content: center; }
 }
