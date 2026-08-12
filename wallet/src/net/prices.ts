@@ -8,6 +8,13 @@
  * cached answer to every client, so the source sees a server and the relay
  * learns nothing it did not already know from being the relay.
  *
+ * That last claim has one exception, and the code honors it rather than
+ * arguing: the owner running only their own nodes has traffic that touches
+ * nobody but machines they control, so for them the relay would learn
+ * something new, and the watcher skips the price lookup entirely
+ * (`ownNodesOnly` in net/nodeproxy.ts). Their balances show in coin, and the
+ * Nodes screen says so.
+ *
  * The wire is integer cents per whole coin, the unit `fiatCents` takes, and
  * this client validates rather than trusts: the relay is ours, and it is still
  * a network answer. Anything malformed, non-integer, non-positive or absurd is
@@ -23,9 +30,9 @@ export type PriceResult =
   | { ok: true; centsPerUnit: Record<Asset, number> }
   | { ok: false; problem: string };
 
-/** A price this client will believe: a positive integer number of cents, and
- *  fewer of them than ten billion dollars a coin, which is not a market, it
- *  is a broken relay. */
+/** A price this client will believe: a positive integer number of cents, at
+ *  most a hundred million dollars a coin, which is not a market, it is a
+ *  broken relay. */
 function believable(value: unknown): value is number {
   return (
     typeof value === 'number' &&

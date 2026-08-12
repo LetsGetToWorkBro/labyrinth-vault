@@ -45,9 +45,9 @@ export interface Prices {
 export type PriceResult = { ok: true; prices: Prices } | { ok: false; problem: string };
 
 /** A finite positive dollar figure as integer cents, or null. The ceiling is
- *  a sanity bound, not a forecast: a parse that produces a million dollars a
- *  coin is a broken upstream, and serving it would put a broken number under
- *  everybody's balance at once. */
+ *  a sanity bound, not a forecast: a parse that produces more than a hundred
+ *  million dollars a coin is a broken upstream, and serving it would put a
+ *  broken number under everybody's balance at once. */
 function cents(usd: unknown): number | null {
   if (typeof usd !== 'number' || !Number.isFinite(usd) || usd <= 0) return null;
   const value = Math.round(usd * 100);

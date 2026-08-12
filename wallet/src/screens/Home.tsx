@@ -56,11 +56,13 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
   const xmrValue = fiatCents(monero.balance, 'XMR', snapshot.centsPerUnit.XMR);
   const total = btcValue + xmrValue;
   /* Whether the hero can be a dollar figure at all. Zero cents per unit means
-   * no price is known, which is every session against a real node: this wallet
-   * has no price feed, on purpose, because a price feed is one more server
-   * that learns when the app is open. Without one the total is shown in the
-   * coins themselves, which is the truth, rather than as "$0.00", which is a
-   * lie about the money and reads as a wallet that lost it. */
+   * no price is known right now. A price only ever arrives through Labyrinth's
+   * relay, which serves every client one cached answer so no price service
+   * sees a phone; when there is no relay configured, or it has not answered,
+   * or this wallet runs only on its owner's own nodes and therefore asks
+   * Labyrinth for nothing, the zero stays. Without a price the total is shown
+   * in the coins themselves, which is the truth, rather than as "$0.00",
+   * which is a lie about the money and reads as a wallet that lost it. */
   const priced = hasPrice(snapshot.centsPerUnit.BTC) || hasPrice(snapshot.centsPerUnit.XMR);
 
   const recent = snapshot.transactions.slice(0, 3);
@@ -138,8 +140,17 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
               <Gap size={space.step} />
               <Amount atoms={monero.balance} asset="XMR" size="readout" />
               <Gap size={space.step} />
+              {/* Present tense on purpose. "This wallet asks no price
+                  service" was true forever and misleading tomorrow: the day
+                  the relay is deployed, dollar figures appear, and a person
+                  who read a permanent-sounding sentence concludes the app
+                  lied. What is always true is the arrangement: no price is
+                  known at this moment, and when one is known it came through
+                  Labyrinth's relay rather than from this phone asking a
+                  price service. */}
               <Small tone={color.dim}>
-                Shown in coin. This wallet asks no price service what they are worth.
+                Shown in coin. No price is known right now; one only ever arrives through
+                Labyrinth&apos;s relay, and this phone asks no price service itself.
               </Small>
             </>
           )}

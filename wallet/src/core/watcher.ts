@@ -73,6 +73,7 @@ import { live, type Transport } from '../net/http';
 import { moneroBroadcastGate } from './moneroreadiness';
 import * as esplora from '../net/esplora';
 import * as monerod from '../net/monerod';
+import { ownNodesOnly } from '../net/nodeproxy';
 import { fetchPrices } from '../net/prices';
 import { SWAP_PROXY, swapConfigured } from '../net/swapproxy';
 
@@ -463,12 +464,17 @@ export class NodeWatcher implements Watcher {
        * string that turns the swap on, because the whole point is that the
        * price source sees our relay on a timer and never a phone. Absent by
        * default until the relay is deployed, and absent means the app renders
-       * coin amounts, which `hasPrice` in units.ts already makes honest. */
+       * coin amounts, which `hasPrice` in units.ts already makes honest.
+       *
+       * Also absent, deliberately, for the owner running only their own
+       * nodes: their traffic touches nobody but machines they control, and a
+       * price request would have this app contacting Labyrinth on a timer
+       * anyway. `ownNodesOnly` carries the whole argument. */
       prices?: Transport | null;
     } = {
       btc: nodes.btc ? live(nodes.btc.url) : null,
       xmr: nodes.xmr ? live(nodes.xmr.url) : null,
-      prices: swapConfigured() ? live(SWAP_PROXY) : null,
+      prices: swapConfigured() && !ownNodesOnly(nodes) ? live(SWAP_PROXY) : null,
     },
     now: number = Date.now(),
     monero: MoneroWatch | null = null,

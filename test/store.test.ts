@@ -169,7 +169,13 @@ describe('the listings say what the code does', () => {
     expect(worker).toMatch(/PRICE_CACHE_MS/);
     expect(worker).toMatch(/api\.coingecko\.com/);
     const watcher = readFileSync('wallet/src/core/watcher.ts', 'utf8');
-    expect(watcher).toMatch(/swapConfigured\(\) \? live\(SWAP_PROXY\) : null/);
+    expect(watcher).toMatch(/swapConfigured\(\) && !ownNodesOnly\(nodes\) \? live\(SWAP_PROXY\) : null/);
+    /* And the exception the arrangement carries: the owner running only their
+     * own nodes asks Labyrinth for nothing, prices included. The watcher
+     * skips (the line above), and the Nodes screen says so where the person
+     * made that choice. */
+    const nodesScreen = readFileSync('wallet/src/screens/Nodes.tsx', 'utf8');
+    expect(nodesScreen).toMatch(/price lookups are skipped/i);
   });
 
   it('the wallet review notes explain the stand-in before a reviewer finds it', () => {
