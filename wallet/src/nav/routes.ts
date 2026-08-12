@@ -49,6 +49,17 @@ export type Routes = {
    */
   Swap: undefined;
   /**
+   * Where a created swap has got to, on the provider's say-so.
+   *
+   * Its own route rather than a face of Swap because it outlives the compose
+   * flow entirely: the order is minded across the send handoff, the vault
+   * round trip, and app relaunches, and the screen is reachable whenever a
+   * swap is in flight. It reads the store's pending record; it never carries
+   * order state in params, so a stale deep link cannot resurrect a dismissed
+   * order.
+   */
+  SwapStatus: undefined;
+  /**
    * Which node the wallet reads the chain through.
    *
    * Its own route rather than a panel inside Security, because it is not a

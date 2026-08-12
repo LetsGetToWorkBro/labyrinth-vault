@@ -21,12 +21,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import type { ReactNode } from 'react';
 import { prepare, verifySigned } from '../core/build';
 import { prepareMoneroDraft, verifySignedMonero } from '../core/monerodraft';
+import { readStatus, type SwapOrder, type SwapStatus } from '../core/swap';
+import type { PendingSwap } from '../core/swaptrack';
 import type { ChainSnapshot, FeeOption } from '../core/chain';
 import { DemoWatcher, DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
 import { parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
-import type { OwnAddresses, SwapOrder, SwapTransport } from '../core/swap';
+import type { OwnAddresses, SwapTransport } from '../core/swap';
 import type { NodeConfig, NodeKind } from '../core/nodes';
 import { openAccount, type ScanState } from '../core/moneroscan';
 import { acceptAccount, type Pairing } from '../core/pairing';
@@ -131,7 +133,15 @@ export interface Store {
    * path to a signature, the vault stops covering the part of a swap the vault
    * can actually cover.
    */
-  depositForSwap(order: SwapOrder, from: Asset): void;
+  depositForSwap(order: SwapOrder, from: Asset, toId: string): void;
+  /** The one swap this wallet is minding, restored across relaunches. */
+  pendingSwap: PendingSwap | null;
+  /** The last status the provider gave for it, and when it was asked. */
+  swapCheck: { status: SwapStatus; at: number } | null;
+  /** Ask the provider where the pending swap is. Pull, never poll. */
+  refreshSwap(): Promise<void>;
+  /** Forget the pending swap. The provider keeps its own records. */
+  dismissSwap(): void;
 
   /** What the vault handed over, or null before any pairing. */
   pairing: Pairing | null;
@@ -208,6 +218,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false);
   const [nodeProblems, setNodeProblems] = useState<RefreshResult['problems']>([]);
   const [moneroScan, setMoneroScan] = useState<Persisted['moneroScan']>(null);
+  const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
+  const [swapCheck, setSwapCheck] = useState<{ status: SwapStatus; at: number } | null>(null);
   const [moneroStatus, setMoneroStatus] = useState<MoneroStatus | null>(null);
   /* Bumped after every refresh so the snapshot below is recomputed. The
    * watcher holds the data and hands back the same object until something
@@ -240,6 +252,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!current) return;
       scanStart.current = stored.moneroScan;
       setMoneroScan(stored.moneroScan);
+      setPendingSwap(stored.pendingSwap);
       setNodes(stored.nodes);
       if (paired) {
         pairingRef.current = paired;
@@ -259,8 +272,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!restored) return;
-    void save(storage, { ...EMPTY, nodes, moneroScan });
-  }, [restored, storage, nodes, moneroScan]);
+    void save(storage, { ...EMPTY, nodes, moneroScan, pendingSwap });
+  }, [restored, storage, nodes, moneroScan, pendingSwap]);
 
   /**
    * The Bitcoin account key in effect: the paired one, else the published
@@ -620,14 +633,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [watcher, acceptWirePayload]);
 
   const depositForSwap = useCallback(
-    (order: SwapOrder, from: Asset) => {
+    (order: SwapOrder, from: Asset, toId: string) => {
       setAsset(from);
       dispatch({ type: 'reset' });
       dispatch({ type: 'recipient', value: order.depositAddress, source: 'scanned' });
       dispatch({ type: 'amount', value: String(order.depositAmount) });
+      /* The memory that makes readStatus callable later: provider, order id,
+       * the two sides as quoted. One at a time - a new swap replaces the old
+       * record, and the provider stays the authority on every order. */
+      setPendingSwap({
+        provider: order.provider,
+        id: order.id,
+        fromId: from.toLowerCase(),
+        toId,
+        fromAmount: order.depositAmount,
+        toAmount: order.toAmount,
+        createdAt: Date.now(),
+      });
+      setSwapCheck(null);
     },
     [dispatch],
   );
+
+  const refreshSwap = useCallback(async () => {
+    if (!pendingSwap) return;
+    const status = await readStatus(demoSwapTransport, pendingSwap.provider, pendingSwap.id);
+    setSwapCheck({ status, at: Date.now() });
+  }, [pendingSwap]);
+
+  const dismissSwap = useCallback(() => {
+    setPendingSwap(null);
+    setSwapCheck(null);
+  }, []);
 
   const store: Store = {
     now,
@@ -646,6 +683,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     own,
     swapTransport: demoSwapTransport,
     depositForSwap,
+    pendingSwap,
+    swapCheck,
+    refreshSwap,
+    dismissSwap,
       nodes,
     refreshing,
     nodeProblems,
