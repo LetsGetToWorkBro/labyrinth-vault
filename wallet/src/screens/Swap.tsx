@@ -144,7 +144,7 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
       return;
     }
     confirmed();
-    store.depositForSwap(result.order, from.ours as Asset);
+    store.depositForSwap(result.order, from.ours as Asset, to.id);
     navigation.navigate('Send');
   }
 
@@ -205,6 +205,25 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
       <StatusBar style="light" />
       <Header title="SWAP" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.gutter }}>
+        {store.pendingSwap ? (
+          <>
+            <Press onPress={() => navigation.navigate('SwapStatus')}>
+              <View style={styles.inflight}>
+                <Dot state="working" tone={color.warn} />
+                <View style={{ flex: 1 }}>
+                  <Strong>Swap in flight</Strong>
+                  <Small tone={color.slate}>
+                    {PROVIDERS.find((p) => p.id === store.pendingSwap!.provider)!.label}
+                    {' order '}
+                    {store.pendingSwap.id}
+                  </Small>
+                </View>
+                <Label tone={color.ash}>STATUS</Label>
+              </View>
+            </Press>
+            <Gap size={space.gap} />
+          </>
+        ) : null}
         <Notice title="AN EXCHANGE WILL SEE THIS" tone="warn">
           {PRIVACY_NOTE}
         </Notice>
@@ -700,6 +719,16 @@ const styles = StyleSheet.create({
     padding: space.gap,
     borderRadius: radius.soft,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  inflight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.step,
+    padding: space.gap,
+    borderRadius: radius.soft,
+    backgroundColor: color.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.ruleStrong,
   },
   factLine: {
     flexDirection: 'row',

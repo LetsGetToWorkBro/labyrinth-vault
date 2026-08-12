@@ -23,6 +23,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { EMPTY, SCHEMA, load, memoryStore, save, type Persisted } from '../src/state/persist';
+import type { PendingSwap } from '../src/core/swaptrack';
 import { parseNode } from '../src/core/nodes';
 
 const node = (url: string, kind: 'esplora' | 'monerod' = 'esplora') => {
@@ -39,6 +40,7 @@ describe('the round trip', () => {
     const state: Persisted = {
       nodes: { btc: node('https://mempool.space/api'), xmr: null },
       moneroScan: null,
+      pendingSwap: null,
     };
     await save(store, state);
 
@@ -53,6 +55,7 @@ describe('the round trip', () => {
         xmr: node('https://node.monerodevs.org:18089', 'monerod'),
       },
       moneroScan: { birth: 3_200_000, height: 3_204_881 },
+      pendingSwap: null,
     };
     await save(store, state);
     expect(await load(memoryStore(store.text))).toEqual(state);
@@ -67,7 +70,7 @@ describe('the round trip', () => {
      * stores almost nothing, and the way somebody checks that claim is by
      * opening the file. */
     const store = memoryStore();
-    await save(store, { nodes: { btc: node('https://mempool.space/api'), xmr: null }, moneroScan: null });
+    await save(store, { nodes: { btc: node('https://mempool.space/api'), xmr: null }, moneroScan: null, pendingSwap: null });
     expect(store.text).toMatch(/"schema": 1/);
     expect(store.text).toMatch(/mempool\.space/);
     expect(store.text?.split('\n').length).toBeGreaterThan(5);
@@ -76,6 +79,7 @@ describe('the round trip', () => {
   it('stores no keys, and the file proves it', async () => {
     const store = memoryStore();
     await save(store, {
+      pendingSwap: null,
       nodes: { btc: node('https://mempool.space/api'), xmr: node('http://192.168.1.20:18081', 'monerod') },
       moneroScan: { birth: 1, height: 2 },
     });
@@ -172,8 +176,41 @@ describe('nothing read back is trusted', () => {
     const mine = parseNode('monerod', 'http://192.168.1.20:18081', 'home', true);
     if (!mine.ok) throw new Error(mine.problem);
     const store = memoryStore();
-    await save(store, { nodes: { btc: null, xmr: mine.config }, moneroScan: null });
+    await save(store, { nodes: { btc: null, xmr: mine.config }, moneroScan: null, pendingSwap: null });
     expect((await load(memoryStore(store.text))).nodes.xmr?.mine).toBe(true);
+  });
+});
+
+describe('the stored pending swap', () => {
+  const GOOD: PendingSwap = {
+    provider: 'exolix',
+    id: 'demo-exolix-4417',
+    fromId: 'btc',
+    toId: 'xmr',
+    fromAmount: 0.05,
+    toAmount: 7.62,
+    createdAt: 1_700_000_000_000,
+  };
+
+  it('round-trips through the file', async () => {
+    const store = memoryStore();
+    await save(store, { ...EMPTY, pendingSwap: GOOD });
+    expect((await load(store)).pendingSwap).toEqual(GOOD);
+  });
+
+  it('parses to nothing from a file written before it existed', async () => {
+    const answer = await load(stored({ schema: SCHEMA, nodes: {} }));
+    expect(answer.pendingSwap).toBeNull();
+  });
+
+  it('drops a record naming a provider this build does not speak to', async () => {
+    /* The full validation matrix lives in swaptrack.test.ts; this pins that
+     * load() actually routes the stored value through it, because a check
+     * that exists but is not called is the worst kind of passing test. */
+    const answer = await load(
+      stored({ schema: SCHEMA, nodes: {}, pendingSwap: { ...GOOD, provider: 'changenow' } }),
+    );
+    expect(answer.pendingSwap).toBeNull();
   });
 });
 
