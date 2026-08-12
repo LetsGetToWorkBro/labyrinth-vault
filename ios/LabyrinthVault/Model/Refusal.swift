@@ -174,7 +174,7 @@ enum Refusal: Equatable {
             ("NOTHING TO DESCRIBE", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .moneroFile: [
-            ("MONERO WALLET FILE RECOGNISED", true),
+            ("MONERO WALLET FILE RECOGNIZED", true),
             ("CONTENTS ENCRYPTED · CANNOT OPEN", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .digestMismatch: [

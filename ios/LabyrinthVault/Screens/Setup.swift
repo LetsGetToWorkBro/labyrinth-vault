@@ -55,7 +55,7 @@ private struct RadiosView: View {
 
     private let steps: [(String, String)] = [
         ("REMOVE SIM", "Physically. The tray, not a setting."),
-        ("DISABLE WI-FI", "In Settings, not Control Centre."),
+        ("DISABLE WI-FI", "In Settings, not Control Center."),
         ("DISABLE BLUETOOTH", "Including sharing and nearby devices."),
         ("DISABLE CELLULAR", "Data and voice."),
         ("VERIFY IN SETTINGS", "The vault requests no network permission. Confirm it has none."),

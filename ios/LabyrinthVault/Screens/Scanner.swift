@@ -103,7 +103,7 @@ struct CameraViewfinder: View {
         // The scanner recognises its wires by shape and never asks the person
         // to know a protocol name.
         if payload.hasPrefix("LV1:") || payload.lowercased().hasPrefix("ur:") {
-            status = "LOCKED · ENVELOPE RECOGNISED"
+            status = "LOCKED · ENVELOPE RECOGNIZED"
             Haptic.verify()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: onLock)
         } else {
@@ -335,7 +335,7 @@ struct ReceivedView: View {
                         Statement("TRANSACTION", "RECEIVED.", size: 42).padding(.top, 14).padding(.bottom, 26)
                         Attestation(text: "42 OF 42 FRAGMENTS ASSEMBLED")
                         Attestation(text: "PAYLOAD DIGEST MATCHED")
-                        Attestation(text: "KIND RECOGNISED · PSBT")
+                        Attestation(text: "KIND RECOGNIZED · PSBT")
                         Attestation(text: "DECODED WITHOUT AMBIGUITY")
                         Text("The checksum proves the camera read the bytes correctly. It proves " +
                              "nothing about what the bytes do. That is the next screen, and it " +
@@ -347,14 +347,19 @@ struct ReceivedView: View {
                     }
                     .padding(.horizontal, 24)
                     Spacer()
-                    /* No lever here on purpose. A completed scan is described
-                     * by the engine the moment the last frame lands, and the
-                     * result decides where it goes — review, or a refusal. A
-                     * button that walked to the review screen would be a route
-                     * into it that never passed the reader. */
-                    Lever(title: "SCAN SOMETHING ELSE") { vault.scanAgain() }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 12)
+                    /* No lever *forward* here on purpose. A completed scan is
+                     * described by the engine the moment the last frame lands,
+                     * and the result decides where it goes, review or a
+                     * refusal. A button that walked to the review screen would
+                     * be a route into it that never passed the reader. The two
+                     * levers below only go back: scan again, or give up to the
+                     * vault. Neither can reach a confirmation screen. */
+                    VStack(spacing: 10) {
+                        Lever(title: "SCAN SOMETHING ELSE") { vault.scanAgain() }
+                        Lever(title: "BACK TO VAULT", style: .quiet) { vault.go(.home) }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
                 }
             }
         }
