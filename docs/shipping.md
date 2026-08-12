@@ -107,6 +107,48 @@ Names, subtitles, descriptions and the rest of the metadata are written out in
 [`store/`](../store), one directory per app, so the words in the listing are
 version controlled next to the code they describe.
 
+**Before that, an App ID for each,** under Certificates, Identifiers &
+Profiles > Identifiers > Register an App ID. The form is short and one field
+on it is a decision rather than a fact:
+
+| Field | Vault | Wallet |
+| --- | --- | --- |
+| Platform | iOS, iPadOS, macOS, tvOS, watchOS, visionOS | the same |
+| Description | `Labyrinth Vault` | `Labyrinth Wallet` |
+| Bundle ID | **Explicit**, `vision.labyrinth.vault` | **Explicit**, `vision.labyrinth.wallet` |
+| Capabilities | **none** | **none** |
+
+**Leave every capability unchecked, and that is the decision.** Each one you
+enable writes an entitlement into the signed binary. The vault's central claim
+is that it has no way to reach a network, and entitlements are the one place a
+reviewer or a suspicious user can check that claim without reading any source.
+Enabling Push Notifications, iCloud, App Groups, Associated Domains or Network
+Extensions "in case we need it later" puts a network-capable entitlement in a
+binary that contains no network code, and contradicts
+`test/ios-no-network.test.ts` in the artifact rather than in the repository.
+
+Four that look like they belong here and do not:
+
+- **The camera** is not on that list. It is `NSCameraUsageDescription` in the
+  Info.plist, which `ios/project.yml` already sets. There is nothing to enable.
+- **Data Protection** is a different mechanism from the one the vault uses. The
+  seed is protected by its own Argon2id and XChaCha20-Poly1305 sealing and by
+  the keychain class `SealedStore.swift` asks for. Neither needs this
+  entitlement.
+- **Keychain Sharing** shares items between your own apps. The vault and the
+  wallet deliberately share nothing; that is the product.
+- **App Groups** is the same instinct and the same answer.
+
+Wildcard rather than explicit is also wrong here. A wildcard App ID cannot
+carry an app to the Store, and the bundle identifier is already fixed in
+`project.yml` and `app.json`.
+
+**The Team ID is on that page**, as the App ID Prefix. It is the value
+[step 2](#2-vault-generate-and-build-needs-a-mac) needs in the environment.
+Export it in a shell profile rather than committing it: it is not a secret,
+but it is an account identifier and it has no reason to be in a public
+repository.
+
 ### 2. Vault: generate and build (needs a Mac)
 
 ```sh
