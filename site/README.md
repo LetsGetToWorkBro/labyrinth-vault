@@ -82,6 +82,47 @@ Fine for a one-off. The Git connection is better for anything ongoing, because
 it deploys what is on `main` rather than what happened to be in somebody's
 working tree.
 
+## Why the page holds still
+
+Reported as "the scrolling is choppy and the page just skips around", and
+separately as the wallet section being unreadable. One cause: **`dvh`**.
+
+`dvh` is the *dynamic* viewport height, and on a phone it tracks the browser's
+own chrome, so it changes continuously while you scroll as the URL bar
+collapses and expands. Twenty-eight declarations here were sized in it, and
+full-height sections stack, so the error compounds with depth. Measured at
+390x844, a 56px URL bar took 900px off the document and moved the wallet
+section 636px up the page. The wallet section was the one named because it
+sits below eleven of them.
+
+Everything is `svh` now, the *small* viewport height, which the spec requires
+to stay put for the life of the page. The cost is that a full-height section
+is about 56px shorter than the screen once the bar retracts. Every section
+here is a flat color, so that seam is invisible, and a page that holds still
+is worth more than a seam nobody can see.
+
+Three other things were spending the scroll budget:
+
+- **`scroll-behavior: smooth` on `html`** made every programmatic scroll
+  animate, including the nav anchors. On a 30,000px page, GET STARTED asked
+  the phone to animate 26,000px of travel and drag the hero and three sticky
+  stacks through the whole journey on the way past. Gone. The hero still
+  animates its own chapter jumps in JavaScript, over about one screen.
+- **The hero's animation loop never stopped.** It recursed unconditionally, so
+  it kept running and kept walking every segment looking for a video to seek,
+  for the whole page below the hero and for as long as a background tab stayed
+  open. It is gated on an IntersectionObserver now: measured, 60 frames per
+  second in the hero, zero at the bottom of the page, and it resumes on the
+  way back up.
+- **`scroll-snap-type: x mandatory`** on the architecture strip captured a
+  thumb that drifted a few degrees off vertical, which lands as the page
+  refusing to move. It is `proximity` now.
+
+`test/site-claims.test.ts` refuses `dvh`, refuses a smooth root, refuses a
+mandatory snap, and checks the hero loop still has its gate. **A headless
+browser has no URL bar**, so the `dvh` behavior itself cannot be reproduced in
+a test that renders the page; refusing the unit is what a test can do.
+
 ## Sizing the display type
 
 Every headline is set `clamp(floor, Nvw, ceiling)`, and on a phone **only the

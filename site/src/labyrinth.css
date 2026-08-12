@@ -11,7 +11,46 @@
   --lab-mono: "SFMono-Regular", "SF Mono", "IBM Plex Mono", Consolas, monospace;
 }
 
-html { scroll-behavior: smooth; background: var(--lab-bg); }
+/* ## Every height on this page is `svh`, and that is load-bearing
+ *
+ * `dvh` is the *dynamic* viewport height: on a phone it tracks the browser's
+ * own chrome, so it changes continuously as the URL bar collapses and expands
+ * while you scroll. Twenty-eight declarations here were sized in it.
+ *
+ * Measured, at 390x844: retracting a 56px URL bar took 900px off the document
+ * and moved the wallet section 636px up the page. It compounds, because every
+ * full-height section above a given point shrinks at once, so the further down
+ * you read the harder the page moves under your finger. That is the whole of
+ * "the page just skips around as you scroll", and it is why the wallet section
+ * in particular was unreadable: it sits below eleven of them.
+ *
+ * `svh` is the *small* viewport height, the one with the browser chrome shown.
+ * It is a constant for the life of the page. The cost is that a full-height
+ * section is about 56px shorter than the screen once the bar retracts, so a
+ * sliver of the next section shows through. Every section here is a flat
+ * colour and most of them are the same one, so that sliver is invisible, and a
+ * page that holds still is worth more than a seam nobody can see.
+ *
+ * The hero has a second reason. Its scrub caches each band's start and end
+ * once, and deliberately ignores height-only resizes on touch devices, so
+ * under `dvh` the cache silently disagreed with the layout the moment the bar
+ * moved, and the video jumped to the wrong frame. Under `svh` the cache is
+ * correct because the bands no longer move. */
+/* ## No global `scroll-behavior: smooth`
+ *
+ * It reads as a nicety and on a page this long it is the opposite. `smooth`
+ * on the root makes *every* programmatic scroll animate, including the nav
+ * anchors and the browser's own scroll restoration on reload. This page is
+ * 30,000px tall, so tapping GET STARTED asked the phone to animate 26,000px
+ * of travel, dragging the scroll-driven hero, three sticky stacks and every
+ * lazy image through the whole journey on the way past. That is a long ride
+ * that looks exactly like the page throwing itself around.
+ *
+ * The hero's chapter buttons still animate, because they ask for it
+ * themselves in `scroll-scrub.tsx` and they move by about one screen. A
+ * local smooth scroll over a known short distance is a different thing from
+ * making it the default for the document. */
+html { background: var(--lab-bg); }
 body { margin: 0; background: var(--lab-bg); color: var(--lab-ink); font-family: var(--lab-display); }
 * { box-sizing: border-box; }
 a { color: inherit; text-decoration: none; }
@@ -66,7 +105,7 @@ a { color: inherit; text-decoration: none; }
  * `bottom` is measured from the foot of .hero-journey, which is the whole
  * scroll track and thousands of pixels tall, so the calc walks back up to
  * one screen height and then insets. */
-.hero-ctas { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100dvh + 4.5rem); left: clamp(1.25rem, 6vw, 6rem); display: flex; gap: 28px; }
+.hero-ctas { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100svh + 4.5rem); left: clamp(1.25rem, 6vw, 6rem); display: flex; gap: 28px; }
 .hero-ctas a { position: relative; padding: 14px 18px; font: 700 11px/1 var(--lab-mono); letter-spacing: 0.08em; }
 .hero-ctas a:first-child { border: 1px solid var(--lab-ink); }
 .hero-ctas a:first-child::before, .hero-ctas a:first-child::after { content: ""; position: absolute; width: 9px; height: 9px; border-color: var(--lab-red); transition: inset 180ms ease; }
@@ -76,9 +115,9 @@ a { color: inherit; text-decoration: none; }
 .hero-ctas a:first-child:hover::after { right: 4px; bottom: 4px; }
 .hero-ctas a:last-child { color: var(--lab-muted); border-bottom: 1px solid var(--lab-muted); }
 .hero-ctas a:last-child:hover { color: var(--lab-ink); border-color: var(--lab-red); }
-.hero-truth { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100dvh + 1.75rem); left: clamp(1.25rem, 6vw, 6rem); right: clamp(1.25rem, 6vw, 6rem); color: var(--lab-muted); font: 11px/1.5 var(--lab-mono); }
+.hero-truth { position: absolute; z-index: 20; top: auto; bottom: calc(100% - 100svh + 1.75rem); left: clamp(1.25rem, 6vw, 6rem); right: clamp(1.25rem, 6vw, 6rem); color: var(--lab-muted); font: 11px/1.5 var(--lab-mono); }
 
-.idea-section { min-height: 130dvh; display: grid; grid-template-columns: 1.05fr 0.95fr; align-items: center; gap: 6vw; background: var(--lab-bg); }
+.idea-section { min-height: 130svh; display: grid; grid-template-columns: 1.05fr 0.95fr; align-items: center; gap: 6vw; background: var(--lab-bg); }
 .idea-copy h2 { max-width: 9ch; font-size: clamp(4rem, 7.4vw, 9rem); line-height: 0.82; letter-spacing: -0.07em; }
 .idea-copy p { max-width: 34rem; color: var(--lab-muted); font-size: clamp(1rem, 1.5vw, 1.3rem); line-height: 1.6; }
 .exploded-phone { position: relative; height: 760px; perspective: 1600px; }
@@ -92,8 +131,8 @@ a { color: inherit; text-decoration: none; }
 .phone-layer.battery { --z: -95px; --label-y: 66%; background: linear-gradient(90deg, transparent 10%, rgb(241 243 244 / 0.07) 10% 90%, transparent 90%); }
 .phone-layer.storage { --z: -190px; --label-y: 84%; }
 
-.halves-section { position: relative; min-height: 110dvh; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--lab-line); border-bottom: 1px solid var(--lab-line); }
-.half { min-height: 110dvh; display: grid; align-content: space-between; justify-items: center; padding: clamp(7rem, 10vw, 10rem) clamp(1.25rem, 5vw, 5rem) 2rem; overflow: hidden; }
+.halves-section { position: relative; min-height: 110svh; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--lab-line); border-bottom: 1px solid var(--lab-line); }
+.half { min-height: 110svh; display: grid; align-content: space-between; justify-items: center; padding: clamp(7rem, 10vw, 10rem) clamp(1.25rem, 5vw, 5rem) 2rem; overflow: hidden; }
 .half > div:first-child { width: 100%; }
 .half h2 { font-size: clamp(4rem, 8vw, 8rem); letter-spacing: -0.07em; line-height: 0.9; }
 .half p { max-width: 30rem; color: var(--lab-muted); font-size: 1.05rem; line-height: 1.6; }
@@ -114,13 +153,18 @@ a { color: inherit; text-decoration: none; }
 .architecture { background: var(--lab-surface); }
 .architecture h2 { max-width: 11ch; font-size: clamp(3.6rem, 8vw, 8rem); line-height: 0.86; letter-spacing: -0.07em; }
 .architecture h2 span { color: var(--lab-red); }
-.architecture-track { margin-top: 8rem; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 28vw); gap: 1px; overflow-x: auto; scroll-snap-type: x mandatory; background: var(--lab-line); }
+/* `proximity`, not `mandatory`. A mandatory horizontal snap inside a page you
+ * are scrolling vertically fights the gesture: a thumb that drifts a few
+ * degrees off vertical gets captured by the strip, which lands as the page
+ * refusing to move. Proximity still parks the cards tidily when you swipe the
+ * strip on purpose and gives the gesture back when you did not. */
+.architecture-track { margin-top: 8rem; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 28vw); gap: 1px; overflow-x: auto; scroll-snap-type: x proximity; background: var(--lab-line); }
 .architecture-track article { min-height: 330px; display: flex; flex-direction: column; padding: 24px; background: var(--lab-bg); scroll-snap-align: start; }
 .architecture-track article > span { font: 10px/1 var(--lab-mono); color: var(--lab-muted); }
 .architecture-track article b { margin-top: auto; color: var(--lab-red); font: 12px/1 var(--lab-mono); }
 .architecture-track article p { margin: 16px 0 0; max-width: 18ch; font-size: 1.35rem; line-height: 1.15; }
 
-.screen-security { min-height: 150dvh; display: grid; grid-template-columns: 0.8fr 1.2fr; align-items: center; gap: 8vw; background: #080a0c; }
+.screen-security { min-height: 150svh; display: grid; grid-template-columns: 0.8fr 1.2fr; align-items: center; gap: 8vw; background: #080a0c; }
 .sacred-copy h2 { font-size: clamp(4.2rem, 9vw, 10rem); line-height: 0.82; letter-spacing: -0.075em; }
 .sacred-copy p { max-width: 35rem; color: var(--lab-muted); font-size: 1.2rem; line-height: 1.6; }
 .boundary { grid-column: 1 / -1; text-align: center; color: var(--lab-muted); font: 11px/1 var(--lab-mono); letter-spacing: 0.15em; }
@@ -157,7 +201,7 @@ a { color: inherit; text-decoration: none; }
 .fail-section h2 { max-width: 10ch; font-size: clamp(4rem, 8.8vw, 9rem); line-height: 0.85; letter-spacing: -0.075em; }
 .fail-section h2 span { color: var(--lab-red); }
 .failure-stack { margin-top: 7rem; }
-.failure-stack article { position: sticky; top: 120px; min-height: 62dvh; display: grid; align-content: center; padding: clamp(2rem, 6vw, 6rem); border-radius: var(--lab-radius); background: var(--lab-bg); color: var(--lab-ink); box-shadow: 0 -18px 50px rgb(0 0 0 / 0.18); }
+.failure-stack article { position: sticky; top: 120px; min-height: 62svh; display: grid; align-content: center; padding: clamp(2rem, 6vw, 6rem); border-radius: var(--lab-radius); background: var(--lab-bg); color: var(--lab-ink); box-shadow: 0 -18px 50px rgb(0 0 0 / 0.18); }
 .failure-stack article:nth-child(2) { top: 145px; background: #121519; }
 .failure-stack article:nth-child(3) { top: 170px; background: var(--lab-red); }
 .failure-stack span { font: 14px/1.5 var(--lab-mono); color: var(--lab-muted); }
@@ -177,14 +221,14 @@ a { color: inherit; text-decoration: none; }
 .airgap-yours dd { color: var(--lab-muted); }
 .airgap dd { margin: 0; color: var(--lab-ink); }
 
-.qr-language { position: relative; min-height: 120dvh; display: grid; align-items: center; }
-.qr-language img { width: 100%; height: 86dvh; object-fit: cover; border-radius: var(--lab-radius); filter: grayscale(0.95) contrast(1.08); }
+.qr-language { position: relative; min-height: 120svh; display: grid; align-items: center; }
+.qr-language img { width: 100%; height: 86svh; object-fit: cover; border-radius: var(--lab-radius); filter: grayscale(0.95) contrast(1.08); }
 .qr-copy { position: absolute; left: 10vw; max-width: 36rem; padding: 42px; background: rgb(7 9 11 / 0.78); backdrop-filter: blur(18px); border-left: 2px solid var(--lab-red); }
 .qr-copy h2 { font-size: clamp(3.5rem, 6.2vw, 7rem); line-height: 0.86; letter-spacing: -0.07em; }
 .qr-copy strong { color: var(--lab-red); font-size: 3rem; }
 .qr-copy p { margin: 24px 0 0; color: var(--lab-muted); line-height: 1.6; }
 
-.wallet-section { min-height: 130dvh; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 9vw; background: radial-gradient(circle at 80% 45%, rgb(241 243 244 / 0.08), transparent 30%), var(--lab-surface); }
+.wallet-section { min-height: 130svh; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 9vw; background: radial-gradient(circle at 80% 45%, rgb(241 243 244 / 0.08), transparent 30%), var(--lab-surface); }
 .wallet-copy h2 { font-size: clamp(4rem, 8.5vw, 9rem); line-height: 0.83; letter-spacing: -0.075em; }
 .wallet-copy p { max-width: 32rem; color: var(--lab-muted); font-size: 1.15rem; line-height: 1.6; }
 
@@ -200,15 +244,15 @@ a { color: inherit; text-decoration: none; }
 
 .chains-section > h2 { max-width: 12ch; font-size: clamp(4rem, 8.5vw, 9rem); line-height: 0.85; letter-spacing: -0.075em; }
 .chain-worlds { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 7rem; background: var(--lab-line); }
-.chain-worlds article { min-height: 58dvh; padding: clamp(2rem, 5vw, 5rem); background: var(--lab-bg); }
+.chain-worlds article { min-height: 58svh; padding: clamp(2rem, 5vw, 5rem); background: var(--lab-bg); }
 .chain-worlds article:last-child { background: var(--lab-surface); }
 .chain-worlds span { font: 10px/1 var(--lab-mono); color: var(--lab-red); }
 .chain-worlds h3 { margin: 42px 0 18px; font-size: clamp(3rem, 6vw, 6rem); letter-spacing: -0.06em; }
 .chain-worlds p { max-width: 27rem; color: var(--lab-muted); line-height: 1.6; }
 .offline-line { margin: 5rem 0 0; text-align: center; color: var(--lab-muted); font: 11px/1 var(--lab-mono); letter-spacing: 0.15em; }
 
-.drawer-section { min-height: 100dvh; display: grid; grid-template-columns: 1.1fr 0.9fr; align-items: stretch; }
-.drawer-section img { width: 100%; height: 100%; min-height: 100dvh; object-fit: cover; filter: grayscale(1) contrast(1.08); }
+.drawer-section { min-height: 100svh; display: grid; grid-template-columns: 1.1fr 0.9fr; align-items: stretch; }
+.drawer-section img { width: 100%; height: 100%; min-height: 100svh; object-fit: cover; filter: grayscale(1) contrast(1.08); }
 .drawer-section > div { display: flex; flex-direction: column; justify-content: center; padding: clamp(4rem, 7vw, 8rem); background: var(--lab-ink); color: var(--lab-bg); }
 .drawer-section h2 { font-size: clamp(3.5rem, 6vw, 6.5rem); line-height: 0.88; letter-spacing: -0.07em; }
 .drawer-section ol { margin: 3rem 0 0; padding: 0; list-style: none; counter-reset: drawer; }
@@ -250,7 +294,7 @@ a { color: inherit; text-decoration: none; }
 .start-section { background: var(--lab-surface); }
 .start-section > h2 { font-size: clamp(4rem, 9vw, 10rem); line-height: 0.82; letter-spacing: -0.075em; }
 .product-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 7rem; }
-.product-panels article { min-height: 70dvh; display: flex; flex-direction: column; padding: clamp(2rem, 4vw, 4rem); border: 1px solid var(--lab-line); border-radius: var(--lab-radius); background: var(--lab-bg); }
+.product-panels article { min-height: 70svh; display: flex; flex-direction: column; padding: clamp(2rem, 4vw, 4rem); border: 1px solid var(--lab-line); border-radius: var(--lab-radius); background: var(--lab-bg); }
 .product-panels article:last-child { background: linear-gradient(145deg, #1c2025, #080a0c); }
 .product-panels > article > span { color: var(--lab-red); font: 10px/1 var(--lab-mono); }
 .product-panels h3 { margin-top: auto; font-size: clamp(3rem, 6vw, 6rem); line-height: 0.86; letter-spacing: -0.065em; }
@@ -258,8 +302,13 @@ a { color: inherit; text-decoration: none; }
 .product-panels a { width: max-content; margin-top: 2rem; padding: 14px 0; border-bottom: 1px solid currentColor; font: 700 11px/1 var(--lab-mono); }
 .product-panels a:hover { color: var(--lab-red); }
 
-.final-cta { position: relative; min-height: 130dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.final-phone { position: absolute; top: 8%; left: 50%; opacity: 0.28; transform: translateX(-50%) scale(1.18); filter: blur(0.2px); }
+.final-cta { position: relative; min-height: 130svh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+/* Blurred, not just faded. At 0.28 opacity and a 0.2px blur the mockup was
+ * still legible, so "0.482731", "bc1q7x9...", "0.000142 BTC" and a VERIFIED
+ * box all read straight through KEEP THE KEYS OFFLINE, and the tagline landed
+ * exactly on the VERIFIED panel. A watermark has to be texture; the moment it
+ * has readable words in it, it is a second thing printed on the first. */
+.final-phone { position: absolute; top: 8%; left: 50%; opacity: 0.18; transform: translateX(-50%) scale(1.18); filter: blur(5px); }
 .final-cta h2 { position: relative; font-size: clamp(4.5rem, 11vw, 12rem); line-height: 0.8; letter-spacing: -0.08em; }
 .final-cta > p { position: relative; color: var(--lab-muted); font-size: 1.2rem; }
 .final-action { position: relative; width: 230px; height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; margin-top: 3rem; border: 1px solid var(--lab-ink); border-radius: 50%; font: 700 10px/1 var(--lab-mono); transition: transform 500ms cubic-bezier(.16,1,.3,1), background 220ms ease, color 220ms ease; }
@@ -279,7 +328,7 @@ a { color: inherit; text-decoration: none; }
   .wallet-section { gap: 6rem; }
   .source-grid { margin-top: 2rem; }
   .drawer-section { grid-template-columns: 1fr; }
-  .drawer-section img { min-height: 70dvh; }
+  .drawer-section img { min-height: 70svh; }
   .philosophy p:nth-child(even) { margin-left: 0; }
 }
 
@@ -297,11 +346,11 @@ a { color: inherit; text-decoration: none; }
   .hero-journey .scroll-scrub__copy { width: 100%; }
   .hero-journey .scroll-scrub__title { font-size: clamp(3rem, 15vw, 5rem); }
   .hero-journey .scroll-scrub__chapter-pin { padding-top: 4.5rem; }
-  .hero-ctas { bottom: calc(100% - 100dvh + 4rem); left: 1.25rem; right: 1.25rem; flex-direction: row; gap: 10px; }
+  .hero-ctas { bottom: calc(100% - 100svh + 4rem); left: 1.25rem; right: 1.25rem; flex-direction: row; gap: 10px; }
   /* Kept, not hidden. It is the one claim on this page a person can check
    * against the binary, and hiding it on the device most people will read
    * this on is the wrong half to drop. */
-  .hero-truth { display: block; bottom: calc(100% - 100dvh + 1.25rem); left: 1.25rem; right: 1.25rem; font-size: 10px; }
+  .hero-truth { display: block; bottom: calc(100% - 100svh + 1.25rem); left: 1.25rem; right: 1.25rem; font-size: 10px; }
   .idea-section { min-height: auto; }
   /* ## The display scale on a phone
    *
@@ -326,7 +375,7 @@ a { color: inherit; text-decoration: none; }
   .exploded-phone { height: 540px; transform: scale(0.82); }
   .phone-layer span { display: none; }
   .halves-section { grid-template-columns: 1fr; }
-  .half { min-height: 100dvh; }
+  .half { min-height: 100svh; }
   /* Room under the phone for the ring to land on the seam rather than on the
    * device, now that the phone is no longer pushed off the bottom edge. */
   .half { padding-bottom: 5.5rem; }
@@ -335,19 +384,25 @@ a { color: inherit; text-decoration: none; }
   .screen-security { min-height: auto; }
   .sacred-copy h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .fail-section h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
-  .failure-stack article { min-height: 55dvh; padding: 2rem 1.25rem; }
+  .failure-stack article { min-height: 55svh; padding: 2rem 1.25rem; }
   .failure-stack b { font-size: clamp(3.1rem, 17vw, 5.5rem); }
   .airgap h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
-  .qr-language { padding-inline: 0; }
-  .qr-language img { height: 85dvh; border-radius: 0; }
-  .qr-copy { left: 1.25rem; right: 1.25rem; bottom: 8rem; padding: 25px; }
+  /* The panel is anchored to the section and the photograph is centred inside
+   * it, so the section's own vertical padding pushed the panel's bottom edge
+   * past the bottom of the picture and it ended up floating on plain black
+   * under the image instead of sitting on it. The section is the photograph
+   * here, so it gets no padding and no extra height, and the panel has
+   * something to sit on again. */
+  .qr-language { min-height: auto; padding: 0; }
+  .qr-language img { height: 88svh; border-radius: 0; }
+  .qr-copy { left: 1.25rem; right: 1.25rem; bottom: 2rem; padding: 25px; }
   .qr-copy h2 { font-size: clamp(2rem, 11.5vw, 4.2rem); }
   .wallet-copy h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .swap-title h2 { font-size: clamp(2.6rem, 15vw, 5.2rem); }
   .swap-route { grid-template-columns: 1fr; }
   .chains-section > h2 { font-size: clamp(2.8rem, 15.5vw, 5.4rem); }
   .chain-worlds, .comparison-grid, .product-panels { grid-template-columns: 1fr; }
-  .chain-worlds article { min-height: 48dvh; }
+  .chain-worlds article { min-height: 48svh; }
   .drawer-section > div { padding: 5rem 1.25rem; }
   .drawer-section h2 { font-size: clamp(2.6rem, 15vw, 5rem); }
   .manifesto h2 { font-size: clamp(2.5rem, 14vw, 4.8rem); }
@@ -356,7 +411,7 @@ a { color: inherit; text-decoration: none; }
   .philosophy p { margin-bottom: 15vh; font-size: clamp(2rem, 11.5vw, 4.2rem); }
   .comparison > h2 { font-size: clamp(2.6rem, 15vw, 5.2rem); }
   .start-section > h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
-  .product-panels article { min-height: 58dvh; }
+  .product-panels article { min-height: 58svh; }
   .product-panels h3 { font-size: clamp(2rem, 11.5vw, 4rem); }
   .final-cta h2 { font-size: clamp(2.8rem, 16vw, 5.6rem); }
   .final-action { width: 190px; height: 190px; }
@@ -370,4 +425,15 @@ a { color: inherit; text-decoration: none; }
 
 @media (prefers-reduced-transparency: reduce) {
   .lab-nav, .qr-copy { backdrop-filter: none; background: var(--lab-bg); }
+}
+
+/* A backdrop blur behind a bar that is fixed over a scrolling page has to be
+ * recomputed every frame the page moves, over the full width of the bar, and
+ * the phone doing that is the same phone deciding whether this scroll feels
+ * smooth. On a page this dark the effect is nearly invisible anyway: the bar
+ * is already 72% opaque over near-black. Touch devices get the opaque version
+ * and spend the frame on scrolling instead. */
+@media (hover: none) {
+  .lab-nav { backdrop-filter: none; background: rgb(7 9 11 / 0.94); }
+  .qr-copy { backdrop-filter: none; background: rgb(7 9 11 / 0.94); }
 }

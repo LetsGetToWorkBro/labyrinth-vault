@@ -241,6 +241,7 @@ export function ScrollScrub({
     let viewportHeight = window.innerHeight;
     let layoutWidth = window.innerWidth;
     let userReady = false;
+    let onscreen = true;
 
     const unloadClip = (segment: RuntimeSegment) => {
       segment.abort?.abort();
@@ -493,7 +494,13 @@ export function ScrollScrub({
       }
     };
 
+    // The loop used to recurse unconditionally, so it kept running, and kept
+    // walking every segment looking for a video to seek, for the whole of the
+    // 30,000px of page below the hero and for as long as the tab stayed open
+    // in the background. Nothing further down the page needs a frame budget
+    // spent on a section 20,000px away.
     const tick = () => {
+      frame = 0;
       if (destroyed) {
         return;
       }
@@ -502,12 +509,41 @@ export function ScrollScrub({
         readScroll();
       }
       updateVideos();
-      frame = window.requestAnimationFrame(tick);
+      if (onscreen && !document.hidden) {
+        frame = window.requestAnimationFrame(tick);
+      }
+    };
+
+    const wake = () => {
+      if (!frame && !destroyed) {
+        frame = window.requestAnimationFrame(tick);
+      }
     };
 
     const onScroll = () => {
       dirty = true;
+      if (onscreen) {
+        wake();
+      }
     };
+    const onVisibility = () => {
+      if (!document.hidden) {
+        dirty = true;
+        wake();
+      }
+    };
+    // Half a viewport of margin either side, so the opacities and the seek are
+    // already settled by the time any of the hero is on screen.
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        onscreen = entries.some((entry) => entry.isIntersecting);
+        if (onscreen) {
+          dirty = true;
+          wake();
+        }
+      },
+      { rootMargin: "50% 0px" }
+    );
     const onResize = () => {
       if (coarsePointer && window.innerWidth === layoutWidth) {
         return;
@@ -553,6 +589,8 @@ export function ScrollScrub({
       once: true,
       passive: true,
     });
+    document.addEventListener("visibilitychange", onVisibility);
+    watcher.observe(root);
 
     layout();
     frame = window.requestAnimationFrame(tick);
@@ -566,6 +604,8 @@ export function ScrollScrub({
       window.removeEventListener("orientationchange", layout);
       window.removeEventListener("pointerdown", onFirstGesture);
       window.removeEventListener("touchstart", onFirstGesture);
+      document.removeEventListener("visibilitychange", onVisibility);
+      watcher.disconnect();
       root.style.removeProperty("--ss-progress");
       delete root.dataset.activeSection;
 
@@ -651,7 +691,7 @@ export function ScrollScrub({
       <div className="scroll-scrub__story">
         {segments.map((segment) => {
           const bandStyle: CSSProperties = {
-            minHeight: `${Math.max(segment.weight, 0.2) * 100}dvh`,
+            minHeight: `${Math.max(segment.weight, 0.2) * 100}svh`,
           };
 
           if (segment.kind === "connector") {

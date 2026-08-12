@@ -11,7 +11,7 @@
   top: 0;
   z-index: 0;
   width: 100%;
-  height: 100dvh;
+  height: 100svh;
   overflow: hidden;
   background: var(--ss-bg);
 }
@@ -123,7 +123,7 @@
 .scroll-scrub__story {
   position: relative;
   z-index: 3;
-  margin-top: -100dvh;
+  margin-top: -100svh;
   pointer-events: none;
 }
 
@@ -137,7 +137,7 @@
   top: 0;
   display: flex;
   align-items: center;
-  min-height: 100dvh;
+  min-height: 100svh;
   padding: clamp(5rem, 9vw, 8rem) clamp(1.25rem, 6vw, 6rem);
   pointer-events: none;
 }
@@ -269,7 +269,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .scroll-scrub__chapter {
-    min-height: 100dvh !important;
+    min-height: 100svh !important;
   }
 
   .scroll-scrub__connector-band {

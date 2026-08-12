@@ -153,6 +153,74 @@ describe('the site carries its own media', () => {
   });
 });
 
+describe('the page holds still while somebody reads it', () => {
+  /**
+   * "The page just skips around as you scroll" and "can't even read the wallet
+   * section" were one bug, and it was a choice of unit.
+   *
+   * `dvh` is the *dynamic* viewport height. On a phone it tracks the browser's
+   * own chrome, so it changes continuously while you scroll, as the URL bar
+   * collapses and expands. Twenty-eight declarations across this site were
+   * sized in it, and full-height sections stack, so the error compounds with
+   * depth. Measured at 390x844: a 56px URL bar took 900px off the document and
+   * moved the wallet section 636px up the page. The wallet section was the one
+   * named because it sits below eleven of them.
+   *
+   * `svh` is the *small* viewport height, the one assuming the chrome is
+   * shown, and the spec requires it to stay put for the life of the page.
+   *
+   * A headless browser has no URL bar, so none of this is reproducible in a
+   * test that renders the page. What a test can do is refuse the unit.
+   */
+  const stylesheets = files.filter((path) => /\.(css|tsx?)$/.test(path));
+
+  it('sizes nothing in the unit that changes while you scroll', () => {
+    for (const path of stylesheets) {
+      const body = readFileSync(path, 'utf8');
+      const found = body.match(/\b\d+(\.\d+)?dvh\b/);
+      expect(
+        found?.[0] ?? null,
+        `${path} sizes something in ${found?.[0]}, which changes as the phone's URL bar moves`,
+      ).toBeNull();
+    }
+  });
+
+  it('uses the stable viewport unit instead, so this is not passing by having no heights at all', () => {
+    const all = stylesheets.map((path) => readFileSync(path, 'utf8')).join('\n');
+    expect(all).toMatch(/\bsvh\b/);
+  });
+
+  it('does not make every programmatic scroll animate across 30,000px', () => {
+    /* `scroll-behavior: smooth` on the root applies to the nav anchors and to
+     * the browser's own scroll restoration. On a page this tall, tapping GET
+     * STARTED animated 26,000px of travel, dragging the scroll-driven hero and
+     * three sticky stacks through the whole journey on the way past. The hero
+     * still animates its own chapter jumps, in JavaScript, over about one
+     * screen; that is a local decision and stays. */
+    const css = readFileSync('site/src/labyrinth.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const root = /(^|\})\s*html\s*\{([^}]*)\}/m.exec(css)?.[2] ?? '';
+    expect(root, 'html sets scroll-behavior: smooth').not.toMatch(/scroll-behavior:\s*smooth/);
+  });
+
+  it('never snaps a sideways scroller hard enough to steal a vertical swipe', () => {
+    /* `scroll-snap-type: x mandatory` on a strip inside a vertically scrolling
+     * page captures a thumb that drifts a few degrees off vertical, which
+     * lands as the page refusing to move. */
+    const css = readFileSync('site/src/labyrinth.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).not.toMatch(/scroll-snap-type:\s*[xy]\s+mandatory/);
+  });
+
+  it('stops animating the hero once the hero is not on screen', () => {
+    /* The loop recursed unconditionally, so it kept running, and kept walking
+     * every segment looking for a video to seek, for the whole of the 30,000px
+     * below the hero and for as long as a background tab stayed open. */
+    const source = readFileSync('site/src/components/scroll-scrub.tsx', 'utf8');
+    expect(source, 'the hero loop has no visibility gate').toMatch(/new IntersectionObserver/);
+    expect(source).toMatch(/onscreen\s*&&\s*!document\.hidden/);
+    expect(source, 'the observer is never disconnected').toMatch(/\.disconnect\(\)/);
+  });
+});
+
 describe('the display type fits the phone it is read on', () => {
   /**
    * Three rounds of "some phones are cut off" and "SHOW THE TRANSACTIO" came
