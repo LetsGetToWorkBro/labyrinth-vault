@@ -50,6 +50,99 @@ export interface NodeConfig {
 export type NodeCheck = { ok: true; config: NodeConfig } | { ok: false; problem: string };
 
 /**
+ * The parts of a node address, parsed here rather than by the runtime.
+ *
+ * ## Why this does not call `new URL()`
+ *
+ * Because the answer depends on which engine you ask, and the engine that
+ * decides is not the engine the tests run on.
+ *
+ * React Native ships its own `URL` in `Libraries/Blob/URL.js`, and it is a
+ * handful of regular expressions rather than the WHATWG algorithm. Its
+ * hostname pattern stops at the class `[^:/?#]`, which does not include a
+ * backslash; WHATWG treats a backslash as a path separator for http. So the
+ * two disagree, and this was measured rather than assumed:
+ *
+ *     http://evil.com\@10.0.0.5/
+ *       WHATWG (Node, and iOS networking)  ->  evil.com
+ *       React Native                       ->  10.0.0.5
+ *
+ * The disagreement lands exactly on the check below. Plain http is permitted
+ * only to a local address, so on a device that string parses as `10.0.0.5`,
+ * passes as local, is stored, and is then handed to a networking stack that
+ * resolves `evil.com` and opens an unencrypted connection to it carrying
+ * every address in the wallet. Nothing in the suite could see it, because the
+ * suite runs on Node, where the same string parses the safe way.
+ *
+ * That is the third platform difference in this project invisible until a
+ * device: `TextEncoder` missing from JavaScriptCore, App Transport Security
+ * blocking the local nodes this screen exists to encourage, and now this. The
+ * answer has been the same each time. Do not ask the host; carry the
+ * implementation, and test the one that ships.
+ *
+ * A node address is a small grammar, so this is strict on purpose. Anything
+ * unusual is refused rather than interpreted, because every ambiguity is a
+ * chance for two parsers to disagree again.
+ */
+interface Address {
+  protocol: string;
+  hostname: string;
+  port: string;
+  pathname: string;
+}
+
+function splitAddress(text: string): Address | null {
+  /* Refused outright rather than handled: the backslash is the character the
+   * two implementations disagree about, it has no legitimate place in a node
+   * address, and a refusal cannot be misread by anybody. Everything outside
+   * printable ASCII goes with it, because WHATWG strips tabs and newlines
+   * mid-parse while a regex keeps them, which is the same divergence one
+   * character further along. */
+  if (!/^[\x21-\x7e]+$/.test(text)) return null;
+
+  const parts = /^([a-zA-Z][a-zA-Z\d+.-]*):\/\/([^/]*)(\/[^?#]*)?$/.exec(text);
+  if (!parts) return null;
+
+  const protocol = `${parts[1]!.toLowerCase()}:`;
+  const authority = parts[2]!;
+  if (authority === '') return null;
+
+  const bracketed = /^\[([0-9a-fA-F:.]+)\](?::(\d{1,5}))?$/.exec(authority);
+  const plain = /^([a-zA-Z\d.-]+)(?::(\d{1,5}))?$/.exec(authority);
+  const found = bracketed ?? plain;
+  if (!found) return null;
+
+  const hostname = bracketed ? `[${found[1]!.toLowerCase()}]` : found[1]!.toLowerCase();
+  const port = found[2] ?? '';
+  if (port !== '' && (Number(port) < 1 || Number(port) > 65535)) return null;
+
+  if (!bracketed) {
+    /* An empty label is not a name. `a..b`, a leading dot and a trailing dot
+     * all resolve differently across resolvers, which is the same class of
+     * problem one layer down. */
+    if (hostname.includes('..') || hostname.startsWith('.') || hostname.endsWith('.')) return null;
+
+    /* Either a dotted quad, or a name whose last label begins with a letter.
+     *
+     * The second rule looks arbitrary and is not. WHATWG runs its IPv4 parser
+     * whenever the final label is numeric in any base, so it reads
+     * `0x0a000005` as 10.0.0.5 while a plain regular expression reads it as a
+     * name. That divergence was caught by the differential test rather than
+     * predicted: a host this file called `0x0a000005` is a host iOS would
+     * connect to as 10.0.0.5, and the two must never be different. Requiring
+     * the final label to start with a letter removes every numeric form
+     * WHATWG would rewrite, and leaves ordinary names alone. */
+    const dottedQuad = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+    const labels = hostname.split('.');
+    const named = /^[a-z]/.test(labels[labels.length - 1] ?? '');
+    if (!dottedQuad && !named) return null;
+    if (dottedQuad && hostname.split('.').some((part) => Number(part) > 255)) return null;
+  }
+
+  return { protocol, hostname, port, pathname: parts[3] ?? '' };
+}
+
+/**
  * Validate a node address before anything is sent to it.
  *
  * The rules are about not sending a wallet's traffic somewhere it did not
@@ -59,10 +152,21 @@ export function parseNode(kind: NodeKind, raw: string, label?: string, mine = fa
   const text = String(raw ?? '').trim();
   if (!text) return { ok: false, problem: 'Enter the address of a node.' };
 
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
+  /* Checked on the raw text so each refusal keeps its own sentence. The
+   * grammar below has no room for any of them, so this is about telling
+   * somebody what is wrong rather than about safety. */
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/]*@/.test(text)) {
+    /* Credentials in a URL end up in logs, in screenshots and in whatever the
+     * app copies to a clipboard. A node that needs authentication needs a
+     * design for it, not a convention smuggled through the address bar. */
+    return { ok: false, problem: 'Put credentials somewhere other than the address.' };
+  }
+  if (text.includes('?') || text.includes('#')) {
+    return { ok: false, problem: 'A node address has no query or fragment.' };
+  }
+
+  const url = splitAddress(text);
+  if (!url) {
     return { ok: false, problem: 'That is not an address. It needs a scheme, like https://' };
   }
 
@@ -81,22 +185,11 @@ export function parseNode(kind: NodeKind, raw: string, label?: string, mine = fa
     };
   }
 
-  if (url.username || url.password) {
-    /* Credentials in a URL end up in logs, in screenshots and in whatever the
-     * app copies to a clipboard. A node that needs authentication needs a
-     * design for it, not a convention smuggled through the address bar. */
-    return { ok: false, problem: 'Put credentials somewhere other than the address.' };
-  }
-
-  if (url.search || url.hash) {
-    return { ok: false, problem: 'A node address has no query or fragment.' };
-  }
-
   return {
     ok: true,
     config: {
       kind,
-      url: (url.origin + url.pathname).replace(/\/+$/, ''),
+      url: (`${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ''}${url.pathname}`).replace(/\/+$/, ''),
       label: (label ?? '').trim() || url.hostname,
       mine,
     },
@@ -147,13 +240,21 @@ function isLocal(hostname: string): boolean {
   return false;
 }
 
+/**
+ * The host of an already-validated node address.
+ *
+ * Exported so that nothing else reaches for `new URL()` to answer the same
+ * question. Two parsers over one string is how the divergence above becomes a
+ * divergence between two of our own files.
+ */
+export function hostOf(url: string): string | null {
+  return splitAddress(url)?.hostname ?? null;
+}
+
 /** True for an address that never leaves the owner's own network. */
 export function isLocalNode(config: NodeConfig): boolean {
-  try {
-    return isLocal(new URL(config.url).hostname);
-  } catch {
-    return false;
-  }
+  const url = splitAddress(config.url);
+  return url ? isLocal(url.hostname) : false;
 }
 
 /**

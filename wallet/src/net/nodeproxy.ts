@@ -36,7 +36,7 @@
  *   - anything else: **direct**, because the proxy would refuse it anyway
  */
 
-import type { NodeConfig } from '../core/nodes';
+import { hostOf, type NodeConfig } from '../core/nodes';
 import type { Reply, Request, Transport } from './http';
 import { SWAP_PROXY } from './swapproxy';
 
@@ -61,10 +61,11 @@ export type Route =
 
 /** Which of the three cases this node is in. */
 export function routeFor(node: NodeConfig): Route {
-  let host: string;
-  try {
-    host = new URL(node.url).hostname.toLowerCase();
-  } catch {
+  /* `hostOf` rather than `new URL()`, because React Native's URL and the
+   * WHATWG one disagree about backslashes and this decides whether traffic
+   * is relayed. `nodes.ts` carries the argument and the measurement. */
+  const host = hostOf(node.url);
+  if (host === null) {
     return { via: 'direct', because: 'not relayed' };
   }
   /* Theirs wins first, before the list is even consulted: a person can run
