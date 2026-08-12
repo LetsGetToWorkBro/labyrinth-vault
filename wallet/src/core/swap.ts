@@ -775,9 +775,60 @@ export interface HttpRequest {
   body?: Record<string, unknown>;
 }
 
-/** Whatever actually performs a request. Injected, never imported. */
+/**
+ * What the wallet asks a proxy for, when it is asking a proxy.
+ *
+ * An intent rather than a URL, because the relay builds the upstream request
+ * itself from these same adapters. A proxy that forwarded whatever URL it was
+ * handed would be a free anonymizer for whoever found it.
+ */
+export interface SwapIntent {
+  provider: ProviderId;
+  from: string;
+  to: string;
+  amount: number;
+  payoutAddress?: string;
+  refundAddress?: string;
+  /** The provider's quote handle, so the order is priced at the shown rate. */
+  rateUuid?: string;
+}
+
+/**
+ * Whatever actually performs a request. Injected, never imported.
+ *
+ * Two shapes, and the second is why this interface is not one method.
+ *
+ * `send` takes a built request and is what a direct transport, a fixture and
+ * every test in the suite use. The optional trio takes an *intent* and is what
+ * a transport through the Labyrinth relay uses, because that relay refuses
+ * URLs by design and builds the upstream call from the same adapter functions
+ * on its own side.
+ *
+ * The calls below prefer the intent methods when a transport offers them. What
+ * does not change either way is everything that matters: the same
+ * `PARSE_RATE`, the same `PARSE_CREATE`, the same `verifyOrder`, the same
+ * bounds and expiry checks. Only who assembles the URL moves. Two paths
+ * through the parsing would be two places for a chain check to be subtly
+ * different, and that is the one thing this file exists to prevent.
+ */
 export interface SwapTransport {
   send(request: HttpRequest): Promise<unknown>;
+  quote?(intent: SwapIntent): Promise<unknown>;
+  create?(intent: SwapIntent): Promise<unknown>;
+  status?(provider: ProviderId, id: string): Promise<unknown>;
+}
+
+/** The intent behind a built request, for a transport that wants one. */
+function intentOf(request: SwapRequest, quote?: SwapQuote): SwapIntent {
+  return {
+    provider: request.provider,
+    from: request.pair.from.id,
+    to: request.pair.to.id,
+    amount: request.amount,
+    payoutAddress: request.payoutAddress,
+    refundAddress: request.refundAddress,
+    ...(quote?.rateUuid ? { rateUuid: quote.rateUuid } : {}),
+  };
 }
 
 const number = (value: unknown): number => {
@@ -1089,7 +1140,10 @@ export async function quoteAll(
         return { provider: id, ok: false as const, reason: 'Does not trade that pair.' };
       }
       try {
-        return PARSE_RATE[id](await transport.send(RATE[id](pair, amount)));
+        const json = transport.quote
+          ? await transport.quote({ provider: id, from: pair.from.id, to: pair.to.id, amount })
+          : await transport.send(RATE[id](pair, amount));
+        return PARSE_RATE[id](json);
       } catch (error) {
         return { provider: id, ok: false as const, reason: (error as Error)?.message ?? 'No answer.' };
       }
@@ -1175,7 +1229,9 @@ export async function createOrder(
 
   let json: unknown;
   try {
-    json = await transport.send(CREATE[request.provider](request, quote));
+    json = transport.create
+      ? await transport.create(intentOf(request, quote))
+      : await transport.send(CREATE[request.provider](request, quote));
   } catch (error) {
     return {
       ok: false,
@@ -1196,7 +1252,10 @@ export async function readStatus(
   id: string,
 ): Promise<SwapStatus> {
   try {
-    return PARSE_STATUS[provider](await transport.send(STATUS[provider](id)));
+    const json = transport.status
+      ? await transport.status(provider, id)
+      : await transport.send(STATUS[provider](id));
+    return PARSE_STATUS[provider](json);
   } catch (error) {
     return { stage: 'failed', raw: (error as Error)?.message ?? 'no answer' };
   }

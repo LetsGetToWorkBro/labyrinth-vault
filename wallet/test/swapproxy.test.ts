@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { proxyTransport, SWAP_PROXY } from '../src/net/swapproxy';
+import { proxyTransport, SWAP_PROXY, swapConfigured } from '../src/net/swapproxy';
 
 const reply = (body: unknown, ok = true) =>
   (async () => ({ json: async () => (ok ? { ok: true, upstream: body } : body) }) as unknown as Response) as unknown as typeof fetch;
@@ -63,5 +63,40 @@ describe('the swap proxy transport', () => {
     const t = proxyTransport('https://proxy.test', doFetch);
     await t.status('exolix', 'ord/../../etc&x=1');
     expect(seen[0]).toContain('id=ord%2F..%2F..%2Fetc%26x%3D1');
+  });
+});
+
+describe('going live is one string', () => {
+  /* The whole act of switching the swap from fixture to real is filling in
+   * SWAP_PROXY. Nothing else is a flag somebody has to remember, because a
+   * second thing to remember is a build that ships half-connected. */
+  it('reports itself unconfigured while the host is blank', () => {
+    expect(SWAP_PROXY).toBe('');
+    expect(swapConfigured()).toBe(false);
+    expect(swapConfigured('   ')).toBe(false);
+  });
+
+  it('reports itself configured the moment there is a host', () => {
+    expect(swapConfigured('https://swap.example.workers.dev')).toBe(true);
+  });
+
+  it('offers the intent methods the core prefers when they exist', () => {
+    /* The core calls transport.quote/create/status when a transport has them
+     * and falls back to send() when it does not, so one set of parsers and
+     * one verifyOrder serve both paths. */
+    const transport = proxyTransport('https://swap.example.workers.dev');
+    expect(typeof transport.quote).toBe('function');
+    expect(typeof transport.create).toBe('function');
+    expect(typeof transport.status).toBe('function');
+  });
+
+  it('still refuses to be handed a URL', async () => {
+    /* The relay takes intents. A caller that has not moved over says so
+     * loudly rather than quietly going direct to the exchange, which would
+     * undo the entire reason for routing through it. */
+    const transport = proxyTransport('https://swap.example.workers.dev');
+    await expect(transport.send({ method: 'GET', url: 'https://exolix.com/api/v2/rate' })).rejects.toThrow(
+      /intent, not a URL/,
+    );
   });
 });

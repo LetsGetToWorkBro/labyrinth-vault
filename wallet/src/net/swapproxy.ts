@@ -26,10 +26,21 @@
  * behalf could lie about the answer; this one is never asked.
  */
 
-import type { HttpRequest, SwapTransport } from '../core/swap';
+import type { HttpRequest, ProviderId, SwapIntent, SwapTransport } from '../core/swap';
 
-/** Where the proxy lives. One host, named once. */
-export const SWAP_PROXY = 'https://swap.labyrinth.vision';
+/**
+ * Where the relay lives, once it lives anywhere.
+ *
+ * Empty until the Worker is deployed, and empty is load-bearing rather than a
+ * placeholder to be tidied later: `swapConfigured()` reads it, the store picks
+ * the demo transport when it is blank, and the swap screen says so on the
+ * screen. Filling this one string in is the entire act of going live, and
+ * nothing anywhere else has to be remembered.
+ */
+export const SWAP_PROXY = '';
+
+/** Whether there is a relay to talk to at all. */
+export const swapConfigured = (base: string = SWAP_PROXY): boolean => base.trim().length > 0;
 
 /**
  * What the wallet asks the proxy for.
@@ -39,15 +50,19 @@ export const SWAP_PROXY = 'https://swap.labyrinth.vision';
  * app uses, which is what keeps it from being an open relay anybody could
  * point at anything.
  */
-export interface SwapIntent {
-  provider: string;
-  from: string;
-  to: string;
-  amount: number;
-  payoutAddress?: string;
-  refundAddress?: string;
-  /** The provider's quote handle, so the order is priced at the shown rate. */
-  rateUuid?: string;
+export type { SwapIntent } from '../core/swap';
+
+/**
+ * A transport that definitely speaks intents, not merely one that might.
+ *
+ * `SwapTransport` makes the intent trio optional because a direct or fixture
+ * transport has no use for it. This one always has all three, and saying so
+ * lets a caller reach for them without a check that could never fail.
+ */
+export interface ProxyTransport extends SwapTransport {
+  quote(intent: SwapIntent): Promise<unknown>;
+  create(intent: SwapIntent): Promise<unknown>;
+  status(provider: ProviderId, id: string): Promise<unknown>;
 }
 
 interface ProxyReply {
@@ -65,10 +80,7 @@ interface ProxyReply {
  * second place the wire format is written down, and the second one is always
  * the one that goes stale.
  */
-export function proxyTransport(
-  base: string = SWAP_PROXY,
-  doFetch: typeof fetch = fetch,
-): SwapTransport & { quote(intent: SwapIntent): Promise<unknown>; create(intent: SwapIntent): Promise<unknown>; status(provider: string, id: string): Promise<unknown> } {
+export function proxyTransport(base: string = SWAP_PROXY, doFetch: typeof fetch = fetch): ProxyTransport {
   const call = async (path: string, init: RequestInit): Promise<unknown> => {
     const response = await doFetch(`${base}${path}`, {
       ...init,
@@ -98,7 +110,7 @@ export function proxyTransport(
     },
     quote: (intent: SwapIntent) => call('/v1/quote', { method: 'POST', body: JSON.stringify(intent) }),
     create: (intent: SwapIntent) => call('/v1/create', { method: 'POST', body: JSON.stringify(intent) }),
-    status: (provider: string, id: string) =>
+    status: (provider: ProviderId, id: string) =>
       call(`/v1/status?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(id)}`, { method: 'GET' }),
   };
 }

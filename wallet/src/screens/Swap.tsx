@@ -77,6 +77,7 @@ import {
   type SwapCoin,
   type SwapQuote,
 } from '../core/swap';
+import { swapConfigured } from '../net/swapproxy';
 
 type Phase = 'compose' | 'quoting' | 'quoted' | 'creating' | 'refused';
 
@@ -344,12 +345,16 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
           </ActionRow>
         )}
 
-        <Gap />
-        <Notice title="DEMO DATA" tone="plain">
-          There is no network client in this build, so the quotes above come
-          from a fixture. It answers in the shape a real exchange answers in,
-          so the checks around it are the real ones.
-        </Notice>
+        {swapConfigured() ? null : (
+          <>
+            <Gap />
+            <Notice title="DEMO DATA" tone="plain">
+              No relay is configured in this build, so the quotes above come
+              from a fixture. It answers in the shape a real exchange answers
+              in, so the checks around it are the real ones.
+            </Notice>
+          </>
+        )}
         <Gap size={space.chapter} />
       </ScrollView>
     </Screen>

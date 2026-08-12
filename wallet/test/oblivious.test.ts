@@ -23,7 +23,13 @@ describe('who carries the traffic', () => {
     /* The failure this guards is the subtle one: everything works, every
      * vector passes, and both halves of the secret sit inside one company.
      * A relay must be a different operator on different infrastructure. */
-    const ours = new URL(SWAP_PROXY).hostname;
+    /* Both may be unset at once: no relay agreed, no gateway deployed. The
+     * guard still has to hold the moment either is filled in. */
+    const ours = SWAP_PROXY.trim() ? new URL(SWAP_PROXY).hostname : null;
+    if (!ours) {
+      expect(RELAYS).toEqual([]);
+      return;
+    }
     for (const relay of RELAYS) {
       expect(new URL(relay.url).hostname).not.toBe(ours);
       expect(new URL(relay.keysUrl).hostname).not.toBe(ours);
