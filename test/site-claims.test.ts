@@ -117,6 +117,35 @@ describe('the site carries its own media', () => {
     expect(total, `site media is ${(total / 1048576).toFixed(1)} MB`).toBeLessThan(6 * 1024 * 1024);
   });
 
+  it('never sets a caching header twice for the same file', () => {
+    /* Cloudflare appends every matching rule in `_headers` rather than
+     * letting the most specific one win, so a path matching two blocks gets
+     * both values in one comma-joined header. Live, the hashed assets came
+     * back as `max-age=0, must-revalidate, ..., max-age=31536000, immutable`,
+     * and a cache reads the first one. The fingerprinting was doing nothing.
+     *
+     * The invariant that prevents it: the catch-all carries no caching, so
+     * anything it matches falls through to Cloudflare's default, and every
+     * other block is specific enough not to overlap another. */
+    const headers = readFileSync('site/public/_headers', 'utf8');
+    const blocks = headers
+      .split(/\n(?=\/)/)
+      .map((block) => block.split('\n').filter((line) => !line.trim().startsWith('#')));
+    for (const block of blocks) {
+      const pattern = block[0]?.trim();
+      if (!pattern) continue;
+      const caching = block.filter((line) => /^\s*Cache-Control:/i.test(line));
+      if (pattern === '/*') {
+        expect(caching, 'the catch-all must set no Cache-Control, or it doubles every other rule').toEqual([]);
+      } else {
+        expect(caching.length, `${pattern} sets Cache-Control ${caching.length} times`).toBeLessThanOrEqual(1);
+      }
+    }
+    /* And no rules by extension: the media lives under /assets/, so a
+     * `/*.webp` rule would be a third value on the same response. */
+    expect(headers).not.toMatch(/^\/\*\.[a-z0-9]+$/im);
+  });
+
   it('has a favicon that is a favicon', () => {
     /* The one that was 4 MB. Browsers fetch this on every page load. */
     expect(existsSync('site/public/favicon.ico')).toBe(true);
