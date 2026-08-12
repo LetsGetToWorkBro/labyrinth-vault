@@ -33,7 +33,7 @@
  * Every function here takes its uniform randomness as a `() => number` in
  * [0, 1), so tests are deterministic and reproducible. The app passes a source
  * backed by the platform CSPRNG. Nothing here calls `Math.random` itself: a
- * ring built from a weak PRNG is a deanonymised ring.
+ * ring built from a weak PRNG is a deanonymized ring.
  */
 
 import type { OutputDistribution } from '../net/monerod';

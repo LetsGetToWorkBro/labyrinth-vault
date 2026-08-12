@@ -25,7 +25,7 @@ const codeOnly = (text: string): string =>
 
 describe('the Worker keeps nothing', () => {
   it('found its own source to check', () => {
-    expect(sources.length).toBeGreaterThanOrEqual(3);
+    expect(sources.length).toBeGreaterThanOrEqual(4);
   });
 
   it('logs nothing, anywhere', () => {
@@ -287,7 +287,7 @@ describe('the chain node relay', () => {
   });
 
   it('refuses a host it was not given, however it is asked', () => {
-    /* An open relay is a free anonymiser for whoever finds it. A node
+    /* An open relay is a free anonymizer for whoever finds it. A node
      * somebody runs themselves is reached directly by the app and never
      * arrives here at all. */
     for (const host of ['evil.example', 'localhost', '127.0.0.1', '', 'mempool.space.evil.example']) {

@@ -1,9 +1,10 @@
 /**
- * The swap proxy.
+ * The relay.
  *
- * Three routes, one job: stand between a wallet and an exchange so that the
- * exchange sees Cloudflare instead of somebody's phone, and so the affiliate
- * keys stay off the device. Everything else about this file is restraint.
+ * A handful of routes, one job: stand between a wallet and whoever it has to
+ * talk to, so that an exchange or a chain node sees Cloudflare instead of
+ * somebody's phone, and so the affiliate keys stay off the device. Everything
+ * else about this file is restraint.
  *
  * ## What it keeps
  *
@@ -15,15 +16,19 @@
  * in six months fails the build, which is the only kind of promise about logs
  * that survives contact with a deadline.
  *
- * ## What it cannot promise
+ * ## Two ways in
  *
- * It sees the request while it is forwarding it. It has to: the affiliate key
- * has to be attached to a real trade, and a proxy cannot forward what it
- * cannot read. So "we store nothing" is true and provable, and "we could not
- * see it if we wanted to" is not, and this file does not pretend otherwise.
- * The design that would make the second true is Oblivious HTTP, where a relay
- * run by somebody else holds the address and this gateway holds only the
- * trade; README.md carries the plan and the reason it is not built yet.
+ * Everything below can be reached directly, in which case this Worker sees a
+ * caller's address next to their trade and the only thing between those two
+ * facts is that it writes neither down. That is a promise, and it holds
+ * exactly as long as everybody who ever deploys this Worker keeps it.
+ *
+ * The same routes can be reached through `/v1/gateway`, encrypted, forwarded
+ * by a relay run by somebody who is not us. Then the relay holds the address
+ * and cannot read the request, this Worker reads the request and sees the
+ * relay where the caller would have been, and nobody holds both halves. The
+ * promise stops being load-bearing. `gateway.ts` has the mechanics and the
+ * one thing it costs.
  *
  * ## What it does not decide
  *
@@ -33,6 +38,13 @@
  * infrastructure does not have to be trusted.
  */
 
+import {
+  REQUEST_MEDIA_TYPE,
+  keyListResponse,
+  openEncapsulated,
+  parseKeys,
+  sealAnswer,
+} from './gateway';
 import { nodeTarget } from './nodes';
 import { checkLimit } from './ratelimit';
 import { buildCreate, buildQuote, buildStatus, knownProvider, send, type Intent, type Keys } from './upstream';
@@ -40,10 +52,12 @@ import { buildCreate, buildQuote, buildStatus, knownProvider, send, type Intent,
 export interface Env {
   SWAP_LIMIT?: KVNamespace;
   SWAP_RATE_LIMIT_PER_MINUTE?: string;
+  OHTTP_RATE_LIMIT_PER_MINUTE?: string;
   EXOLIX_API_KEY?: string;
   GODEX_PUBLIC_KEY?: string;
   GODEX_AFFILIATE_ID?: string;
   RATE_LIMIT_SECRET?: string;
+  OHTTP_KEYS?: string;
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -84,6 +98,103 @@ async function readIntent(request: Request): Promise<Record<string, unknown> | n
 const numberOf = (value: unknown): number =>
   typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
 
+const intOr = (text: string | undefined, fallback: number): number => {
+  const value = Number.parseInt(text ?? '', 10);
+  return Number.isFinite(value) ? value : fallback;
+};
+
+/**
+ * The routes themselves, with no rate limiting and no knowledge of how the
+ * request arrived.
+ *
+ * Separated out so that `/v1/gateway` can serve exactly the same routes as
+ * the open door does. If the oblivious path had its own copy of the routing,
+ * the two would drift, and the way that drift would show up is a feature that
+ * quietly works only for the people not using the private path.
+ */
+async function serve(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  try {
+    /* Also answered outside, before the counting, so that "is it deployed"
+     * costs a caller nothing. Here as well so that it can be asked through
+     * the oblivious door like everything else. */
+    if (url.pathname === '/v1/health') return json({ ok: true });
+
+    /* The chain node relay. A public node learns every address it is
+     * asked about and, on a broadcast, which address announced a
+     * transaction first; this puts Cloudflare in front of both. A node
+     * somebody runs themselves never arrives here, because the wallet
+     * sends that traffic straight there rather than through a stranger. */
+    if (url.pathname === '/v1/node') {
+      const target = nodeTarget(url.searchParams.get('host') ?? '', url.searchParams.get('path') ?? '');
+      if (!target.ok) return problem(target.problem, 400);
+      if (request.method !== 'GET' && request.method !== 'POST') {
+        return problem('That method is not relayed.', 405);
+      }
+      /* The content type is carried across rather than assumed. Esplora
+       * takes a broadcast as text/plain: a raw transaction retyped as JSON
+       * arrives at the node as a quoted string and fails for a reason
+       * nobody would think to look for. */
+      const contentType = request.headers.get('Content-Type') ?? 'application/json';
+      const upstream = await fetch(target.url, {
+        method: request.method,
+        headers: { Accept: 'application/json', 'Content-Type': contentType },
+        ...(request.method === 'POST' ? { body: await request.text() } : {}),
+      });
+      /* Handed back as it arrived, body and status. This Worker does not
+       * read chain data any more than it reads an exchange's answer: the
+       * wallet scans, verifies and decides, on the device. */
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: {
+          'Content-Type': upstream.headers.get('Content-Type') ?? 'application/json',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
+
+    if (url.pathname === '/v1/status' && request.method === 'GET') {
+      const provider = knownProvider(url.searchParams.get('provider'));
+      if (!provider) return problem('Unknown exchange.', 400);
+      const built = buildStatus(provider, url.searchParams.get('id') ?? '');
+      if (!built.ok) return problem(built.problem, 400);
+      const answer = await send(built.request, provider, keysFrom(env));
+      return json({ ok: true, upstream: answer.body }, answer.status >= 500 ? 502 : 200);
+    }
+
+    if ((url.pathname === '/v1/quote' || url.pathname === '/v1/create') && request.method === 'POST') {
+      const body = await readIntent(request);
+      if (!body) return problem('That request was not readable.', 400);
+      const provider = knownProvider(body['provider']);
+      if (!provider) return problem('Unknown exchange.', 400);
+
+      const intent: Intent = {
+        provider,
+        from: String(body['from'] ?? ''),
+        to: String(body['to'] ?? ''),
+        amount: numberOf(body['amount']),
+        ...(typeof body['payoutAddress'] === 'string' ? { payoutAddress: body['payoutAddress'] } : {}),
+        ...(typeof body['refundAddress'] === 'string' ? { refundAddress: body['refundAddress'] } : {}),
+      };
+
+      const built = url.pathname === '/v1/quote' ? buildQuote(intent) : buildCreate(intent);
+      if (!built.ok) return problem(built.problem, 400);
+
+      const answer = await send(built.request, provider, keysFrom(env));
+      return json({ ok: true, upstream: answer.body }, answer.status >= 500 ? 502 : 200);
+    }
+
+    return problem('No such route.', 404);
+  } catch (error) {
+    /* The message, not the stack, and not the request. An upstream that
+     * refuses or times out is a sentence the app can show; anything more
+     * would be this Worker keeping a record of a trade in an error path,
+     * which is the same retention the rest of the file refuses. */
+    return problem(`The exchange could not be reached (${(error as Error)?.message ?? 'no answer'}).`, 502);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -94,12 +205,75 @@ export default {
      * business. */
     if (url.pathname === '/v1/health') return json({ ok: true });
 
-    const limit = Number.parseInt(env.SWAP_RATE_LIMIT_PER_MINUTE ?? '60', 10);
+    /* The gateway's public keys, in RFC 9458's own format. Unmetered and
+     * cacheable on purpose: it is the same bytes for everybody, it is the
+     * first thing a client needs, and rate limiting the one request that has
+     * to happen before anything can be private would be an odd place to
+     * start counting. */
+    if (url.pathname === '/v1/ohttp-keys') {
+      if (request.method !== 'GET') return problem('That method is not served here.', 405);
+      const keys = parseKeys(env.OHTTP_KEYS);
+      if (keys.length === 0) return problem('This gateway is not configured for Oblivious HTTP.', 404);
+      return keyListResponse(keys);
+    }
+
+    /* The oblivious door. What arrives here came from a relay, so the address
+     * this Worker can see belongs to the relay and not to a person, which is
+     * the entire point and also why the counting below is different. */
+    if (url.pathname === '/v1/gateway') {
+      if (request.method !== 'POST') return problem('That method is not served here.', 405);
+      const keys = parseKeys(env.OHTTP_KEYS);
+      if (keys.length === 0) return problem('This gateway is not configured for Oblivious HTTP.', 404);
+
+      /* Counted against the relay, generously. A relay carries everybody, so
+       * a limit sized for one person would take the whole relay down at the
+       * first busy minute; a limit that is nevertheless finite is what keeps
+       * a broken or hostile relay from turning this into an open amplifier.
+       * Per-person limiting is genuinely gone here, and that is the price of
+       * not being told who is calling. */
+      const counted = await checkLimit(
+        env.SWAP_LIMIT,
+        env.RATE_LIMIT_SECRET,
+        `relay:${callerAddress(request)}`,
+        intOr(env.OHTTP_RATE_LIMIT_PER_MINUTE, 6000),
+        Date.now(),
+      );
+      if (!counted.allowed) {
+        return new Response(null, { status: 429, headers: { 'Retry-After': String(counted.resetSeconds) } });
+      }
+
+      if ((request.headers.get('Content-Type') ?? '').split(';')[0]?.trim() !== REQUEST_MEDIA_TYPE) {
+        return new Response(null, { status: 415 });
+      }
+
+      let opened;
+      try {
+        opened = openEncapsulated(keys, new Uint8Array(await request.arrayBuffer()), url.origin);
+      } catch {
+        /* One shape for every failure, and no body. Which key is current,
+         * whether a given key id exists, and whether a ciphertext was merely
+         * damaged are all things a prober would like to learn, and none of
+         * them are worth telling apart out loud. */
+        return new Response(null, { status: 400 });
+      }
+
+      /* An encapsulated request may not be another encapsulated request. The
+       * loop would be pointless rather than dangerous, but a route that can
+       * be pointed at itself is a route somebody will eventually point at
+       * itself a few thousand times. */
+      const inner = new URL(opened.request.url);
+      const answer =
+        inner.pathname === '/v1/gateway' || inner.pathname === '/v1/ohttp-keys'
+          ? problem('That route is not reachable from inside.', 404)
+          : await serve(opened.request, env);
+      return sealAnswer(opened, answer);
+    }
+
     const counted = await checkLimit(
       env.SWAP_LIMIT,
       env.RATE_LIMIT_SECRET,
       callerAddress(request),
-      Number.isFinite(limit) ? limit : 60,
+      intOr(env.SWAP_RATE_LIMIT_PER_MINUTE, 60),
       Date.now(),
     );
     if (!counted.allowed) {
@@ -112,79 +286,6 @@ export default {
       );
     }
 
-    try {
-      /* The chain node relay. A public node learns every address it is
-       * asked about and, on a broadcast, which address announced a
-       * transaction first; this puts Cloudflare in front of both. A node
-       * somebody runs themselves never arrives here, because the wallet
-       * sends that traffic straight there rather than through a stranger. */
-      if (url.pathname === '/v1/node') {
-        const target = nodeTarget(url.searchParams.get('host') ?? '', url.searchParams.get('path') ?? '');
-        if (!target.ok) return problem(target.problem, 400);
-        if (request.method !== 'GET' && request.method !== 'POST') {
-          return problem('That method is not relayed.', 405);
-        }
-        /* The content type is carried across rather than assumed. Esplora
-         * takes a broadcast as text/plain: a raw transaction retyped as JSON
-         * arrives at the node as a quoted string and fails for a reason
-         * nobody would think to look for. */
-        const contentType = request.headers.get('Content-Type') ?? 'application/json';
-        const upstream = await fetch(target.url, {
-          method: request.method,
-          headers: { Accept: 'application/json', 'Content-Type': contentType },
-          ...(request.method === 'POST' ? { body: await request.text() } : {}),
-        });
-        /* Handed back as it arrived, body and status. This Worker does not
-         * read chain data any more than it reads an exchange's answer: the
-         * wallet scans, verifies and decides, on the device. */
-        return new Response(upstream.body, {
-          status: upstream.status,
-          headers: {
-            'Content-Type': upstream.headers.get('Content-Type') ?? 'application/json',
-            'Cache-Control': 'no-store',
-            'X-Content-Type-Options': 'nosniff',
-          },
-        });
-      }
-
-      if (url.pathname === '/v1/status' && request.method === 'GET') {
-        const provider = knownProvider(url.searchParams.get('provider'));
-        if (!provider) return problem('Unknown exchange.', 400);
-        const built = buildStatus(provider, url.searchParams.get('id') ?? '');
-        if (!built.ok) return problem(built.problem, 400);
-        const answer = await send(built.request, provider, keysFrom(env));
-        return json({ ok: true, upstream: answer.body }, answer.status >= 500 ? 502 : 200);
-      }
-
-      if ((url.pathname === '/v1/quote' || url.pathname === '/v1/create') && request.method === 'POST') {
-        const body = await readIntent(request);
-        if (!body) return problem('That request was not readable.', 400);
-        const provider = knownProvider(body['provider']);
-        if (!provider) return problem('Unknown exchange.', 400);
-
-        const intent: Intent = {
-          provider,
-          from: String(body['from'] ?? ''),
-          to: String(body['to'] ?? ''),
-          amount: numberOf(body['amount']),
-          ...(typeof body['payoutAddress'] === 'string' ? { payoutAddress: body['payoutAddress'] } : {}),
-          ...(typeof body['refundAddress'] === 'string' ? { refundAddress: body['refundAddress'] } : {}),
-        };
-
-        const built = url.pathname === '/v1/quote' ? buildQuote(intent) : buildCreate(intent);
-        if (!built.ok) return problem(built.problem, 400);
-
-        const answer = await send(built.request, provider, keysFrom(env));
-        return json({ ok: true, upstream: answer.body }, answer.status >= 500 ? 502 : 200);
-      }
-
-      return problem('No such route.', 404);
-    } catch (error) {
-      /* The message, not the stack, and not the request. An upstream that
-       * refuses or times out is a sentence the app can show; anything more
-       * would be this Worker keeping a record of a trade in an error path,
-       * which is the same retention the rest of the file refuses. */
-      return problem(`The exchange could not be reached (${(error as Error)?.message ?? 'no answer'}).`, 502);
-    }
+    return serve(request, env);
   },
 };

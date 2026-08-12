@@ -23,7 +23,7 @@
  *
  * A custom node that is not one of the published suggestions is not proxied
  * either, because the proxy will not relay to arbitrary hosts. An open relay
- * is a free anonymiser for whoever finds it. Somebody who typed in a node
+ * is a free anonymizer for whoever finds it. Somebody who typed in a node
  * that is neither theirs nor on the list has made an arrangement with that
  * operator, and the honest thing is to connect to it directly and say so
  * rather than quietly reroute it.
@@ -117,7 +117,7 @@ export function routedTransport(
           headers: { 'Content-Type': contentType, Accept: 'application/json' },
           ...(request.method === 'POST'
             ? {
-                /* A raw transaction goes as the text it is. Serialising it as
+                /* A raw transaction goes as the text it is. Serializing it as
                  * JSON would hand the node a quoted string and a broadcast
                  * that fails for a reason nobody would look for. */
                 body: contentType === 'text/plain' ? String(request.body ?? '') : JSON.stringify(request.body ?? {}),

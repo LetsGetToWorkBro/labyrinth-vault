@@ -8,7 +8,7 @@
  * and is the single place provider request shapes are written down; importing
  * it means the Worker and the app cannot drift into disagreeing about what an
  * Exolix rate call looks like. A proxy that forwarded arbitrary URLs would be
- * a free anonymiser for anybody who found it, and would be abused within a
+ * a free anonymizer for anybody who found it, and would be abused within a
  * day of being discovered.
  *
  * **It does not interpret the answer.** What comes back from the exchange is

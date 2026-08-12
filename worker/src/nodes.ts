@@ -18,7 +18,7 @@
  * the side that knows whose machine it is.
  *
  * **Only the published public nodes may be proxied.** Not any URL. An open
- * relay that would fetch whatever it was handed is a free anonymiser for
+ * relay that would fetch whatever it was handed is a free anonymizer for
  * whoever finds it, and a custom node is somebody's own arrangement anyway.
  * The list below is exactly the suggestions the app ships, so the set of
  * hosts this Worker can reach is the set a person could have picked from a

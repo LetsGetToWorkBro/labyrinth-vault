@@ -1,6 +1,6 @@
 # The Labyrinth relay
 
-One Worker, five routes, and a short list of things it refuses to do.
+One Worker, seven routes, and a short list of things it refuses to do.
 
 A swap is the only part of this product that talks to a stranger about coins
 somebody owns. Done from the phone, it hands an exchange that person's IP
@@ -19,6 +19,8 @@ represents.
 | `/v1/status` | GET | `provider`, `id` |
 | `/v1/health` | GET | nothing, answers nothing about configuration |
 | `/v1/node` | GET, POST | `host`, `path`: relays to a published public chain node |
+| `/v1/ohttp-keys` | GET | nothing, answers with this gateway's public keys |
+| `/v1/gateway` | POST | an encapsulated request, which is any of the above, encrypted |
 
 ## The chain nodes, which leak more than the swap did
 
@@ -47,7 +49,7 @@ rather than quietly rerouting it.
 It takes an **intent**, never a URL. The upstream request is built here by the
 same functions the wallet uses, imported from `wallet/src/core/swap.ts`, so
 the two cannot drift into disagreeing about what an Exolix rate call looks
-like. A proxy that forwarded arbitrary URLs would be a free anonymiser for
+like. A proxy that forwarded arbitrary URLs would be a free anonymizer for
 whoever found it, and would be found.
 
 It hands back what the exchange said, **unread**. It does not parse orders,
@@ -80,29 +82,70 @@ analytics write, or a `put` anywhere but the rate limiter. A promise about
 logs that is not enforced by a test is a promise that lasts until the first
 deadline.
 
-## What it cannot promise
+## The oblivious door
 
-**It sees the request while it forwards it.** It has to: the affiliate key
-has to be attached to a real trade, and a proxy cannot forward what it cannot
-read. So "we store nothing" is true and provable, and "we could not see it if
-we wanted to" is not. This file will not pretend otherwise.
+Everything above describes a Worker that **sees the request while it forwards
+it**. It has to: the affiliate key has to be attached to a real trade, and a
+proxy cannot forward what it cannot read. So "we store nothing" is true and
+provable, and "we could not see it if we wanted to" is a different sentence
+entirely. The first is a promise. It holds exactly as long as everybody who
+ever deploys this Worker keeps it.
 
-The design that makes the second true is **Oblivious HTTP** (RFC 9458), and
-it is not built yet. The shape of it, so the next person does not have to
-rediscover it:
+**Oblivious HTTP** (RFC 9458) replaces the promise with an arrangement, and it
+is built. The same routes are reachable a second way:
 
-- A **relay**, run by somebody who is not us, receives the request and sees
-  the caller's address but only ciphertext.
-- This Worker becomes the **gateway**: it decrypts with an HPKE key, sees the
-  trade, and sees only the relay's address.
-- The exchange sees the gateway, as it does today.
+- A **relay**, run by somebody who is not us, receives the request. It sees
+  the caller's address and a blob it has no key for.
+- This Worker is the **gateway**. It decrypts with an HPKE key, serves the
+  request through the exact same router, and sees the relay's address where
+  the caller's would have been.
+- The exchange or the node sees the gateway, as before.
 
-No single party then holds both who and what. The client side is HPKE
-(X25519 + HKDF-SHA256 + AES-128-GCM), and every primitive is already in the
-`@noble` libraries the wallet ships; the work is the key configuration
-endpoint, the encapsulation on the phone, and an agreement with a relay
-operator. It is a project rather than a patch, which is why it is written
-down here instead of half-built in the router.
+No single party holds both who and what.
+
+### How it is verified
+
+Not by round-tripping against itself, which a wrong implementation does
+perfectly well. Three RFCs, three sets of published vectors:
+
+| Layer | Where | Checked against |
+| --- | --- | --- |
+| HPKE | `wallet/src/net/ohttp/hpke.ts` | RFC 9180 A.1, every intermediate value |
+| Binary HTTP | `wallet/src/net/ohttp/bhttp.ts` | RFC 9292 Figure 8, byte for byte |
+| Encapsulation | `wallet/src/net/ohttp/ohttp.ts` | RFC 9458 Appendix A, byte for byte |
+
+`worker/test/gateway.test.ts` then drives the real wallet client through a
+stand-in relay into this router, and reads the bytes the relay held to check
+that no coin, chain, address or route name appears anywhere in them.
+
+### The relay has to be somebody else
+
+This is the part that is easy to get wrong while appearing to do everything
+right. The gateway runs on Cloudflare. **A relay that also runs on Cloudflare
+puts both halves inside one company**, and the protocol goes through every
+motion for no gain. The relay must be a different operator on different
+infrastructure.
+
+Until one is agreed, `RELAYS` in `wallet/src/net/oblivious.ts` is empty and
+the client does not use this path. An empty list is the honest state; a list
+containing our own address would be theatre. The app says which of the two
+arrangements is actually in force rather than describing the better one.
+
+### What it costs
+
+**Rate limiting by person.** Inside an oblivious request every caller wears
+the relay's address, so counting by address would put every user of the relay
+in one bucket and let any one of them lock out the rest. The counter applies
+to the relay instead, generously, and per-person limiting is simply gone.
+There is no version of this where we both cannot identify somebody and can
+meter them.
+
+**Replay is possible.** The gateway is stateless, so a relay could send the
+same ciphertext twice. For a quote or a node call that is noise. For an order
+it would create a duplicate at the exchange, which the wallet never sees,
+never verifies, and never funds, so it costs the exchange a row and costs the
+user nothing. Closing it would mean this Worker keeping a record of every
+request it had already seen, which is a worse trade than the one it prevents.
 
 ## Deploying
 
@@ -120,11 +163,25 @@ npx wrangler secret put EXOLIX_API_KEY
 npx wrangler secret put GODEX_PUBLIC_KEY
 npx wrangler secret put GODEX_AFFILIATE_ID
 npx wrangler secret put RATE_LIMIT_SECRET
+npx wrangler secret put OHTTP_KEYS
 npx wrangler deploy
 ```
 
 `RATE_LIMIT_SECRET` is any 32 or more bytes of randomness:
 `openssl rand -hex 32`.
+
+`OHTTP_KEYS` is `id:hex` entries, comma separated, newest first. Generate one
+with `openssl rand -hex 32` and paste it as `1:<that hex>`. To rotate, put the
+new key first and leave the old one in the list until the clients holding it
+have stopped using it, then drop it:
+
+```
+2:<new hex>,1:<old hex>
+```
+
+The first entry is the one advertised at `/v1/ohttp-keys`; every entry is
+still accepted for decryption. Leaving `OHTTP_KEYS` unset turns the oblivious
+door off, and both it and the key endpoint answer 404 rather than pretending.
 
 Both exchanges work without their keys, so the Worker runs unconfigured and
 simply earns no affiliate credit. That is deliberate: a missing key is not an

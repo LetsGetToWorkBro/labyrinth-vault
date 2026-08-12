@@ -1,7 +1,7 @@
 /**
  * Counting a caller without keeping them.
  *
- * A rate limit needs to recognise the same caller twice in a minute. The
+ * A rate limit needs to recognize the same caller twice in a minute. The
  * obvious way is to key a counter by IP address, which is what the sibling
  * project does, and it means the store holds a list of everyone who used the
  * service in the last two minutes. For a proxy whose entire purpose is that
