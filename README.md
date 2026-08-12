@@ -297,6 +297,20 @@ Next, in order:
    along with the reason none of it ships until it can be tested against a real
    Monero wallet rather than against itself.
 
+## Marketing site
+
+The cinematic product site lives in [`site/`](site). It is a standalone Vite +
+React application with a scroll-controlled product film, dedicated mobile
+media, and the complete Labyrinth Wallet/Vault security story.
+
+```sh
+cd site
+npm install
+npm run dev
+```
+
+The current live site is [labyrinth-vault.higgsfield.app](https://labyrinth-vault.higgsfield.app).
+
 ## Shipping
 
 [docs/shipping.md](docs/shipping.md) is the TestFlight runbook: what is done,
