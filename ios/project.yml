@@ -75,9 +75,26 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: true
         PRODUCT_BUNDLE_IDENTIFIER: vision.labyrinth.vault
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # ## No PRODUCT_NAME here, deliberately
+        #
         # The two halves ship as separate apps and must never be mistaken for
-        # each other on a home screen. Named, not inferred from the target.
-        PRODUCT_NAME: Labyrinth Vault
+        # each other on a home screen. That is what `CFBundleDisplayName`
+        # above is for, and it is the key iOS actually reads for the label
+        # under the icon.
+        #
+        # `PRODUCT_NAME: Labyrinth Vault` was set here as well, which is a
+        # different thing: it renames the built product on disk, so the app
+        # became `Labyrinth Vault.app/Labyrinth Vault`. XcodeGen derives the
+        # test bundle's `TEST_HOST` from the *target* name, which is
+        # `LabyrinthVault`, so it pointed at `LabyrinthVault.app/LabyrinthVault`
+        # and the first ⌘U failed with "Could not find test host". The app
+        # built fine; nothing was wrong with it; the tests simply had no host
+        # to load into, and the tests are the half that checks NFKD on Apple's
+        # own Foundation.
+        #
+        # So the display name does the naming and the product keeps the
+        # target's name. A space in a path that a build setting has to quote
+        # is a cost with no benefit here.
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: 0.1.0
 

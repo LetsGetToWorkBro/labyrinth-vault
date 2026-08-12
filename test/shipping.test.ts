@@ -62,6 +62,30 @@ describe('the vault is shaped like something that can be uploaded', () => {
     expect(doc).toMatch(/5D992/);
     expect(doc).toMatch(/self-classification/i);
   });
+
+  it('leaves the built product named after its target, so the tests can find a host', () => {
+    /* The home screen label comes from `CFBundleDisplayName`, which is the key
+     * iOS actually reads for it. `PRODUCT_NAME` is a different thing: it
+     * renames the product on disk. Both were set, so the app built as
+     * `Labyrinth Vault.app/Labyrinth Vault` while XcodeGen derived the test
+     * bundle's `TEST_HOST` from the target name and pointed it at
+     * `LabyrinthVault.app/LabyrinthVault`.
+     *
+     * The app was fine. The first ⌘U was not: "Could not find test host",
+     * which reads like a broken test target rather than a renamed product.
+     * And the tests are the half that checks NFKD against Apple's own
+     * Foundation, the check that catches a vault which opens on the device
+     * that sealed it and nowhere else. Losing that quietly is what getting
+     * this wrong costs, so it is held here. */
+    expect(
+      project,
+      'ios/project.yml sets PRODUCT_NAME; CFBundleDisplayName is what names the app on a home screen, and renaming the product breaks TEST_HOST',
+    ).not.toMatch(/^\s*PRODUCT_NAME:/m);
+    expect(
+      project,
+      'nothing names the app for the home screen any more',
+    ).toMatch(/CFBundleDisplayName:\s*Labyrinth Vault/);
+  });
 });
 
 describe('the privacy manifest is empty because the app is', () => {
@@ -115,6 +139,7 @@ describe('the privacy manifest is empty because the app is', () => {
     expect(MANIFEST.startsWith('ios/LabyrinthVault/')).toBe(true);
     expect(readFileSync(PROJECT, 'utf8')).toMatch(/- path: LabyrinthVault/);
   });
+
 });
 
 describe('the icons are the app mark, not a drawing of it', () => {
