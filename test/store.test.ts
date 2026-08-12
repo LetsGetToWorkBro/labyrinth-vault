@@ -216,3 +216,139 @@ describe('the listings say what the code does', () => {
     expect(read('store/vault/description.txt')).toMatch(/does not watch the chain/i);
   });
 });
+
+/**
+ * The BIS encryption self-classification report.
+ *
+ * The vault encrypts a seed at rest, which puts it in scope of the US export
+ * regulations as a mass market item under ECCN 5D992.c, and the whole of the
+ * resulting obligation is one annual CSV emailed to two federal addresses.
+ * Supplement No. 8 to Part 742 fixes its shape exactly: twelve columns whose
+ * header line must match "without alteration or variation", five permitted
+ * ECCNs, two authorization types, forty-nine item type descriptors, and a
+ * prohibition on the comma appearing anywhere except between fields.
+ *
+ * A form with that many fixed values is a form somebody fills in once and
+ * gets subtly wrong, and the failure arrives as a parse error at an agency
+ * rather than as a message to the filer. So it is checked here, where it is
+ * cheap, against the values the rest of the repository already commits to.
+ *
+ * The format was six columns before 2010 and is twelve now, which is the
+ * specific way this goes wrong: a template copied from a blog post is six
+ * wide and looks perfectly reasonable.
+ */
+describe('the export self-classification report is shaped the way the regulation requires', () => {
+  const REPORT = 'store/bis/self-classification-report.csv';
+
+  /** Supplement No. 8 to Part 742, paragraph (b)(3), verbatim. */
+  const HEADER =
+    'PRODUCT NAME,MODEL NUMBER,MANUFACTURER,ECCN,AUTHORIZATION TYPE,ITEM TYPE,' +
+    'SUBMITTER NAME,TELEPHONE NUMBER,E-MAIL ADDRESS,MAILING ADDRESS,' +
+    'NON-U.S. COMPONENTS,NON-U.S. MANUFACTURING LOCATIONS';
+
+  /** Paragraph (a)(4). The subparagraph belongs in prose, not in this field. */
+  const ECCNS = ['5A002', '5B002', '5D002', '5A992', '5D992'];
+  /** Paragraph (a)(5), plus the escape the regulation itself allows. */
+  const AUTHORIZATIONS = ['ENC', 'MMKT', 'OTHER'];
+  /** Paragraph (a)(6). All forty-nine, so a plausible invention fails. */
+  const ITEM_TYPES = [
+    'access point', 'cellular', 'computer', 'computer forensics',
+    'cryptographic accelerator', 'data backup and recovery', 'database',
+    'disk / drive encryption', 'distributed computing', 'e-mail communications',
+    'fax communications', 'file encryption', 'firewall', 'gateway',
+    'intrusion detection', 'key exchange', 'key management', 'key storage',
+    'link encryption', 'local area networking (LAN)',
+    'metropolitan area networking (MAN)', 'modem',
+    'network convergence or infrastructure n.e.s.', 'network forensics',
+    'network intelligence', 'network or systems management (OAM / OAM&P)',
+    'network security monitoring',
+    'network vulnerability and penetration testing', 'operating system',
+    'optical networking', 'radio communications', 'router',
+    'satellite communications', 'short-range wireless n.e.s.',
+    'storage area networking (SAN)', '3G / 4G / LTE / WiMAX',
+    'trusted computing', 'videoconferencing',
+    'virtual private networking (VPN)', 'voice communications n.e.s.',
+    'voice over Internet protocol (VoIP)', 'wide area networking (WAN)',
+    'wireless local area networking (WLAN)',
+    'wireless personal area networking (WPAN)', 'commodities n.e.s.',
+    'components n.e.s.', 'software n.e.s.', 'test equipment n.e.s.', 'OTHER',
+  ];
+
+  const lines = read(REPORT).split('\n');
+  const rows = lines.slice(1).map((line) => line.split(','));
+
+  it('has the header the regulation dictates, to the character', () => {
+    expect(lines[0], 'the header line has been altered').toBe(HEADER);
+  });
+
+  it('describes at least one item', () => {
+    /* An empty report would pass every check below by having nothing to
+     * check, which is the shape a guard takes when it stops guarding. */
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it('gives every row exactly twelve fields and leaves none blank', () => {
+    /* The comma trap. A mailing address written the way anybody writes one —
+     * "123 Example Street, Portland, OR" — turns one row into three fields
+     * too many, and the regulation forbids the comma anywhere except between
+     * fields for exactly this reason. It fails at the agency, not here,
+     * unless it fails here. */
+    for (const [index, row] of rows.entries()) {
+      expect(row.length, `row ${index + 1} does not have twelve fields, so a value contains a comma`).toBe(12);
+      for (const [field, value] of row.entries()) {
+        expect(value.trim(), `row ${index + 1} field ${field + 1} is blank`).not.toBe('');
+      }
+    }
+  });
+
+  it('uses only the values the regulation permits', () => {
+    for (const [index, row] of rows.entries()) {
+      expect(row[0]!.length, `row ${index + 1}: product name is over 50 characters`).toBeLessThanOrEqual(50);
+      expect(row[1]!.length, `row ${index + 1}: model number is over 50 characters`).toBeLessThanOrEqual(50);
+      expect(row[2]!.length, `row ${index + 1}: manufacturer is over 50 characters`).toBeLessThanOrEqual(50);
+      expect(ECCNS, `row ${index + 1}: ${row[3]} is not a permitted ECCN for this field`).toContain(row[3]);
+      expect(AUTHORIZATIONS, `row ${index + 1}: ${row[4]} is not a permitted authorization type`).toContain(row[4]);
+      expect(ITEM_TYPES, `row ${index + 1}: ${row[5]} is not one of the forty-nine descriptors`).toContain(row[5]);
+      expect(['YES', 'NO'], `row ${index + 1}: non-US components must be YES or NO`).toContain(row[10]);
+    }
+  });
+
+  it('says the same thing about encryption that the app tells Apple', () => {
+    /* The Info.plist answers Apple's export question and this file answers
+     * BIS's. They are the same claim made to two agencies, and the way they
+     * come apart is that one of them gets revised. The vault says yes and is
+     * listed here as mass market; the wallet says no and is deliberately not
+     * listed at all. */
+    const project = read('ios/project.yml');
+    expect(project).toMatch(/ITSAppUsesNonExemptEncryption:\s*true/);
+    const named = rows.map((row) => row[0]);
+    expect(named, 'the vault is not in the report it is the reason for').toContain('Labyrinth Vault');
+    expect(rows.every((row) => row[4] === 'MMKT'), 'a row claims something other than mass market').toBe(true);
+  });
+
+  it('does not claim to be filed while it still has blanks in it', () => {
+    /* The guard this file exists for. `store/vault/review-notes.md` told
+     * Apple's reviewer that the self-classification report "is filed" while
+     * it did not exist, which is a statement to a reviewer about a federal
+     * filing. Whatever the documents say about this report has to track
+     * whether it is actually fit to send. */
+    const unfilled = rows.some((row) => row.some((value) => value.includes('TO BE COMPLETED')));
+    /* Only the two documents that are pasted into App Store Connect. The
+     * runbook and store/bis/README.md both discuss this filing at length,
+     * including quoting the sentence that was wrong, and a guard that reads
+     * the account of a mistake as the mistake is the seventh of its kind in
+     * this repository. What a reviewer is told is the thing worth holding. */
+    const claims = [
+      'store/vault/review-notes.md',
+      'store/wallet/review-notes.md',
+    ].filter(
+      (path) =>
+        existsSync(path) &&
+        /(report|filing)\s+(is|has been|was)\s+filed/i.test(read(path)),
+    );
+
+    if (unfilled) {
+      expect(claims, 'a document says the report is filed while the report has blanks in it').toEqual([]);
+    }
+  });
+});

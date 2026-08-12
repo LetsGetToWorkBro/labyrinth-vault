@@ -78,8 +78,11 @@ available encryption software. What that requires:
 
 1. **A self-classification report to BIS**, emailed to
    `crypt-supp8@bis.doc.gov` and `enc@nsa.gov`, listing the product. It is a
-   spreadsheet in a documented format, submitted once and then annually by
-   1 February for anything shipped in the previous year.
+   twelve-column `.csv` in a format Supplement No. 8 to Part 742 fixes
+   exactly, due by 1 February for anything exported in the previous calendar
+   year, and not required at all for a year with no exports. It is written
+   and checked in [`store/bis/`](../store/bis); four fields need your
+   details.
 2. **No CCATS, no license.** 5D992.c mass market does not need either. The
    self-classification report is the whole obligation.
 3. **France** has a separate declaration for encryption products distributed
@@ -218,8 +221,21 @@ the BIS report) are the ones to start first.
       number and takes days rather than minutes, and it covers both apps
       because they share one account.
 - [ ] **BIS self-classification report** for the encryption (5D992.c mass
-      market), emailed per the section above. Once, then annually. Not needed
-      for TestFlight; needed before the Store.
+      market). **Written and ready in [`store/bis/`](../store/bis), four
+      fields short of sendable, and it does not block this submission.**
+
+      This entry used to say "needed before the Store", which was wrong. The
+      obligation attaches to exports made *during a calendar year* and the
+      report is due by 1 February of the *following* year; BIS says outright
+      that no report is required for a year with no exports. So the sequence
+      is ship, then file by the next 1 February, then every year after.
+
+      [`store/bis/README.md`](../store/bis/README.md) has every field with the
+      reasoning for its value, the four that need your details, and the comma
+      rule that breaks most first attempts. `test/store.test.ts` holds the
+      file to the twelve columns, five permitted ECCNs, two authorization
+      types and forty-nine item descriptors the regulation fixes, and fails if
+      any document claims the report is filed while it still has blanks in it.
 - [x] **The contact address receives mail. Done.**
       `info@labyrinthwallet.com` is printed in both privacy policies and in
       SECURITY.md, which means a reviewer and a security researcher both have
