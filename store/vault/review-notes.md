@@ -54,11 +54,24 @@ The camera is the only input. It reads QR codes from the companion device.
 Nothing is captured, stored or transmitted, because there is nothing to
 transmit with.
 
+## Unlocking, and the Face ID box
+
+The vault is opened with a passphrase, which is stretched into the decryption
+key. There is a deliberate pause while that runs. It is Argon2id, and the
+screen names it rather than showing a spinner.
+
+Face ID is a shortcut past the typing and is off unless the person ticks the
+box. Ticking it stores the passphrase in a keychain item the Secure Enclave
+releases only against a live match, bound to the current biometric enrollment
+and to that device. Nothing is stored anywhere else, and the vault is sealed
+under the same passphrase either way. On a review device you can ignore the
+box and type the passphrase.
+
 ## Encryption
 
 Yes, and declared as such in the Info.plist. The app encrypts the user's seed
 at rest with Argon2id and XChaCha20-Poly1305. It qualifies as mass market
-under ECCN 5D992.c; the self-classification report is filed.
+under ECCN 5D992.c.
 
 ## Source
 

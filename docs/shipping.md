@@ -18,6 +18,41 @@ needs a Mac, and it is marked.
 | Privacy manifest | four empty lists, tested | four empty lists, tested |
 | Export compliance | **yes**, mass market | **no**, and here is why |
 | Compiles | **yes, Xcode, first try** | prebuild proven; never compiled |
+| Launches | **yes, Simulator, self-test green** | never launched |
+| Runs on real hardware | **not yet; the next gate** | no |
+
+### What the first run on a Simulator cost, and why the next one is on metal
+
+Two bugs, both found by launching the thing, neither findable on Linux.
+
+The first was `ReferenceError: Can't find variable: TextEncoder`. Ten modules
+called it, 650-odd tests passed, and `src/platform.d.ts` had documented it as
+safe by listing the runtimes it had checked, none of which was JavaScriptCore
+embedded in an app. The bundle now carries its own UTF-8 and
+`test/bare-runtime.test.ts` runs the engine with every host global deleted.
+
+The second was a confirmation screen that looked like it had no button.
+`Lever` faded to 30% opacity when disabled, and the disabled lever's hint is
+the word `SCROLL`, so the instruction for proceeding was the thing being
+faded out.
+
+Both are the same lesson: the gap between a green suite and a working app is
+whatever the suite could not run. A Simulator closed most of it. What it
+still cannot answer is the two questions below, and both of them are answers
+a person deserves before money is involved.
+
+**Argon2id timing on real hardware.** The KDF is calibrated to cost time on
+purpose. `scripts/bench-kdf.mjs` measures it, but a Simulator runs on a
+desktop CPU and tells you nothing about an iPhone's. If unlocking takes eight
+seconds on the oldest supported device, the parameters need revisiting or the
+derivation needs to be native, and that is a decision to make before people
+have vaults sealed under the current numbers.
+
+**The passcode-bound keychain class.** `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`
+and the Secure Enclave access control behind Face ID are not meaningfully
+exercised by a Simulator. The refusal-to-create-without-a-passcode path and
+the enrollment-change invalidation both need a real device with a real
+passcode.
 
 ## Export compliance: the two apps have different true answers
 
