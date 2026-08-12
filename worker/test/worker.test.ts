@@ -53,6 +53,22 @@ describe('the Worker keeps nothing', () => {
     const writers = sources.filter(({ text }) => /\.put\s*\(/.test(codeOnly(text)));
     expect(writers.map((w) => w.name)).toEqual(['ratelimit.ts']);
   });
+
+  it('names only test files that exist when it points at one', () => {
+    /* A comment here is a promise a reader is invited to go verify, and this
+     * Worker's comments send that reader to a specific test file for the
+     * retention guarantee. A comment that names `test/no-retention.test.ts`
+     * when the guard actually lives in `test/worker.test.ts` is a small
+     * version of the exact dishonesty the rest of this file refuses: a claim
+     * that does not survive being checked. So the references are checked. */
+    const present = new Set(readdirSync('test'));
+    for (const { name, text } of sources) {
+      const referenced = text.match(/test\/[\w.-]+\.test\.ts/g) ?? [];
+      for (const ref of referenced) {
+        expect(present.has(ref.slice('test/'.length)), `${name} points at a missing ${ref}`).toBe(true);
+      }
+    }
+  });
 });
 
 describe('counting a caller without keeping them', () => {

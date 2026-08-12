@@ -11,10 +11,10 @@
  * Nothing. There is no logging in this Worker, no database, no queue, no
  * analytics binding, and the single KV namespace holds integers under keys
  * that are HMACs of an address nobody can recover (see ratelimit.ts). That is
- * a structural claim rather than a policy one, and `test/no-retention.test.ts`
- * walks this source on every run to keep it true: a `console.log` added here
- * in six months fails the build, which is the only kind of promise about logs
- * that survives contact with a deadline.
+ * a structural claim rather than a policy one, and the retention suite in
+ * `test/worker.test.ts` walks this source on every run to keep it true: a
+ * `console.log` added here in six months fails the build, which is the only
+ * kind of promise about logs that survives contact with a deadline.
  *
  * ## Two ways in
  *
