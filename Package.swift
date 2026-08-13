@@ -90,31 +90,43 @@ let package = Package(
                 "Support/BundleDigest.swift",
             ]
         ),
-        /* libsodium, from whatever the platform already has: apt on the
-         * Linux container this runs in, Homebrew on a Mac. That is enough to
-         * settle step 2 of the port in docs/native-primitives.md — does a
-         * native Argon2id reproduce the reference vectors, and can it express
-         * the parameters this format uses — which is the question worth
-         * answering before any key material moves.
+        /* The Argon2 reference C, vendored under vendor/argon2 and pinned file
+         * by file in its MANIFEST.json. Thirteen files and about 3,300 lines,
+         * which is the whole of the dependency.
          *
-         * It is deliberately not how the iOS app gets libsodium. A phone has
-         * no system libsodium, so the app needs one built for it, and that is
-         * a supply-chain decision with its own diff. Keeping the two apart
-         * means the cryptographic question is answered and checked in `npm
-         * test` today, while the packaging question stays open and visible
-         * instead of being half-done inside an Xcode project nobody here can
-         * build. ios/LabyrinthVaultKDF/README.md carries the options. */
-        .systemLibrary(
-            name: "Csodium",
-            path: "ios/LabyrinthVaultKDF/Csodium",
-            pkgConfig: "libsodium",
-            providers: [.apt(["libsodium-dev"]), .brew(["libsodium"])]
+         * Chosen over libsodium deliberately. libsodium's `crypto_pwhash` is
+         * not general-purpose Argon2id: it fixes the salt at its own length
+         * and fixes parallelism at one, and `KDF_LIMITS.maxP` is 4, so a blob
+         * this format permits could not have been derived natively at all.
+         * This is also the implementation that generated
+         * `test/fixtures/primitives.json` by way of argon2-cffi, so the vector
+         * check is against the same code the vectors came from.
+         *
+         * And it builds anywhere a C compiler runs, which libsodium as a
+         * system library did not: there is no system libsodium on a phone.
+         * That was the open half of step 1 and this closes it.
+         *
+         * ARGON2_NO_THREADS: `p > 1` is then computed lane by lane rather than
+         * in parallel. Same output, since the algorithm is defined by the data
+         * dependencies and not by the scheduling; less to go wrong on a
+         * platform whose threading this project has no reason to exercise. */
+        .target(
+            name: "CArgon2",
+            path: "vendor/argon2",
+            exclude: ["MANIFEST.json", "LICENSE"],
+            sources: ["src"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("ARGON2_NO_THREADS"),
+                .headerSearchPath("include"),
+                .headerSearchPath("src"),
+            ]
         ),
         .target(
             name: "LabyrinthVaultKDF",
-            dependencies: ["Csodium"],
+            dependencies: ["CArgon2"],
             path: "ios/LabyrinthVaultKDF",
-            exclude: ["Csodium", "README.md"],
+            exclude: ["README.md"],
             sources: ["Argon2id.swift"]
         ),
         .testTarget(

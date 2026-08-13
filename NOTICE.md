@@ -83,17 +83,25 @@ twice: NFKD passphrase normalization, in `src/keys/seal.ts` and in
 `ios/LabyrinthVault/Support/Passphrase.swift`. Neither side of that is allowed
 to be the oracle for the other: both are checked against the file.
 
-## libsodium
+## Argon2 reference implementation
 
-Reached by `ios/LabyrinthVaultKDF` for one function: Argon2id key derivation,
-used to replace an interpreted derivation that measured ~67 seconds per pass
-on an iPhone 17 Pro Max. Nothing else crosses to it. The sealed-blob format,
-the parameter limits, the header authentication and every refusal stay in
-`src/keys/seal.ts`, per the rule in `docs/native-primitives.md`.
+Vendored at `vendor/argon2`, compiled into the app, and used for one function:
+Argon2id key derivation. It replaces an interpreted derivation that measured
+about 67 seconds per pass on an iPhone 17 Pro Max.
 
-libsodium is ISC licensed, © 2013-2025 Frank Denis and contributors.
-<https://github.com/jedisct1/libsodium>
+Thirteen files taken from the upstream tree, pinned individually in
+`vendor/argon2/MANIFEST.json` and checked by `test/vendor.test.ts`. The x86
+SIMD path was not taken: the app runs on ARM and `src/ref.c` is the portable
+implementation.
 
-Today this is a build- and test-time dependency only, satisfied by the
-platform (apt, Homebrew). It is not yet in the iOS app, and
-`ios/LabyrinthVaultKDF/README.md` states what that would still take.
+Nothing else crosses to it. The sealed-blob format, the parameter limits, the
+header authentication and every refusal stay in `src/keys/seal.ts`, per the
+rule in `docs/native-primitives.md`.
+
+Argon2 is dual licensed CC0 1.0 / Apache 2.0, © 2015 Daniel Dinu, Dmitry
+Khovratovich, Jean-Philippe Aumasson and Samuel Neves.
+<https://github.com/P-H-C/phc-winner-argon2>
+
+libsodium was the first choice and is not used. It is recorded here because
+the reason is worth keeping: `crypto_pwhash` fixes the salt length and fixes
+parallelism at one, and this format permits neither restriction.

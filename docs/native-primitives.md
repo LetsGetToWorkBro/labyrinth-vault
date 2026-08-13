@@ -200,25 +200,39 @@ Different hardware, so that is not a ratio to quote at anyone. What it settles
 is that the cost is the interpreter and not the algorithm, which the 41x
 analogy above could only suggest.
 
-**Step 1 is deliberately unfinished, and it is not the small half.**
-`Package.swift` reaches libsodium as a `.systemLibrary`: apt here, Homebrew on
-a Mac. A phone has no system libsodium, so putting this in the app means
-choosing how it gets one, and that is a supply-chain decision rather than a
-line of Swift. `ios/LabyrinthVaultKDF/README.md` costs the three options. One
-of them is the Argon2 reference C rather than libsodium, which is worth
-weighing first, because:
+**Step 1 is finished too, and not with libsodium.** The Argon2 reference C is
+vendored at `vendor/argon2`: thirteen files, about 3,300 lines, pinned
+individually in its `MANIFEST.json` and checked by `test/vendor.test.ts`, the
+same tamper-evidence the engine bundle gets. It compiles on Linux, on a Mac and
+on a phone from one target, so there is no platform where this works and
+another where it has to be arranged.
 
-**libsodium cannot compute every blob this format permits.** `crypto_pwhash`
-fixes parallelism at one and `KDF_LIMITS.maxP` is 4. Nothing this app creates
-is affected, since every vault it seals uses `p = 1`, but the native path
-refuses those blobs rather than approximating them, and the JavaScript path
-takes them. Ignoring `p` would return a different key and the vault would fail
-to open with no error a person could read. Those refusals are tested rather
-than skipped, because a fallback nobody has proved reachable is not a fallback.
+That replaced a libsodium `.systemLibrary` which reached apt here and Homebrew
+on a Mac and could never have reached iOS. Two reasons, and the second is the
+one that decided it:
 
-**Step 3 has not started.** No key material goes through Swift yet. The bridge
-still calls `deriveKey` in `src/keys/seal.ts` on every path, so this changes
-nothing a person can feel until the packaging question is answered.
+**libsodium could not compute every blob this format permits.**
+`crypto_pwhash` fixes the salt at its own length and fixes parallelism at one.
+`SALT_BYTES` is 16 and matched; `KDF_LIMITS.maxP` is 4 and did not. The
+reference C has neither restriction, and it is also the implementation that
+produced `test/fixtures/primitives.json` by way of argon2-cffi, so the vector
+check now runs against the code the vectors came from.
+
+Speed did not pay for it, which was the obvious worry:
+
+      libsodium                         0.156 s
+      vendored reference C, release     0.189 s
+      vendored reference C, debug       1.024 s
+
+The third row is the trap. `swift test` builds C at `-O0`, so a timing from an
+ordinary test run is five times pessimistic and says nothing about the app.
+
+**Step 3 has not started, and it is now the only thing between here and a fast
+unlock.** No key material goes through Swift yet: the bridge still calls
+`deriveKey` in `src/keys/seal.ts` on every path, so an unlock is still 67
+seconds on a phone. What remains is a host function that hands the passphrase,
+salt and parameters out to `Argon2id.deriveKey` and returns 32 bytes, with
+`seal.ts` keeping every decision about what those parameters may be.
 
 ## What was done instead, now
 

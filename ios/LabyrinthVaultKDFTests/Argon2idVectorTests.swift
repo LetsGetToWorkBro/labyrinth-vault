@@ -38,56 +38,47 @@ final class Argon2idVectorTests: XCTestCase {
         bytes.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Every vector the library can express, and an explicit account of the
-    /// ones it cannot.
+    /// Every vector, with nothing skipped and nothing refused.
+    ///
+    /// The libsodium version of this could not express two of them and had to
+    /// assert refusals instead. The reference C has neither limitation, which
+    /// is the whole reason it is the one vendored: a native path that refused
+    /// work the format permits would have needed a fallback nobody could see
+    /// being taken.
     func testAgreesWithTheReferenceImplementation() throws {
-        var checked = 0
-        var unexpressible: [String] = []
+        let all = try vectors()
+        XCTAssertGreaterThanOrEqual(all.count, 3, "the fixture lost vectors")
 
-        for (i, v) in try vectors().enumerated() {
-            let passphrase = Array(v.password.utf8)
-            let salt = Array(v.salt.utf8)
-
-            /* Two shapes of vector this library structurally cannot compute:
-             * a salt of any length but its own, and any parallelism above one.
-             * Rather than skipping those, assert that the refusal happens and
-             * happens for the stated reason. A skip proves nothing; a checked
-             * refusal proves the fallback in the caller will be reached. */
-            guard salt.count == Argon2id.saltBytes else {
-                XCTAssertThrowsError(
-                    try Argon2id.deriveKey(passphrase: passphrase, salt: salt,
-                                           t: v.t, m: v.m, p: v.p, dkLen: v.dkLen),
-                    "vector \(i) has a \(salt.count) byte salt and should have been refused"
-                ) { error in
-                    XCTAssertEqual(error as? Argon2id.Failure,
-                                   .saltLength(expected: Argon2id.saltBytes, got: salt.count))
-                }
-                unexpressible.append("vector \(i): \(salt.count) byte salt")
-                continue
-            }
-            guard v.p == 1 else {
-                XCTAssertThrowsError(
-                    try Argon2id.deriveKey(passphrase: passphrase, salt: salt,
-                                           t: v.t, m: v.m, p: v.p, dkLen: v.dkLen)
-                ) { error in
-                    XCTAssertEqual(error as? Argon2id.Failure, .unsupportedParallelism(v.p))
-                }
-                unexpressible.append("vector \(i): p=\(v.p)")
-                continue
-            }
-
-            let derived = try Argon2id.deriveKey(passphrase: passphrase, salt: salt,
+        for (i, v) in all.enumerated() {
+            let derived = try Argon2id.deriveKey(passphrase: Array(v.password.utf8),
+                                                 salt: Array(v.salt.utf8),
                                                  t: v.t, m: v.m, p: v.p, dkLen: v.dkLen)
             XCTAssertEqual(hex(derived), v.key,
-                           "vector \(i) (t=\(v.t) m=\(v.m) p=\(v.p)) does not match the reference")
-            checked += 1
+                           "vector \(i) (t=\(v.t) m=\(v.m) p=\(v.p) salt=\(v.salt.utf8.count)B) does not match the reference")
         }
+    }
 
-        /* Without this the suite would go green on a fixture where every
-         * vector had become unexpressible, which is a test that checks
-         * nothing while reporting success. */
-        XCTAssertGreaterThanOrEqual(checked, 1,
-            "no vector was actually derived; only refusals were exercised. Unexpressible: \(unexpressible)")
+    /// The two shapes libsodium could not compute, checked directly rather
+    /// than only through whichever vectors happen to be in the fixture.
+    func testComputesWhatTheFormatPermitsAndLibsodiumCouldNot() throws {
+        // A salt that is not 16 bytes. crypto_pwhash could not take one.
+        let odd = try Argon2id.deriveKey(passphrase: Array("correct horse battery staple".utf8),
+                                         salt: Array("sixteen byte salt".utf8),
+                                         t: 3, m: 8192, p: 1, dkLen: 32)
+        XCTAssertEqual(hex(odd), "2bfe6ca0ec5cbc6ce9006453956327aee67eea39a4c021bb0454d614bf25ca5b")
+
+        /* Parallelism above one, which KDF_LIMITS permits up to 4 and
+         * crypto_pwhash fixed at 1. Checked as self-consistency rather than
+         * against a published vector: what matters here is that p changes the
+         * answer and is therefore actually reaching the algorithm. A wrapper
+         * that silently ignored p would return the p=1 key, which is exactly
+         * the failure that would have made a vault unopenable. */
+        let salt = Array("labyrinth vault!".utf8)
+        let pass = Array("correct horse battery staple".utf8)
+        let one = try Argon2id.deriveKey(passphrase: pass, salt: salt, t: 3, m: 65536, p: 1, dkLen: 32)
+        let four = try Argon2id.deriveKey(passphrase: pass, salt: salt, t: 3, m: 65536, p: 4, dkLen: 32)
+        XCTAssertNotEqual(hex(one), hex(four), "p is not reaching the algorithm")
+        XCTAssertEqual(hex(one), "a7c80b67d54485f58415a60b7c6d52faf6eddccc56dee04e0d8a1f7c0fe1babe")
     }
 
     /// The parameters the app actually seals with, called out by name.
@@ -104,28 +95,33 @@ final class Argon2idVectorTests: XCTestCase {
                        "a7c80b67d54485f58415a60b7c6d52faf6eddccc56dee04e0d8a1f7c0fe1babe")
     }
 
-    func testSaltLengthIsTheOneTheFormatUses() {
-        // src/keys/seal.ts: SALT_BYTES = 16. If either side ever moves, the
-        // native path stops being reachable and this says so immediately.
-        XCTAssertEqual(Argon2id.saltBytes, 16)
-    }
-
-    func testRefusesRatherThanApproximates() throws {
-        let salt = [UInt8](repeating: 7, count: Argon2id.saltBytes)
+    func testRefusesNonsenseRatherThanGuessing() {
+        let salt = [UInt8](repeating: 7, count: 16)
         let pass = Array("passphrase".utf8)
 
-        XCTAssertThrowsError(try Argon2id.deriveKey(passphrase: pass, salt: salt,
-                                                    t: 3, m: 8192, p: 2, dkLen: 32)) {
-            XCTAssertEqual($0 as? Argon2id.Failure, .unsupportedParallelism(2))
+        for (label, call) in [
+            ("t", { try Argon2id.deriveKey(passphrase: pass, salt: salt, t: 0, m: 8192, p: 1, dkLen: 32) }),
+            ("m", { try Argon2id.deriveKey(passphrase: pass, salt: salt, t: 3, m: 0, p: 1, dkLen: 32) }),
+            ("p", { try Argon2id.deriveKey(passphrase: pass, salt: salt, t: 3, m: 8192, p: 0, dkLen: 32) }),
+            ("salt", { try Argon2id.deriveKey(passphrase: pass, salt: [], t: 3, m: 8192, p: 1, dkLen: 32) }),
+            ("passphrase", { try Argon2id.deriveKey(passphrase: [], salt: salt, t: 3, m: 8192, p: 1, dkLen: 32) }),
+        ] as [(String, () throws -> [UInt8])] {
+            XCTAssertThrowsError(try call(), "\(label) was accepted") {
+                XCTAssertEqual($0 as? Argon2id.Failure, .parameterOutOfRange(label))
+            }
         }
-        XCTAssertThrowsError(try Argon2id.deriveKey(passphrase: pass,
-                                                    salt: [UInt8](repeating: 7, count: 8),
-                                                    t: 3, m: 8192, p: 1, dkLen: 32)) {
-            XCTAssertEqual($0 as? Argon2id.Failure, .saltLength(expected: 16, got: 8))
-        }
-        XCTAssertThrowsError(try Argon2id.deriveKey(passphrase: pass, salt: salt,
-                                                    t: 0, m: 8192, p: 1, dkLen: 32)) {
-            XCTAssertEqual($0 as? Argon2id.Failure, .parameterOutOfRange("t"))
+    }
+
+    /// The C is asked for a memory size it cannot have, and the sentence it
+    /// gives back is passed along rather than replaced with a guess.
+    func testCarriesTheLibrarysOwnReasonOutwards() {
+        XCTAssertThrowsError(try Argon2id.deriveKey(passphrase: Array("passphrase".utf8),
+                                                    salt: [UInt8](repeating: 7, count: 16),
+                                                    t: 3, m: 8, p: 64, dkLen: 32)) { error in
+            guard case .refused(_, let reason)? = error as? Argon2id.Failure else {
+                return XCTFail("expected a refusal carrying the library's reason, got \(error)")
+            }
+            XCTAssertFalse(reason.isEmpty)
         }
     }
 }

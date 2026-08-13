@@ -23,39 +23,44 @@ Different hardware, so not a ratio to quote. What it establishes is that the
 cost is the interpreter rather than the algorithm, which is the thing the
 41x analogy in docs/native-primitives.md could only suggest.
 
-## What is not settled: how a phone gets libsodium
+## How a phone gets it
 
-`Package.swift` reaches libsodium through a `.systemLibrary` target: apt on
-Linux, Homebrew on a Mac. **That cannot work on iOS.** There is no system
-libsodium on a phone, so the app needs one built for the platform, and that is
-a supply-chain decision rather than a line of Swift:
+By compiling it. `vendor/argon2` is C source in this repository, built by the
+same target on Linux, on a Mac and on a phone, so there is no platform where
+this works and another where it has to be arranged. That was the open half of
+step 1 and it is closed.
 
-1. **A SwiftPM package that vends libsodium for Apple platforms.** Fastest, and
-   it adds a dependency outside the audited noble/scure family that
-   `test/supply-chain.test.ts` currently enforces. That test would need to be
-   told about it, deliberately and in one place.
-2. **Vendor libsodium's C sources into a target here.** Most in keeping with
-   how this repository already treats third-party code, vendored and
-   hash-pinned like the engine bundle, and the largest diff by far.
-3. **Vendor the Argon2 reference C only.** A few files rather than a few
-   hundred, it is the implementation the fixtures came from, and it supports
-   the arbitrary salt lengths and `p > 1` that libsodium cannot.
+The first version of this file used libsodium through a `.systemLibrary`
+target, which reached apt here and Homebrew on a Mac and could never have
+reached iOS at all. Replacing it removed a dependency rather than adding one.
 
-Option 3 is the one worth costing first, because of the limitation below.
+Speed did not pay for the change, which is worth recording because it was the
+obvious worry:
 
-## What libsodium cannot compute
+    Argon2id, t=3 m=64MiB p=1, dkLen=32, on this build machine
+
+      libsodium                         0.156 s
+      vendored reference C, release     0.189 s
+      vendored reference C, debug       1.024 s
+
+The third row is the one to watch. `swift test` builds the C at `-O0` by
+default, so a timing taken from an ordinary test run is about five times
+pessimistic and says nothing about the app.
+
+## What libsodium could not compute, and this can
 
 `crypto_pwhash` is not general-purpose Argon2id. It fixes the salt at
-`crypto_pwhash_SALTBYTES` and fixes parallelism at one.
+`crypto_pwhash_SALTBYTES` and fixes parallelism at one. `SALT_BYTES` in
+`src/keys/seal.ts` is 16 and matched; `KDF_LIMITS.maxP` is 4 and did not. So a
+blob this format permits could not have been derived natively, and the native
+path would have had to hand those back to JavaScript.
 
-`SALT_BYTES` in `src/keys/seal.ts` is 16 and matches. `KDF_LIMITS.maxP` is 4
-and does not. So a blob may legitimately declare a parallelism this code
-cannot compute, and it refuses those rather than approximating them: ignoring
-`p` would return a different key and the vault would fail to open with no
-error anyone could read.
+The reference C has neither restriction, and the tests check both directly: a
+17-byte salt against its published vector, and `p = 4` asserted to produce a
+different key from `p = 1`. That second one matters more than it looks. A
+wrapper that quietly ignored `p` would return the `p = 1` key, the vault would
+not open, and nothing would say why.
 
-Nothing this app creates is affected. Every vault it seals uses `DEFAULT_KDF`
-with `p = 1`, and the JavaScript path stays in the build and takes the rest.
-That is step 4 of the port, and it is why the refusals are tested rather than
-skipped: a refusal that is never exercised is a fallback nobody has proved
-reachable.
+The JavaScript path still stays in the build and is still tested. That is step
+4, and it is now a genuine cross-check of two implementations rather than a
+fallback carrying cases the fast path could not do.
