@@ -49,8 +49,10 @@ const BRITISH = [
   /\bcentre[s]?\b/i,
   /\bcolour[s]?\b/i,
   /\bserialis[a-z]*\b/i,
-  /\boptimis[a-z]*\b/i,
-  /\borganis[a-z]*\b/i,
+  // Only the -ise family is British: "optimistic" and "optimism" are not.
+  /\boptimis(e|es|ed|ing|ation)\b/i,
+  // Likewise "organism", which is nobody's spelling variant.
+  /\borganis(e|es|ed|ing|ation)\b/i,
   /\bminimis[a-z]*\b/i,
   /\blabelled\b/i,
   /\bcancelled\b/i,

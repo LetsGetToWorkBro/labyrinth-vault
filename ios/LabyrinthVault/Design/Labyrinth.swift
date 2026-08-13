@@ -160,88 +160,186 @@ struct EntropyField: View {
     }
 }
 
-/// The descent: the wait for a key derivation, drawn as travel inward.
+/// The wait for a key derivation, drawn at the length the wait actually is.
 ///
-/// `LabyrinthShape` is built from the center outward, so trimming it backwards
-/// — `from: 1 - reach, to: 1` — reveals the outermost run first and grows
-/// toward the middle. That is the figure this screen wants: the whole
-/// labyrinth is there from the first frame, faint and unentered, and the
-/// bright path is how far in the work has got. The passphrase is not being
-/// looked up somewhere. It is being carried down.
+/// Measured on an iPhone 17 Pro Max: one Argon2id pass takes about 67 seconds,
+/// and making a vault runs two. That is the design constraint. A seven-second
+/// loop played ten times is not a long animation, it is a short one you are
+/// forced to watch repeatedly, and it reads as a stuck app for the same reason
+/// a frozen frame does: nothing about it changes.
 ///
-/// The center of the frame is the path's own first point, so the mark sitting
-/// there is exactly the place the descent is heading, without any arithmetic
-/// to keep the two agreeing.
+/// So the indeterminate case is one composition roughly as long as a pass, in
+/// movements that do not repeat within it.
 ///
-/// ## Two behaviors, because there are two honest states
+///   gather   particles adrift find the path and settle onto it
+///   settle   the labyrinth inks in as the dust hands over to it
+///   descend  the bright path travels from the outermost run inward
+///   arrive   it reaches the middle and what is down there answers
+///   dissolve the whole figure breaks back into dust and scatters
 ///
-/// With `reach` supplied the descent *is* the progress: it arrives at the
-/// center when the derivation finishes, and nothing about it is decorative.
+/// Each turn of the cycle is rotated a quarter, so a second viewing is not the
+/// same viewing. `LabyrinthShape` is built from the center outward, so the
+/// descent is `trimmedPath(from: 1 - depth, to: 1)` — the outer run first,
+/// growing inward — and the center of the box is the path's own first point,
+/// which is why the mark waiting there needs no arithmetic to stay put. A
+/// quarter turn about that point leaves it exactly where it was.
 ///
-/// Without one, nothing is known and the descent loops instead: down over five
-/// and a half seconds, a moment held at the center, then a fade and again from
-/// the top. A loop says "still working" without claiming to know how far
-/// through it is, and it is also true to the shape of the work, since Argon2id
-/// makes repeated passes over the same memory. What it must never do is creep
-/// toward an arrival nobody measured, which is a progress bar's way of lying.
-struct Descent: View {
+/// The determinate case ignores all of it. Once the first pass has timed
+/// itself the second one has a real proportion to show, so the descent simply
+/// *is* that proportion and arrives at the middle as the work finishes. That
+/// is the version worth having, and it is the reason the other one must not
+/// imitate it: a bar creeping toward an arrival nobody measured is a lie told
+/// slowly.
+struct KeyMaking: View {
     /// Real progress through the derivation, or nil while none is knowable.
     var reach: Double?
     var turns: Int = 7
 
-    private let descend = 5.5
-    private let hold = 0.9
-    private let fade = 0.6
-    private var cycleLength: Double { descend + hold + fade }
+    @State private var targets: [CGPoint] = []
+    @State private var builtFor: CGFloat = 0
+
+    private let gather = 13.0
+    private let settle = 3.0
+    private let descend = 24.0
+    private let arrive = 5.0
+    private let dissolve = 14.0
+    private let rest = 4.0
+    private var cycle: Double { gather + settle + descend + arrive + dissolve + rest }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let clock = timeline.date.timeIntervalSinceReferenceDate
-            let cycle = clock.truncatingRemainder(dividingBy: cycleLength)
-            let looping = reach == nil
-            // Cubic ease out, so the descent slows as it nears the middle.
-            let raw = looping ? min(1, cycle / descend) : min(1, max(0, reach ?? 0))
-            let depth = looping ? 1 - pow(1 - raw, 3) : raw
-            let dimming = looping && cycle > descend + hold
-                ? 1 - (cycle - descend - hold) / fade
-                : 1
-
-            GeometryReader { geo in
-                let side = min(geo.size.width, geo.size.height)
-                let square = CGRect(x: 0, y: 0, width: side, height: side)
-                let full = LabyrinthShape(turns: turns).path(in: square)
-                ZStack {
-                    // Every level, none of them entered.
-                    full.stroke(Ink.paper.opacity(0.10 * dimming), lineWidth: 1)
-
-                    // How deep the work has got.
-                    full.trimmedPath(from: 1 - depth, to: 1)
-                        .stroke(Ink.paper.opacity(0.9 * dimming),
-                                style: StrokeStyle(lineWidth: 1.4, lineJoin: .miter))
-
-                    // The head of it, so there is always something moving even
-                    // on the long straight runs of the outer levels.
-                    if depth > 0, depth < 1,
-                       let tip = full.trimmedPath(from: 0, to: 1 - depth).currentPoint {
-                        Rectangle()
-                            .fill(Ink.paper.opacity(dimming))
-                            .frame(width: 3.5, height: 3.5)
-                            .position(tip)
-                    }
-
-                    // What is down there. It brightens as the descent closes on
-                    // it and never quite settles, because it has not been
-                    // reached yet.
-                    Rectangle()
-                        .fill(Ink.attention)
-                        .frame(width: 5, height: 5)
-                        .opacity((0.25 + 0.7 * depth) * (0.6 + 0.4 * sin(clock * 2.2)) * dimming)
-                        .position(x: side / 2, y: side / 2)
+        GeometryReader { geo in
+            let side = min(geo.size.width * 0.86, geo.size.height * 0.52)
+            let box = CGRect(x: (geo.size.width - side) / 2,
+                             y: (geo.size.height - side) / 2,
+                             width: side, height: side)
+            TimelineView(.animation) { timeline in
+                Canvas { ctx, size in
+                    render(&ctx,
+                           box: box,
+                           canvas: size,
+                           clock: timeline.date.timeIntervalSinceReferenceDate)
                 }
-                .frame(width: side, height: side)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .onAppear { rebuild(side) }
+            .onChange(of: side) { rebuild($0) }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func rebuild(_ side: CGFloat) {
+        guard side > 1, side != builtFor else { return }
+        builtFor = side
+        targets = LabyrinthShape.points(in: side, turns: turns, spacing: 5)
+    }
+
+    /// Deterministic per-particle noise. Not security randomness and never
+    /// mistakable for it: the entropy on this screen came from the platform
+    /// CSPRNG long before the first frame drew, and the caption says so.
+    private func noise(_ i: Int, _ salt: Double) -> Double {
+        let v = sin(Double(i) * 12.9898 + salt * 78.233) * 43758.5453
+        return v - v.rounded(.down)
+    }
+
+    private func render(_ ctx: inout GraphicsContext, box: CGRect, canvas: CGSize, clock: Double) {
+        if let reach {
+            let depth = min(1, max(0, reach))
+            let path = LabyrinthShape(turns: turns).path(in: box)
+            ctx.stroke(path, with: .color(Ink.paper.opacity(0.10)), lineWidth: 1)
+            ctx.stroke(path.trimmedPath(from: 1 - depth, to: 1),
+                       with: .color(Ink.paper.opacity(0.9)),
+                       style: StrokeStyle(lineWidth: 1.6, lineJoin: .miter))
+            if depth > 0, depth < 1,
+               let tip = path.trimmedPath(from: 0, to: 1 - depth).currentPoint {
+                ctx.fill(Path(CGRect(x: tip.x - 2, y: tip.y - 2, width: 4, height: 4)),
+                         with: .color(Ink.paper))
+            }
+            center(&ctx, box: box, clock: clock, glow: 0.25 + 0.7 * depth)
+            return
+        }
+
+        let t = clock.truncatingRemainder(dividingBy: cycle)
+        let round = Double(Int(clock / cycle))
+        let g1 = gather, g2 = g1 + settle, g3 = g2 + descend
+        let g4 = g3 + arrive, g5 = g4 + dissolve
+
+        // A quarter turn per cycle, about the point the descent is heading for.
+        let spin = CGAffineTransform(translationX: box.midX, y: box.midY)
+            .rotated(by: CGFloat(Int(round) % 4) * .pi / 2)
+            .translatedBy(x: -box.midX, y: -box.midY)
+        let path = LabyrinthShape(turns: turns).path(in: box).applying(spin)
+
+        let ink: Double
+        if t < g1 { ink = 0 }
+        else if t < g2 { ink = (t - g1) / settle }
+        else if t < g4 { ink = 1 }
+        else if t < g5 { ink = max(0, 1 - (t - g4) / dissolve) }
+        else { ink = 0 }
+
+        let depth: Double
+        if t < g2 { depth = 0 }
+        else if t < g3 { depth = 1 - pow(1 - (t - g2) / descend, 3) }
+        else { depth = 1 }
+
+        let dust: Double
+        if t < g1 { dust = 1 }
+        else if t < g2 { dust = max(0, 1 - (t - g1) / settle) }
+        else if t < g4 { dust = 0 }
+        else if t < g5 { dust = max(0, 1 - pow((t - g4) / dissolve, 2)) }
+        else { dust = 0 }
+
+        if ink > 0 {
+            ctx.stroke(path, with: .color(Ink.paper.opacity(0.10 * ink)), lineWidth: 1)
+            if depth > 0 {
+                ctx.stroke(path.trimmedPath(from: 1 - depth, to: 1),
+                           with: .color(Ink.paper.opacity(0.85 * ink)),
+                           style: StrokeStyle(lineWidth: 1.6, lineJoin: .miter))
+            }
+            if depth > 0, depth < 1,
+               let tip = path.trimmedPath(from: 0, to: 1 - depth).currentPoint {
+                ctx.fill(Path(CGRect(x: tip.x - 2, y: tip.y - 2, width: 4, height: 4)),
+                         with: .color(Ink.paper.opacity(ink)))
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+
+        if dust > 0, !targets.isEmpty {
+            let gathering = t < g2
+            let phase = gathering ? min(1, t / g1) : min(1, (t - g4) / dissolve)
+            let reach = max(canvas.width, canvas.height)
+            var speck = Path()
+            for i in targets.indices {
+                let home = targets[i]
+                    .applying(CGAffineTransform(translationX: box.minX, y: box.minY))
+                    .applying(spin)
+                let lead = noise(i, 3.1 + round) * 0.7
+                let step = max(0, min(1, (phase - lead) / (1 - lead)))
+                let eased = step < 0.5 ? 4 * step * step * step
+                                       : 1 - pow(-2 * step + 2, 3) / 2
+                // Adrift somewhere on the whole screen when gathering; thrown
+                // outward from where it sat when dissolving.
+                let angle = noise(i, 7.7 + round) * 2 * .pi
+                let far = gathering
+                    ? CGPoint(x: noise(i, 1.7 + round) * canvas.width,
+                              y: noise(i, 5.3 + round) * canvas.height)
+                    : CGPoint(x: home.x + cos(angle) * reach * (0.3 + 0.5 * noise(i, 9.1)),
+                              y: home.y + sin(angle) * reach * (0.3 + 0.5 * noise(i, 9.1)))
+                let from = gathering ? far : home
+                let to = gathering ? home : far
+                let at = CGPoint(x: from.x + (to.x - from.x) * eased,
+                                 y: from.y + (to.y - from.y) * eased)
+                speck.addRect(CGRect(x: at.x - 0.8, y: at.y - 0.8, width: 1.6, height: 1.6))
+            }
+            ctx.fill(speck, with: .color(Ink.paper.opacity(0.55 * dust)))
+        }
+
+        center(&ctx, box: box, clock: clock, glow: (0.2 + 0.8 * depth) * max(ink, dust))
+    }
+
+    /// What is down there. It brightens as the descent closes on it and never
+    /// quite settles, because it has not been reached yet.
+    private func center(_ ctx: inout GraphicsContext, box: CGRect, clock: Double, glow: Double) {
+        let pulse = 0.6 + 0.4 * sin(clock * 2.2)
+        let s: CGFloat = 6
+        ctx.fill(Path(CGRect(x: box.midX - s / 2, y: box.midY - s / 2, width: s, height: s)),
+                 with: .color(Ink.attention.opacity(max(0, glow * pulse))))
     }
 }

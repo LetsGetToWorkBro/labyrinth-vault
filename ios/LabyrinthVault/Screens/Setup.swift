@@ -362,6 +362,14 @@ private struct EntropyView: View {
         .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { now in
             elapsed = now.timeIntervalSince(began)
             bits = min(256, Int(elapsed / 5.2 * 256))
+            /* The choreography used to open this gate when the entropy field
+             * landed. The field is now the opening movement of a composition
+             * that runs for as long as the work does, so the gate keeps its
+             * original 5.2 seconds and reads them off the same clock. */
+            if !fieldDone, elapsed >= 5.2 {
+                fieldDone = true
+                advance()
+            }
         }
         /* ## The app holds the screen awake, rather than asking
          *
@@ -423,32 +431,25 @@ private struct EntropyView: View {
     }
 
     private var working: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Spacer()
-            /* The entropy field resolves over five seconds and then has
-             * nothing left to say, while the derivation it precedes runs for
-             * minutes. A finished animation held on screen for that long is
-             * the picture of a hung app, and it was.
-             *
-             * So the field hands over to the descent the moment it lands. Both
-             * live in the same ZStack and cross-fade, so the layout never
-             * jumps: the field is greedy and sizes the stack, the descent fits
-             * a square inside whatever that turns out to be. */
-            ZStack {
-                EntropyField(duration: 5.2) {
-                    withAnimation(.easeInOut(duration: 0.6)) { fieldDone = true }
-                    advance()
-                }
-                .opacity(fieldDone ? 0 : 1)
+        /* Full bleed, because the wait is. On this device a pass takes about
+         * 67 seconds and creation runs two, so there is no version of this
+         * screen that a person glances at. It gets the whole display, with the
+         * readout sitting over the lower half behind a scrim that keeps the
+         * text on paper rather than on a moving figure. */
+        ZStack {
+            KeyMaking(reach: progress)
+                .ignoresSafeArea()
 
-                if fieldDone {
-                    Descent(reach: progress).transition(.opacity)
-                }
-            }
-            .padding(.horizontal, 24)
+            LinearGradient(
+                colors: [Ink.void.opacity(0), Ink.void.opacity(0.88), Ink.void],
+                startPoint: UnitPoint(x: 0.5, y: 0.34),
+                endPoint: UnitPoint(x: 0.5, y: 0.60))
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 0) {
-                Statement("GENERATING", "KEY MATERIAL", size: 32).padding(.top, 30)
+                Spacer()
+                Statement("GENERATING", "KEY MATERIAL", size: 32)
                 FieldRow(label: "ENTROPY COLLECTED", value: "\(bits) / 256 BITS")
                     .padding(.top, 10)
                 FieldRow(label: "ARGON2ID",
@@ -456,20 +457,18 @@ private struct EntropyView: View {
                          tone: vault.creation == .done ? .verified : .plain)
                 FieldRow(label: "ELAPSED", value: clock(elapsed))
                 FieldRow(label: "REMAINING", value: vault.creation == .done ? "NONE" : remaining)
+
+                patience.padding(.top, 22)
+
+                Text("THIS SCREEN IS BEING HELD AWAKE")
+                    .font(Type.mono(10))
+                    .kerning(2.2)
+                    .foregroundStyle(Ink.paperDim)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 20)
+                    .padding(.bottom, 24)
             }
             .padding(.horizontal, 24)
-
-            patience
-                .padding(.horizontal, 24)
-                .padding(.top, 26)
-
-            Spacer()
-            Text("THIS SCREEN IS BEING HELD AWAKE")
-                .font(Type.mono(10))
-                .kerning(2.2)
-                .foregroundStyle(Ink.paperDim)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 24)
         }
     }
 
@@ -481,31 +480,35 @@ private struct EntropyView: View {
     /// understands is a cost they will tolerate, and this one is bought
     /// entirely on their behalf.
     private var patience: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             Eyebrow("THIS IS NOT FROZEN", color: Ink.attention)
-            Text("Turning your passphrase into a key is meant to be slow. The same " +
-                 "work stands between anyone who takes this phone and the keys inside " +
-                 "it, so every second spent here is a second charged for each guess " +
-                 "they make, and they would need billions of guesses.")
-                .font(Type.body(13))
-                .lineSpacing(4)
-                .foregroundStyle(Ink.paperDim)
-            Text("It runs twice: once to seal the vault, once to open it again from " +
-                 "storage. What proves the vault will still open tomorrow is the " +
-                 "stored bytes opening, not the ones just made.")
-                .font(Type.body(13))
-                .lineSpacing(4)
-                .foregroundStyle(Ink.paperDim)
-            Text("The phone will not sleep while this runs. Do not lock it by hand and " +
-                 "do not leave the app: iOS stops the work of an app in the " +
-                 "background, and no keys would be made.")
-                .font(Type.body(13))
-                .lineSpacing(4)
-                .foregroundStyle(Ink.paper)
+            line("Turning your passphrase into a key is meant to be slow. It costs you " +
+                 "this once, and it costs anyone guessing it the same on every guess.",
+                 tone: Ink.paperDim)
+            line("It runs twice: once to seal the vault, once to open it again from " +
+                 "storage. Only the stored bytes opening proves it will open tomorrow.",
+                 tone: Ink.paperDim)
+            line("The phone will not sleep while this runs. Do not lock it by hand and " +
+                 "do not leave the app.", tone: Ink.paper)
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Ink.void.opacity(0.72))
         .overlay { Rectangle().strokeBorder(Ink.rule, lineWidth: 1) }
+    }
+
+    /* `fixedSize` vertically is the whole point of this helper. Inside a
+     * VStack that is competing for height, SwiftUI resolves the shortfall by
+     * truncating the paragraphs, and the sentence that got cut on the first
+     * device was the one telling a person not to lock the phone. Text that
+     * only matters when it is read in full has to be allowed its full
+     * height. */
+    private func line(_ copy: String, tone: Color) -> some View {
+        Text(copy)
+            .font(Type.body(13))
+            .lineSpacing(4)
+            .foregroundStyle(tone)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Nothing was kept: every failure path in `createVault` erases whatever

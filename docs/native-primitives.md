@@ -129,11 +129,33 @@ on-device number for `t=3, m=64 MiB` is bad enough that a person would rather
 weaken their vault than wait, because *that* is the moment the JavaScript
 implementation starts costing security instead of patience.
 
-**Status: one measurement away, and the measurement is cheap now.** The
-interpreter analogy above says an unlock is tens of seconds rather than a few,
-which would clear this gate several times over. It is an analogy, the device
-has never been asked, and a build on a phone answers it in one minute:
-`docs/testflight.md` test 4. The number goes here when it exists.
+**Status: open. The device was asked and it answered.**
+
+    iPhone 17 Pro Max, build 3, first-run vault creation
+
+      Argon2id pass 1 (seal)               ~67 s
+      Argon2id pass 2 (reopen)             ~67 s
+      creation, wall clock                 ~2 min 15 s
+
+Read off the setup screen's own `ELAPSED` and `REMAINING` rows, which is part
+of why they are there. An unlock runs one pass, so an unlock is about **67
+seconds** on the fastest phone Apple currently sells. Every other device is
+slower.
+
+That is not tens of seconds instead of a few. It is over a minute to open a
+wallet, and the 41x analogy above turns out to have flattered the
+device, because it was measured against a server core.
+
+The gate asked whether the number was bad enough that a person would rather
+weaken their vault than wait. It is worse than that. The first build to run
+this crashed, because a phone left untouched for two minutes locks itself and
+iOS stops the work of a backgrounded app. The `isIdleTimerDisabled` guard in
+`test/app-wiring.test.ts` records what that cost and why it is now pinned. A
+vault that cannot be created without the app fighting the operating system is
+not slow, it is broken, and dropping `m` to make it bearable is precisely the
+trade this gate exists to refuse.
+
+Port it.
 
 Nothing else in this document is blocked on it. The port is specified below and
 the specification does not change with the number; only whether to start does.

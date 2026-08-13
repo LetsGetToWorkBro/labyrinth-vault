@@ -153,12 +153,14 @@ struct UnlockView: View {
                     .foregroundStyle(Ink.attention)
             }
             Text("Not frozen. Stretching the passphrase into the key is the work that " +
-                 "makes guessing it expensive, and it costs you once what it costs an " +
-                 "attacker every attempt. The phone is being held awake until it " +
+                 "makes guessing it expensive. The phone is being held awake until it " +
                  "finishes; do not leave the app.")
                 .font(Type.body(12))
                 .lineSpacing(3)
                 .foregroundStyle(Ink.paperFaint)
+                // Same reason as the key generation screen: a warning that
+                // gets truncated is a warning that did not get read.
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
