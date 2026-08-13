@@ -31,3 +31,7 @@ fastlane/*/screenshots/
 # manifest no longer sets survives into an archive.
 ios/LabyrinthVault.xcodeproj/
 ios/LabyrinthVault/Info.plist
+
+# Rendered by test/shipping.test.ts to compare against the committed icons
+# without writing over them. See the comment in that test.
+.icons-check/

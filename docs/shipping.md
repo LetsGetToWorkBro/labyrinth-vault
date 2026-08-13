@@ -86,7 +86,61 @@ available encryption software. What that requires:
 2. **No CCATS, no license.** 5D992.c mass market does not need either. The
    self-classification report is the whole obligation.
 3. **France** has a separate declaration for encryption products distributed
-   there. Apple's export compliance questionnaire asks about it directly.
+   there. Apple asks about it directly, as the last of three questions in the
+   App Encryption Documentation wizard below.
+
+### Apple wants its own documentation, and it wants it before the Store
+
+This is separate from the BIS report and lands earlier, which the runbook did
+not say and should have. Validation refuses the upload until it is done:
+
+    Invalid Export Compliance Code. The export compliance key value []
+    in the app's Info.plist doesn't match the key value of the app's
+    export compliance documentation.
+
+That is not a misconfiguration to argue away. `ITSAppUsesNonExemptEncryption:
+true` puts the app in the category that owes Apple documentation, and the
+trigger is stated on the App Store Connect page itself: documentation is
+required for "standard encryption algorithms instead of, or in addition to,
+using or accessing the encryption within Apple's operating system". The vault
+ships Argon2id and XChaCha20-Poly1305 in its JavaScript bundle rather than
+calling CryptoKit, so it is squarely that case.
+
+The wizard is at App Store Connect > the app > App Information > App
+Encryption Documentation, and it is three questions:
+
+**1. App purpose**, 300 characters. Worded to match
+`store/vault/review-notes.md`, so a reviewer reading both meets one story:
+
+> An airgapped signing device for Bitcoin and Monero, meant to run on a second
+> phone with its radios off. It generates keys on device and encrypts them at
+> rest with Argon2id and XChaCha20-Poly1305. Transactions arrive and leave as
+> QR codes. There is no networking code in the app.
+
+**2. Which algorithms.** Two checkboxes; tick the second only.
+
+Everything the vault implements is a published standard: XChaCha20-Poly1305
+(RFC 8439 plus the CFRG nonce extension), Argon2id (RFC 9106), SHA-2 and
+Keccak (FIPS 180-4, FIPS 202), Ed25519 (RFC 8032), secp256k1, PBKDF2 (RFC
+8018). None is proprietary, and all of it is in the app's own bundle rather
+than the operating system's, which is the second box word for word.
+
+**Do not tick the first box defensively.** "Proprietary or not accepted as
+standard" is the answer that leads toward CCATS, and it is not true here.
+Monero's CLSAG and Bulletproofs+ are in the app and are not IETF standards,
+but neither is an encryption algorithm: one is a ring signature and the other
+a range proof. The only thing providing confidentiality is
+XChaCha20-Poly1305.
+
+**3. Distribution in France.** A decision rather than a lookup. France
+requires a declaration to ANSSI for supplying cryptographic means that provide
+confidentiality, which this does. Answering yes states that you have complied.
+Answering no requires actually excluding France in Pricing and Availability,
+because saying no and shipping there is a misstatement on the same form.
+
+Until the ANSSI declaration is filed, no is the truthful answer and it is
+reversible. One country is a cheap price for not making a declaration you
+cannot back.
 
 **Omit `ITSEncryptionExportComplianceCode` entirely** unless Apple issues one.
 It applies to apps that went through CCATS, and this one does not.

@@ -208,10 +208,23 @@ function render(spec, target) {
   return downsample(big, SS);
 }
 
+/* Where the icons land. Normally the repository; under `ICON_OUT_ROOT` a
+ * directory of the caller's choosing.
+ *
+ * That option exists for `test/shipping.test.ts`, which checks the committed
+ * icons still regenerate byte for byte. It used to do that by running this
+ * script over the real files and re-reading them, which meant a test wrote
+ * into the working tree while vitest ran other files against that same tree.
+ * It passed almost always and failed twice in one afternoon, which is the
+ * worst failure rate there is. Rendering somewhere else and comparing makes
+ * the check read-only, and a read-only check cannot race anything. */
+const OUT_ROOT = process.env.ICON_OUT_ROOT ?? '.';
+
 function emit(path, image) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, png(image));
-  return `${path}  ${image.size}x${image.size}`;
+  const full = `${OUT_ROOT}/${path}`;
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, png(image));
+  return `${full}  ${image.size}x${image.size}`;
 }
 
 /* 1024 is all Xcode and Expo need: both generate the rest from a single
@@ -237,8 +250,9 @@ const written = [
 
 /* The asset catalog entry Xcode needs beside the image. Written here rather
  * than committed by hand so the two cannot disagree about the filename. */
+mkdirSync(`${OUT_ROOT}/ios/LabyrinthVault/Resources/Assets.xcassets/AppIcon.appiconset`, { recursive: true });
 writeFileSync(
-  'ios/LabyrinthVault/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json',
+  `${OUT_ROOT}/ios/LabyrinthVault/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json`,
   JSON.stringify(
     {
       images: [{ filename: 'icon-1024.png', idiom: 'universal', platform: 'ios', size: '1024x1024' }],
@@ -249,7 +263,7 @@ writeFileSync(
   ) + '\n',
 );
 writeFileSync(
-  'ios/LabyrinthVault/Resources/Assets.xcassets/Contents.json',
+  `${OUT_ROOT}/ios/LabyrinthVault/Resources/Assets.xcassets/Contents.json`,
   JSON.stringify({ info: { author: 'scripts/make-icons.mjs', version: 1 } }, null, 2) + '\n',
 );
 

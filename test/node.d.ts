@@ -41,9 +41,13 @@ declare module 'node:child_process' {
   export function execFileSync(
     file: string,
     args: string[],
-    options?: { stdio?: string },
+    options?: { stdio?: string; env?: Record<string, string | undefined> },
   ): unknown;
 }
+
+/** The environment, for the one test that renders the icons somewhere other
+ *  than over the committed ones. */
+declare const process: { env: Record<string, string | undefined> };
 
 declare module 'node:path' {
   export function join(...parts: string[]): string;
