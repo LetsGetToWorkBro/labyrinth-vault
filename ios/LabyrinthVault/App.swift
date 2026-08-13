@@ -122,9 +122,23 @@ struct VaultTabs: View {
     @EnvironmentObject private var vault: Vault
     let current: String
 
+    /* SECURITY lands on the settings screen, whose first row is the airgap
+     * readout. That is one tap further from the readout than it was, and it
+     * is worth it.
+     *
+     * `SettingsView` had no way in at all: nothing in this app ever called
+     * `go(.settings)`. It is the only route to `RecoveryView`, which holds
+     * the recovery phrases, the switch that stops using Face ID, and ERASE
+     * VAULT. The one other door to that screen is a lever on the setup
+     * completion screen, so anybody who tapped OPEN VAULT there could never
+     * see their seed words again, never withdraw the stored passphrase, and
+     * never erase the vault from inside the app.
+     *
+     * `test/app-wiring.test.ts` fails if a screen the router can show loses
+     * its way in again, which is the check that was missing. */
     private let items: [(String, Route)] = [
         ("VAULT", .home), ("SIGN", .scanner),
-        ("EXPORT", .export), ("SECURITY", .airgap),
+        ("EXPORT", .export), ("SECURITY", .settings),
     ]
 
     var body: some View {

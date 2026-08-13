@@ -27,8 +27,8 @@ deliberate, not a bug.
    radios are yours to switch, not something it can see). Choose a
    passphrase. Key generation is real: fresh CSPRNG entropy, sealed with
    Argon2id + XChaCha20-Poly1305, stored in the keychain.
-3. **Recovery.** Settings > Key Management shows the two recovery phrases
-   (12 Bitcoin words, 25 Monero words) behind a hold-to-reveal.
+3. **Recovery.** The SECURITY tab > KEY MANAGEMENT shows the two recovery
+   phrases (12 Bitcoin words, 25 Monero words) behind a hold-to-reveal.
 4. **Export.** The Export tab animates a QR carrying a watch-only public key.
    Nothing that can spend is in it.
 5. **Sign, with no companion:** open the SIGN tab and tap
@@ -69,9 +69,9 @@ box and type the passphrase.
 
 ## Encryption
 
-Yes, and declared as such in the Info.plist. The app encrypts the user's seed
-at rest with Argon2id and XChaCha20-Poly1305. It qualifies as mass market
-under ECCN 5D992.c.
+Yes, and answered as such in App Store Connect rather than in the Info.plist.
+The app encrypts the user's seed at rest with Argon2id and XChaCha20-Poly1305.
+It qualifies as mass market under ECCN 5D992.c.
 
 ## Source
 

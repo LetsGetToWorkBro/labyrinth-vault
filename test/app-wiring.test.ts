@@ -633,6 +633,95 @@ describe('the screen model matches the wire, field for field', () => {
   });
 });
 
+describe('every screen the router can show has a way in', () => {
+  /* The bug this exists for shipped. `SettingsView` was written, wired into
+   * the router, given a `Route` case, given transition rules in Flow.swift and
+   * a test in FlowContractTests, described in review notes as the path to key
+   * management — and never once navigated to. Nothing said `go(.settings)`.
+   *
+   * That is not a dead screen, it is a dead *capability*: settings is the only
+   * route to `RecoveryView`, so the recovery phrases, the switch that stops
+   * using Face ID and ERASE VAULT were reachable exactly once, from a lever on
+   * the setup completion screen. Tap OPEN VAULT instead and your seed words
+   * are gone for good, on a device whose whole purpose is holding them.
+   *
+   * Nothing caught it, and nothing could have: every existing guard checks
+   * that a thing is correctly *defined*. This one checks it is reached. It is
+   * deliberately about the payload-free routes — the chrome — because those
+   * are the ones a person navigates to. The signing path's routes carry a
+   * summary or a reply, cannot be constructed without one, and are already
+   * covered by Flow.
+   */
+
+  const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+
+  /** The chrome routes: `Route` cases with no associated value. */
+  const chromeRoutes = (() => {
+    const start = vault.indexOf('enum Route: Equatable {');
+    expect(start, 'the Route enum moved').toBeGreaterThan(-1);
+    const body = vault.slice(start, vault.indexOf('\n}', start));
+    return [...body.matchAll(/^\s{4}case (\w+)$/gm)].map((m) => m[1]!);
+  })();
+
+  /**
+   * Every route literal that is a *use* rather than a declaration or a switch
+   * arm.
+   *
+   * Lines beginning with `case ` are dropped, which removes the enum
+   * declarations and all three exhaustive switches over `Route` in one rule —
+   * including the arm bodies, since `case .settings: SettingsView()` puts the
+   * route and its screen on one line. What survives is navigation: a
+   * `go(.export)` call, a `route = .unlock` assignment, and the tab bar and
+   * settings tables, which hold their destinations as `(String, Route)` pairs
+   * and so never spell `go(` at all. The first draft of this guard missed
+   * those tables and reported the airgap screen as orphaned, which is the
+   * opposite of the truth.
+   */
+  const reached = (() => {
+    const found = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith('.swift')) {
+          const code = readFileSync(path, 'utf8')
+            .split('\n')
+            .filter((line) => !/^\s*(case |\/\/|\*|\/\*)/.test(line))
+            .join('\n');
+          for (const match of code.matchAll(/\.(\w+)\b/g)) found.add(match[1]!);
+        }
+      }
+    };
+    walk('ios/LabyrinthVault');
+    return found;
+  })();
+
+  it('found both lists, so a pass means something', () => {
+    expect(chromeRoutes).toContain('settings');
+    expect(chromeRoutes).toContain('recovery');
+    expect(chromeRoutes.length).toBeGreaterThan(8);
+    expect(reached.size).toBeGreaterThan(50);
+  });
+
+  it('navigates to every one of them', () => {
+    const orphaned = chromeRoutes.filter((route) => !reached.has(route)).sort();
+    expect(orphaned, 'these screens exist and nothing can reach them').toEqual([]);
+  });
+
+  it('keeps the recovery screen reachable after setup, not only during it', () => {
+    /* The specific regression, named. Setup's completion screen offers the
+     * phrases once; the tab bar is what makes them permanent. If the only
+     * `go(.recovery)` left in the tree is the one inside Setup.swift, this
+     * vault has become a box you can put a seed into and not get it out of. */
+    const outsideSetup = readdirSync('ios/LabyrinthVault/Screens')
+      .filter((name) => name.endsWith('.swift') && name !== 'Setup.swift')
+      .map((name) => readFileSync(join('ios/LabyrinthVault/Screens', name), 'utf8'))
+      .join('\n');
+    expect(outsideSetup, 'only setup can reach the recovery phrases')
+      .toMatch(/\.recovery/);
+  });
+});
+
 describe('Swift calls only functions the engine actually has', () => {
   /* The third cross-language contract in this file, and the one with the most
    * room to rot: Swift names host functions as *strings*, so a typo or a

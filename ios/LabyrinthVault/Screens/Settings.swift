@@ -2,6 +2,11 @@
 //  Minimal by principle. The most important section is the one listing what
 //  is deliberately absent — each absence would need a network, and the build
 //  has no code that could open one.
+//
+//  This is what the SECURITY tab lands on, so the airgap readout is the first
+//  row rather than one in the middle: the tab promises a diagnostic and the
+//  screen should hand one over without being read first. Key management is
+//  second because it is the only door to the recovery phrases.
 
 import SwiftUI
 
@@ -10,11 +15,11 @@ struct SettingsView: View {
 
     private var rows: [(String, String, Route)] {
         [
-            ("BITCOIN", "BIP84 · ACCOUNT 0", .bitcoin),
-            ("MONERO", "CLSAG SIGNING", .monero),
-            ("SECURITY DIAGNOSTICS", "", .airgap),
+            ("SECURITY DIAGNOSTICS", "AIRGAP", .airgap),
             ("KEY MANAGEMENT", "ENCRYPTED", .recovery),
             ("RE-RUN AIRGAP CHECK", "", .setup(.verify)),
+            ("BITCOIN", "BIP84 · ACCOUNT 0", .bitcoin),
+            ("MONERO", "CLSAG SIGNING", .monero),
         ]
     }
 
@@ -24,7 +29,7 @@ struct SettingsView: View {
                 VaultBar()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        Statement("VAULT", size: 40).padding(.top, 16).padding(.bottom, 20)
+                        Statement("SECURITY", size: 40).padding(.top, 16).padding(.bottom, 20)
 
                         ForEach(rows, id: \.0) { row in
                             Button {
@@ -69,7 +74,7 @@ struct SettingsView: View {
                     }
                     .padding(.horizontal, 24)
                 }
-                VaultTabs(current: "")
+                VaultTabs(current: "SECURITY")
             }
         }
     }
