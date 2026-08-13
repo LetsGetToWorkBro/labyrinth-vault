@@ -58,6 +58,27 @@ describe('the vault is shaped like something that can be uploaded', () => {
      * docs/shipping.md, which writes out the exemption it does qualify for and
      * the annual report that goes with it. */
     expect(project).toMatch(/ITSAppUsesNonExemptEncryption: true/);
+
+    /* And the companion key is absent rather than empty, which is not the
+     * same thing and is the version that gets an upload rejected.
+     * `ITSEncryptionExportComplianceCode` is for apps issued a code after
+     * CCATS; 5D992.c mass market is not one, so there is nothing to declare.
+     * App Store Connect validates the value it finds instead of ignoring it,
+     * so a key present with `""` in it answers wrongly rather than declining
+     * to answer.
+     *
+     * Guarded because it is a plausible thing to add back: somebody reading
+     * "leave it empty", or an editor filling in a schema, produces exactly
+     * the line this refuses. Comments stripped first, because the manifest
+     * now explains the absence at the place the key used to be, and a guard
+     * that reads its own documentation as a violation is a mistake this
+     * suite has made before. */
+    const projectCode = project.replace(/^\s*#.*$/gm, '');
+    expect(
+      projectCode,
+      'ITSEncryptionExportComplianceCode is set; omit the key unless Apple issued a code',
+    ).not.toMatch(/ITSEncryptionExportComplianceCode/);
+
     const doc = readFileSync('docs/shipping.md', 'utf8');
     expect(doc).toMatch(/5D992/);
     expect(doc).toMatch(/self-classification/i);

@@ -56,7 +56,13 @@ targets:
         # paperwork that goes with it is written out in docs/shipping.md
         # rather than left as a shrug.
         ITSAppUsesNonExemptEncryption: true
-        ITSEncryptionExportComplianceCode: ""
+        # ITSEncryptionExportComplianceCode is deliberately absent rather than
+        # present and empty. The key is for apps that went through CCATS and
+        # were issued a code; 5D992.c mass market is not one, so there is no
+        # code to put here. An empty string is not the same as no answer, and
+        # App Store Connect validates the value rather than ignoring it, which
+        # turns "we have nothing to declare" into a rejected upload. If Apple
+        # ever issues a code, add the key back with it in.
 
         UILaunchScreen:
           UIColorName: ""

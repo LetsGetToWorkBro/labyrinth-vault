@@ -88,8 +88,15 @@ available encryption software. What that requires:
 3. **France** has a separate declaration for encryption products distributed
    there. Apple's export compliance questionnaire asks about it directly.
 
-Leave `ITSEncryptionExportComplianceCode` empty unless Apple issues one. It
-applies to apps that went through CCATS, and this one does not.
+**Omit `ITSEncryptionExportComplianceCode` entirely** unless Apple issues one.
+It applies to apps that went through CCATS, and this one does not.
+
+This used to say "leave it empty", and the key was in `project.yml` set to
+`""`, which is a different thing and a worse one. An empty string is an
+answer rather than an absence: App Store Connect validates the value it
+finds, so a key present with nothing in it turns "we have nothing to declare"
+into a rejected upload. The key is gone from the manifest now, with the
+reasoning next to where it was.
 
 None of this blocks a TestFlight build. It has to be true by the time the app
 is on the Store, and it is much cheaper to do once at the start than to unpick
