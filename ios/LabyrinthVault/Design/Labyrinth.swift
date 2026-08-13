@@ -159,3 +159,89 @@ struct EntropyField: View {
         .aspectRatio(1, contentMode: .fit)
     }
 }
+
+/// The descent: the wait for a key derivation, drawn as travel inward.
+///
+/// `LabyrinthShape` is built from the center outward, so trimming it backwards
+/// — `from: 1 - reach, to: 1` — reveals the outermost run first and grows
+/// toward the middle. That is the figure this screen wants: the whole
+/// labyrinth is there from the first frame, faint and unentered, and the
+/// bright path is how far in the work has got. The passphrase is not being
+/// looked up somewhere. It is being carried down.
+///
+/// The center of the frame is the path's own first point, so the mark sitting
+/// there is exactly the place the descent is heading, without any arithmetic
+/// to keep the two agreeing.
+///
+/// ## Two behaviors, because there are two honest states
+///
+/// With `reach` supplied the descent *is* the progress: it arrives at the
+/// center when the derivation finishes, and nothing about it is decorative.
+///
+/// Without one, nothing is known and the descent loops instead: down over five
+/// and a half seconds, a moment held at the center, then a fade and again from
+/// the top. A loop says "still working" without claiming to know how far
+/// through it is, and it is also true to the shape of the work, since Argon2id
+/// makes repeated passes over the same memory. What it must never do is creep
+/// toward an arrival nobody measured, which is a progress bar's way of lying.
+struct Descent: View {
+    /// Real progress through the derivation, or nil while none is knowable.
+    var reach: Double?
+    var turns: Int = 7
+
+    private let descend = 5.5
+    private let hold = 0.9
+    private let fade = 0.6
+    private var cycleLength: Double { descend + hold + fade }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let clock = timeline.date.timeIntervalSinceReferenceDate
+            let cycle = clock.truncatingRemainder(dividingBy: cycleLength)
+            let looping = reach == nil
+            // Cubic ease out, so the descent slows as it nears the middle.
+            let raw = looping ? min(1, cycle / descend) : min(1, max(0, reach ?? 0))
+            let depth = looping ? 1 - pow(1 - raw, 3) : raw
+            let dimming = looping && cycle > descend + hold
+                ? 1 - (cycle - descend - hold) / fade
+                : 1
+
+            GeometryReader { geo in
+                let side = min(geo.size.width, geo.size.height)
+                let square = CGRect(x: 0, y: 0, width: side, height: side)
+                let full = LabyrinthShape(turns: turns).path(in: square)
+                ZStack {
+                    // Every level, none of them entered.
+                    full.stroke(Ink.paper.opacity(0.10 * dimming), lineWidth: 1)
+
+                    // How deep the work has got.
+                    full.trimmedPath(from: 1 - depth, to: 1)
+                        .stroke(Ink.paper.opacity(0.9 * dimming),
+                                style: StrokeStyle(lineWidth: 1.4, lineJoin: .miter))
+
+                    // The head of it, so there is always something moving even
+                    // on the long straight runs of the outer levels.
+                    if depth > 0, depth < 1,
+                       let tip = full.trimmedPath(from: 0, to: 1 - depth).currentPoint {
+                        Rectangle()
+                            .fill(Ink.paper.opacity(dimming))
+                            .frame(width: 3.5, height: 3.5)
+                            .position(tip)
+                    }
+
+                    // What is down there. It brightens as the descent closes on
+                    // it and never quite settles, because it has not been
+                    // reached yet.
+                    Rectangle()
+                        .fill(Ink.attention)
+                        .frame(width: 5, height: 5)
+                        .opacity((0.25 + 0.7 * depth) * (0.6 + 0.4 * sin(clock * 2.2)) * dimming)
+                        .position(x: side / 2, y: side / 2)
+                }
+                .frame(width: side, height: side)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}

@@ -425,9 +425,25 @@ private struct EntropyView: View {
     private var working: some View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer()
-            EntropyField(duration: 5.2) {
-                fieldDone = true
-                advance()
+            /* The entropy field resolves over five seconds and then has
+             * nothing left to say, while the derivation it precedes runs for
+             * minutes. A finished animation held on screen for that long is
+             * the picture of a hung app, and it was.
+             *
+             * So the field hands over to the descent the moment it lands. Both
+             * live in the same ZStack and cross-fade, so the layout never
+             * jumps: the field is greedy and sizes the stack, the descent fits
+             * a square inside whatever that turns out to be. */
+            ZStack {
+                EntropyField(duration: 5.2) {
+                    withAnimation(.easeInOut(duration: 0.6)) { fieldDone = true }
+                    advance()
+                }
+                .opacity(fieldDone ? 0 : 1)
+
+                if fieldDone {
+                    Descent(reach: progress).transition(.opacity)
+                }
             }
             .padding(.horizontal, 24)
 
@@ -440,8 +456,6 @@ private struct EntropyView: View {
                          tone: vault.creation == .done ? .verified : .plain)
                 FieldRow(label: "ELAPSED", value: clock(elapsed))
                 FieldRow(label: "REMAINING", value: vault.creation == .done ? "NONE" : remaining)
-                SealBar(progress: vault.creation == .done ? 1 : progress)
-                    .padding(.top, 16)
             }
             .padding(.horizontal, 24)
 
@@ -559,53 +573,5 @@ private struct CreatedView: View {
                 .padding(.bottom, 12)
             }
         }
-    }
-}
-
-/// The one bar in this app, and it appears on the one screen that has to prove
-/// it is alive.
-///
-/// Two behaviors, because there are two honest states. Once the first
-/// derivation has finished, the device has measured itself and the second can
-/// be shown as a real proportion. Before that nothing is known, so the bar
-/// sweeps instead of filling: it says "working" without claiming to know how
-/// far through it is. A determinate bar creeping toward a number nobody
-/// measured is a lie told slowly, and this screen is asking to be trusted for
-/// several minutes.
-///
-/// Driven by `TimelineView(.animation)` rather than a repeating animation on a
-/// modifier, so it keeps moving through the state changes that redraw the rest
-/// of the screen.
-private struct SealBar: View {
-    /// Nil while nothing can honestly be predicted.
-    var progress: Double?
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Ink.rule)
-                if let progress {
-                    Rectangle()
-                        .fill(Ink.paper)
-                        /* Never the full width until it is genuinely done: a
-                         * bar sitting at 100% while work continues is the same
-                         * defect as a bar that stopped moving. */
-                        .frame(width: max(2, geo.size.width * min(1, max(0, progress))))
-                } else {
-                    TimelineView(.animation) { timeline in
-                        let span = geo.size.width * 0.3
-                        let travel = geo.size.width + span
-                        let cycle = timeline.date.timeIntervalSinceReferenceDate
-                            .truncatingRemainder(dividingBy: 2.2) / 2.2
-                        Rectangle()
-                            .fill(Ink.paper)
-                            .frame(width: span)
-                            .offset(x: cycle * travel - span)
-                    }
-                }
-            }
-        }
-        .frame(height: 2)
-        .clipped()
     }
 }
