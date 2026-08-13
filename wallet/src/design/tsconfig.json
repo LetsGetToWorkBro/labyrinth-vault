@@ -1,0 +1,35 @@
+{
+  // This file exists so that building the marketing site does not require
+  // installing Expo.
+  //
+  // `geometry.ts` next to it is the one drawing of the labyrinth mark, shared
+  // by the wallet, the vault's icon script and site/src/App.tsx. When Vite
+  // transforms a TypeScript file it walks up from that file to the nearest
+  // tsconfig.json and reads the handful of fields esbuild cares about. Without
+  // this file the nearest one is wallet/tsconfig.json, whose first line is
+  // `"extends": "expo/tsconfig.base"`, and resolving that needs
+  // wallet/node_modules. A developer who has run `npm install` in wallet/ has
+  // it and never sees a problem; Cloudflare installs only site/ and the build
+  // fails there with "failed to resolve extends", pointing at a file the site
+  // did not know it was configuring.
+  //
+  // So the shared module gets a config of its own that inherits nothing. It
+  // deliberately does not extend the wallet's: a module three directories
+  // consume should not take its compiler settings from one of them.
+  //
+  // This does not remove geometry.ts from the wallet's own typecheck. A nested
+  // tsconfig is not a boundary for `tsc -p wallet`, whose `include` still
+  // covers `src/**/*.ts`, so `npm run typecheck` in wallet/ checks this file
+  // against the wallet's stricter settings exactly as before.
+  //
+  // test/site-claims.test.ts fails if an `extends` ever appears above the
+  // shared module again.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true
+  }
+}

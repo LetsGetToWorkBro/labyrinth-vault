@@ -524,6 +524,63 @@ describe('the site wears the same mark as the apps', () => {
     expect(app, 'the mark path is hard-coded rather than computed').not.toMatch(/d="M[\d\s.]+L/);
   });
 
+  it('can be built without installing the wallet', () => {
+    /* The cost of sharing that module, and the outage it already caused.
+     *
+     * Vite transforms `geometry.ts` by walking up from it to the nearest
+     * `tsconfig.json` and reading the few fields esbuild honors. The nearest
+     * one used to be `wallet/tsconfig.json`, whose first line is
+     * `"extends": "expo/tsconfig.base"`, and resolving that needs
+     * `wallet/node_modules`. Anybody who had installed the wallet's
+     * dependencies had them and saw nothing wrong. Cloudflare installs `site/`
+     * and nothing else, so every deploy after the shared mark landed failed
+     * with `failed to resolve "extends":"expo/tsconfig.base"`, naming a file
+     * the site never knowingly configured. It built green on two machines and
+     * shipped nowhere, which is the failure mode a guard is worth most
+     * against.
+     *
+     * So the shared module carries a tsconfig that inherits nothing, and this
+     * checks the property rather than that file: from the module the site
+     * actually imports, walk up to the first tsconfig and refuse an `extends`
+     * naming a package. A relative extends is fine, because a path inside this
+     * repository is a file every checkout has. */
+    const config = readFileSync('site/vite.config.ts', 'utf8');
+    const dir = /const geometryDir = fileURLToPath\(new URL\("\.\.\/([^"]+)"/.exec(config);
+    const file = /alias:\s*\{\s*["']@labyrinth\/geometry["']:\s*`\$\{geometryDir\}\/([\w.]+)`/
+      .exec(config);
+    expect(dir, 'the geometry directory moved, so this guard sees nothing').not.toBeNull();
+    expect(file, 'the geometry alias moved, so this guard sees nothing').not.toBeNull();
+    expect(existsSync(join(dir![1]!, file![1]!)), 'the aliased module is not there').toBe(true);
+
+    /* Up from the module's own directory. The first tsconfig found is the one
+     * Vite will read. */
+    let at: string | undefined = dir![1]!;
+    let governing: string | undefined;
+    while (at) {
+      if (existsSync(join(at, 'tsconfig.json'))) {
+        governing = join(at, 'tsconfig.json');
+        break;
+      }
+      at = at.split('/').slice(0, -1).join('/') || undefined;
+    }
+    expect(governing, 'no tsconfig governs the shared mark at all').toBeDefined();
+
+    /* Comments stripped first. tsconfig is JSONC, the config that fixes this
+     * explains itself by quoting the exact line that broke, and the first
+     * version of this guard read that quotation and failed on the file that
+     * cures the problem. That is the sixth guard in this repository to trip
+     * over text that was never code, and the fix is the same every time: look
+     * only at what the parser would look at. */
+    const source = readFileSync(governing!, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const extended = /"extends"\s*:\s*"([^"]+)"/.exec(source)?.[1];
+    expect(
+      extended === undefined || extended.startsWith('.'),
+      `${governing} extends "${extended}", which the site build cannot resolve unless that package is installed`,
+    ).toBe(true);
+  });
+
   it('has no nested-square mark left in the stylesheet', () => {
     expect(css, 'the old mark is still being drawn out of borders').not.toMatch(/\.lab-mark\s+i\b/);
     expect(css, 'the mark is not stroked').toMatch(/\.lab-mark\s*\{[^}]*stroke:/);
