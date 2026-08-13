@@ -268,7 +268,7 @@ final class Vault: ObservableObject {
         guard biometricsEnrolled else { return nil }
         let reason = "Unlock the vault"
         switch await BiometricUnlock.recall(reason: reason) {
-        case .success(let passphrase):
+        case .passphrase(let passphrase):
             let failure = await openVault(passphrase: passphrase)
             if failure != nil {
                 /* The stored passphrase does not open this vault, so it is
@@ -278,9 +278,14 @@ final class Vault: ObservableObject {
                 return "The stored passphrase no longer opens this vault, so it was discarded. Enter it to unlock."
             }
             return nil
-        case .failure(let problem):
+        case .declined:
+            /* Cancelled, or not recognized. Nothing to say: the passphrase
+             * field is already on the screen underneath. */
             refreshBiometricState()
-            return problem.isEmpty ? nil : problem
+            return nil
+        case .failed(let problem):
+            refreshBiometricState()
+            return problem
         }
     }
 

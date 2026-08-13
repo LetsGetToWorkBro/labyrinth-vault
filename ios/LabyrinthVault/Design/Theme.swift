@@ -305,7 +305,17 @@ struct PassphraseField: View {
     let label: String
     @Binding var text: String
     var focus: FocusState<PassphraseFocus?>.Binding
-    let equals: PassphraseFocus
+    /* Optional, to match the binding exactly rather than to be promoted.
+     *
+     * `focused(_:equals:)` infers its generic from the binding, which is
+     * `FocusState<PassphraseFocus?>.Binding`, so the value it wants is
+     * `PassphraseFocus?`. Declared non-optional, the call does not type, and
+     * the failure does not read like this one: Swift re-matches the whole
+     * argument list and reports the *focus* binding against `disabled: Bool`,
+     * so the compiler points at a parameter that was never wrong. Matching
+     * the type here is the fix and the diagnostic is the reason to write it
+     * down. */
+    let equals: PassphraseFocus?
     var contentType: UITextContentType = .password
     var submitLabel: SubmitLabel = .go
     var disabled: Bool = false

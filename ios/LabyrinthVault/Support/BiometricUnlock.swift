@@ -159,11 +159,32 @@ enum BiometricUnlock {
         }
     }
 
+    /// What asking for the stored passphrase can come back as.
+    ///
+    /// Three cases rather than two, and the third is the reason this is not a
+    /// `Result`. Swift's `Result` requires its failure type to conform to
+    /// `Error`, which a sentence does not, and the first version of this used
+    /// `Result<String, String>` and did not compile. Working around that by
+    /// wrapping the sentence in an error type would have kept a worse shape:
+    /// a cancelled prompt is not a failure, it is a person changing their
+    /// mind, and it had been encoded as a failure carrying an empty string
+    /// that every caller had to remember to check for. Naming the three
+    /// outcomes makes the empty string impossible and the switch exhaustive.
+    enum Recalled {
+        /// The Secure Enclave released it.
+        case passphrase(String)
+        /// Cancelled, or the face was not recognized. Say nothing; the
+        /// passphrase field is already on the screen underneath.
+        case declined
+        /// Something worth putting in front of the person.
+        case failed(String)
+    }
+
     /// The stored passphrase, after a biometric match. Prompts.
     ///
     /// Off the main actor because the keychain call blocks for as long as the
     /// person takes to present a face, and the caller is a screen.
-    static func recall(reason: String) async -> Result<String, String> {
+    static func recall(reason: String) async -> Recalled {
         await Task.detached(priority: .userInitiated) {
             let context = LAContext()
             context.localizedReason = reason
@@ -189,21 +210,21 @@ enum BiometricUnlock {
                       let passphrase = String(data: data, encoding: .utf8),
                       !passphrase.isEmpty
                 else {
-                    return .failure("The stored passphrase came back in a form this build cannot read.")
+                    return .failed("The stored passphrase came back in a form this build cannot read.")
                 }
-                return .success(passphrase)
+                return .passphrase(passphrase)
             case errSecUserCanceled, errSecAuthFailed:
                 /* Not an error to put on the screen in red. The person either
                  * changed their mind or was not recognized, and the passphrase
                  * field is right there. */
-                return .failure("")
+                return .declined
             case errSecItemNotFound:
                 /* Enrollment changed, so the Secure Enclave threw the item
                  * away. That is `.biometryCurrentSet` doing its job, and it
                  * needs saying, because the offer will now be gone. */
-                return .failure("The biometric record on this device changed, so the stored passphrase was discarded. Enter it to unlock.")
+                return .failed("The biometric record on this device changed, so the stored passphrase was discarded. Enter it to unlock.")
             default:
-                return .failure("The keychain would not release it (code \(status)).")
+                return .failed("The keychain would not release it (code \(status)).")
             }
         }.value
     }
