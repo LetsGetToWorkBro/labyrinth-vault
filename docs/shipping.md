@@ -89,6 +89,26 @@ available encryption software. What that requires:
    there. Apple asks about it directly, as the last of three questions in the
    App Encryption Documentation wizard below.
 
+### The answer moved to App Store Connect, and the answer there is YES
+
+**Answer YES to "Does your app use encryption?" on every upload.** That is the
+whole instruction, and it is here rather than in `ios/project.yml` because
+that is where it had to go.
+
+The manifest used to carry `ITSAppUsesNonExemptEncryption: true`, which is the
+truthful answer and which stopped Apple asking on each upload. It also made
+every upload fail with the error below, four times. Answering yes puts the app
+in the category that owes Apple documentation, and validation then compares
+the plist against whatever the app record holds; completing the App Encryption
+Documentation wizard, which concluded that no upload was required, did not
+settle it.
+
+So the key is gone and Apple asks per build instead, with no plist value left
+to mismatch. This is a retreat rather than a fix. An answer in a manifest is
+version controlled and one in a form is not, and `test/shipping.test.ts` can
+now only check that the key stayed out and that this paragraph still says YES.
+Put it back the moment Apple's side is understood.
+
 ### Apple wants its own documentation, and it wants it before the Store
 
 This is separate from the BIS report and lands earlier, which the runbook did

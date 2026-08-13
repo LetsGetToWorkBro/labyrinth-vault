@@ -48,14 +48,35 @@ targets:
         # bumps it so that nobody has to remember.
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        # Answered here so App Store Connect stops asking on every upload, and
-        # answered YES because it is true. The vault encrypts a seed at rest
-        # with Argon2id and XChaCha20-Poly1305. That is data confidentiality,
-        # not one of the exempt uses, whatever is convenient to click. The
-        # exemption it does qualify for is the mass market one, and the
-        # paperwork that goes with it is written out in docs/shipping.md
-        # rather than left as a shrug.
-        ITSAppUsesNonExemptEncryption: true
+        # ## The export compliance answer is not here, and that is a retreat
+        #
+        # `ITSAppUsesNonExemptEncryption: true` was here, answered YES because
+        # it is true: the vault encrypts a seed at rest with Argon2id and
+        # XChaCha20-Poly1305, which is data confidentiality rather than any of
+        # the exempt uses. Putting it in the plist meant App Store Connect
+        # stopped asking on every upload.
+        #
+        # It also made every upload fail:
+        #
+        #     Invalid Export Compliance Code. The export compliance key value
+        #     [] in the app's Info.plist doesn't match the key value of the
+        #     app's export compliance documentation.
+        #
+        # Answering YES puts the app in the category that owes Apple
+        # documentation, and Apple then compares the plist against whatever
+        # that app record holds. Completing the App Encryption Documentation
+        # wizard, which concluded no upload was required, did not settle it.
+        # Four validation attempts, one message.
+        #
+        # So the key is gone and the question moves to App Store Connect,
+        # where it is asked per build and there is no plist value left to
+        # mismatch. **The answer there is still YES**, for the same reasons,
+        # and docs/shipping.md holds that rather than this file, because a
+        # form is not something a test can read.
+        #
+        # This is worse than what it replaces: an answer in a manifest is
+        # version-controlled and an answer in a form is not. Put it back the
+        # moment Apple's side is understood.
         # ITSEncryptionExportComplianceCode is deliberately absent rather than
         # present and empty. The key is for apps that went through CCATS and
         # were issued a code; 5D992.c mass market is not one, so there is no

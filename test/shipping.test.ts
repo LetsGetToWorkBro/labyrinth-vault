@@ -57,7 +57,30 @@ describe('the vault is shaped like something that can be uploaded', () => {
      * data confidentiality rather than any of the exempt uses. See
      * docs/shipping.md, which writes out the exemption it does qualify for and
      * the annual report that goes with it. */
-    expect(project).toMatch(/ITSAppUsesNonExemptEncryption: true/);
+    /* The answer is no longer in the manifest, and this guard had to move
+     * with it.
+     *
+     * `ITSAppUsesNonExemptEncryption: true` lived here and was correct, and
+     * Apple refused every upload against it: answering yes puts the app in
+     * the category that owes documentation, and validation then compares the
+     * plist to whatever the app record holds. Completing the App Encryption
+     * Documentation wizard did not settle it. So the question moved to App
+     * Store Connect, where it is asked per build.
+     *
+     * What is checkable from here is only that the key is genuinely absent
+     * rather than present and wrong, and that the runbook still carries the
+     * true answer for the person filling in the form. That is weaker than a
+     * manifest a test can read, and it is why `project.yml` says to put it
+     * back when Apple's side is understood. */
+    const withoutComments = project.replace(/^\s*#.*$/gm, '');
+    expect(
+      withoutComments,
+      'the export answer is back in the manifest; if that now works, delete this guard',
+    ).not.toMatch(/ITSAppUsesNonExemptEncryption/);
+    expect(
+      readFileSync('docs/shipping.md', 'utf8'),
+      'the runbook no longer says what to answer in App Store Connect',
+    ).toMatch(/answer[^.]*\bYES\b|\bYES\b[^.]*App Store Connect/i);
 
     /* And the companion key is absent rather than empty, which is not the
      * same thing and is the version that gets an upload rejected.
