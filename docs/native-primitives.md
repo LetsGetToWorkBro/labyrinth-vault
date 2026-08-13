@@ -70,17 +70,33 @@ argued about. `npm run bench:kdf`, on a modern server CPU, with a JIT:
 That is a **floor**. JavaScriptCore inside a third-party iOS app does not get a
 JIT. The dynamic-codesigning entitlement is Apple's, and WKWebView only has
 one because it runs in a separate entitled process. So the engine is
-interpreted, on a decade-old phone, and the honest statement about how much
-worse than 1554 ms that is is that nobody here knows. Nobody should guess it in
-a document either. **Build the target, run the derivation on the device, write
-the number down.**
+interpreted, on a decade-old phone.
 
-Three things follow from the numbers that are already in hand:
+This document used to stop there and say the factor was one nobody here could
+guess honestly. That was true, and it was the wrong place to stop, because a
+number withheld is a number the reader supplies, and the one a reader supplies
+is small. It is not small. `node --jitless` turns off every tier of V8's
+compiler and leaves the bytecode interpreter, which is one flag on the same
+script:
+
+```
+  floor this build accepts     t=1 m=8MiB p=1         2351 ms      28x
+  default (RFC 9106 #2)        t=3 m=64MiB p=1       57517 ms      41x
+  default, doubled memory      t=3 m=128MiB p=1     114605 ms      43x
+```
+
+**Read that as an analogy rather than as a measurement of the shipping
+engine.** V8's interpreter is not JavaScriptCore's LLInt, and nothing in this
+repository can run JSC. What it establishes is an order of magnitude: an engine
+with no compiler pays something like forty times, not something like twice, and
+the device is slower hardware on top of that. **Build the target, run the
+derivation on the device, write the real number down.**
+
+Four things follow, and the third one is what changed.
 
 **It is a latency problem, not a strength problem.** `calibrateKdf` starts at
 the default and only ever walks upward, so a slow device gets a slow unlock and
-never a weaker vault. This was fixed earlier for exactly this reason and it is
-what makes the port optional rather than urgent.
+never a weaker vault.
 
 **Calibration is currently doing nothing useful.** `app/storage.ts` calls
 `calibrateForThisDevice`, which targets 1000 ms, and the default already costs
@@ -90,6 +106,17 @@ spending one full derivation at setup to rediscover the default. It is harmless
 and it is not free. If the native port happens, calibration starts mattering
 again and the target should be revisited then; if it does not, this is a
 candidate for deletion.
+
+**The parameter dial cannot solve this, so the port is not optional.** Read the
+floor row rather than the default row. `t=1 m=8 MiB` is the weakest thing
+`KDF_LIMITS` permits, and interpreted it costs 2.4 seconds on a server CPU.
+Anything a person would call a fast unlock is below that floor, and the floor
+is where it is because a vault sealed under weaker parameters brute-forces over
+a weekend. So no setting inside the limits is both usable and memory-hard in an
+interpreter, and lowering `DEFAULT_KDF` is not a smaller version of the fix, it
+is a trade of security for patience with nothing left over. Every route except
+a native implementation is closed. The port used to be an optimization; it is
+now the only move.
 
 **The ceiling is not reachable in this engine.** 512 MiB is in `KDF_LIMITS`
 because a *hostile file* may claim it and the reader has to refuse before
@@ -102,7 +129,19 @@ on-device number for `t=3, m=64 MiB` is bad enough that a person would rather
 weaken their vault than wait, because *that* is the moment the JavaScript
 implementation starts costing security instead of patience.
 
-When that happens, the order is:
+**Status: one measurement away, and the measurement is cheap now.** The
+interpreter analogy above says an unlock is tens of seconds rather than a few,
+which would clear this gate several times over. It is an analogy, the device
+has never been asked, and a build on a phone answers it in one minute:
+`docs/testflight.md` test 4. The number goes here when it exists.
+
+Nothing else in this document is blocked on it. The port is specified below and
+the specification does not change with the number; only whether to start does.
+Do not skip the measurement to save an hour, because the whole method of this
+repository is that the thing that ships is the thing that was measured, and a
+41x figure from a different engine is not that thing.
+
+When the gate opens, the order is:
 
 1. Add libsodium to the iOS target and nothing else. One dependency, one
    reason, written down in `NOTICE.md`.

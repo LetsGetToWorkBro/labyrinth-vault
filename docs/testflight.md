@@ -84,23 +84,37 @@ your passphrase and start the stopwatch as you tap **UNLOCK**. Stop it when
 the vault screen appears. The lever reads DERIVING KEY / ARGON2ID while it
 works.
 
-**Record the number.** Then tell me what it is.
+**Record the number.** Then tell me what it is. It is the single most useful
+thing you can send back from this whole session.
 
-**Why it matters:** the Argon2id parameters were chosen against a build
-machine, not against an A-series phone, and they have never been measured on
-one. Roughly one to three seconds is the target.
+**Do not assume it has hung.** Give it three minutes before you decide
+anything is wrong. The expectation is genuinely bad: the parameters are
+`t=3, m=64 MiB`, fixed, chosen on a build machine, and on the phone they run in
+an interpreter, because JavaScriptCore inside a third-party app gets no JIT.
+Measured against that same code with the compiler switched off, one derivation
+costs 57 seconds on a *server* CPU. See `docs/native-primitives.md`. A phone
+being slower, an unlock of a minute or more would not be a surprise.
 
-- Much under one second means the parameters are too weak and every vault
-  sealed under them is cheaper to attack than intended.
-- Much over five seconds means people will pick shorter passphrases to avoid
-  the wait, which costs more security than the parameters buy.
+**What the number decides:**
 
-Either way the fix is a parameter change, and a parameter change has to happen
-**before anybody seals a vault with real keys in it**, because it does not
-apply retroactively to a vault that already exists.
+- **Tens of seconds**: expected, and it means the key derivation has to move
+  from JavaScript into native code. That work is already specified step by
+  step in `docs/native-primitives.md`, and this measurement is the gate it
+  waits on.
+- **A few seconds**: JavaScriptCore's interpreter is far better than V8's, the
+  port drops down the list, and we tune parameters instead.
+- **Under a second**: something is wrong. Nothing should be that fast, and the
+  first thing to check is whether the derivation ran at all.
+
+Whatever it says, the fix has to land **before anybody seals a vault with real
+keys in it**. Parameters live in the sealed blob's header, so changing them
+later does not touch a vault that already exists: that vault keeps its slow
+unlock forever, and the only way out of it is to erase and re-create from the
+recovery phrases.
 
 Do it three times and take the middle number. The first unlock after an
-install is not representative.
+install is not representative. Time the setup step too, if you are creating a
+fresh vault: sealing runs the same derivation once.
 
 ## 5. DEVICE ONLY: the no-passcode refusal
 
