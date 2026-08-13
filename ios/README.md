@@ -84,10 +84,29 @@ xcodebuild test -project LabyrinthVault.xcodeproj -scheme LabyrinthVault \
   -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-**And `xcodegen generate` after every pull that touches `project.yml`.** The
-`.xcodeproj` is a build artifact of that file and is not committed, so a pull
-alone changes nothing Xcode can see. The symptom is a fix that appears not to
-work, with the identical error as before.
+**And `xcodegen generate` after every pull.** Not only after one that touches
+`project.yml`, which is what this used to say and which is not enough.
+
+The `.xcodeproj` is a build artifact and is not committed, so a pull alone
+changes nothing Xcode can see. That much is obvious for `project.yml`, and the
+symptom there is a fix that appears not to work with the identical error as
+before. The half that is not obvious has already cost one confusing archive:
+
+**XcodeGen writes the list of source files at generate time.** A file the
+project already lists picks up its edits, because Xcode compiles whatever is
+on disk at that path. A file that is *new* does not exist as far as Xcode is
+concerned, however faithfully it was pulled, until the project is regenerated.
+
+So a pull that edits several files and adds one produces a build where most of
+the change is present and one file is missing, which is the worst shape a
+failure can take. It does not look like a missing file. It looks like a
+cascade: `cannot find type X in scope` in the file that declares a property of
+that type, and then every file reading that object fails with something that
+seems unrelated, because the object's type never resolved at all. One archive
+of exactly this arrangement reported twelve issues across three files. One was
+real, and the two files carrying the most errors were correct.
+
+Regenerating takes a second. Do it on every pull.
 
 There are no entitlements beyond camera access; the app asks for exactly one
 permission, because the camera is the only wire it has.
