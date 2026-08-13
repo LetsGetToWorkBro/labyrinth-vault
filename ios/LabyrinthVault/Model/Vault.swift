@@ -325,6 +325,13 @@ final class Vault: ObservableObject {
     /// instead of spinning.
     var passSeconds: Double? { SealedStore.passSeconds() }
 
+    /// Whether key stretching runs in compiled code or in the interpreter.
+    ///
+    /// Reported on the Settings screen because the difference is a minute per
+    /// unlock and the failure is silent: a native derivation that does not
+    /// install is not an error anywhere, it is just the slow app back again.
+    var kdfIsNative: Bool { engine?.kdfIsNative ?? false }
+
     /// Frames gathered so far, for the scanner's progress line.
     @Published private(set) var scanProgress: (have: Int, total: Int) = (0, 0)
 

@@ -52,8 +52,14 @@ import PackageDescription
 
 let package = Package(
     name: "LabyrinthVaultCore",
+    /* Declared so the iOS app can consume this package directly. The app takes
+     * `LabyrinthVaultKDF` and nothing else: `LabyrinthVaultCore` shares its
+     * sources with the app target by path, so linking that product too would
+     * be the same symbols twice. */
+    platforms: [.iOS(.v17), .macOS(.v13)],
     products: [
         .library(name: "LabyrinthVaultCore", targets: ["LabyrinthVaultCore"]),
+        .library(name: "LabyrinthVaultKDF", targets: ["LabyrinthVaultKDF"]),
     ],
     targets: [
         .target(

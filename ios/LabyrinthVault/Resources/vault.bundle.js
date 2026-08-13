@@ -17444,7 +17444,18 @@ zoo`.split("\n"));
   function passphraseToBytes(passphrase) {
     return new TextEncoder().encode(String(passphrase ?? "").normalize("NFKD"));
   }
+  var nativeArgon2id = null;
+  function setNativeArgon2id(fn) {
+    nativeArgon2id = typeof fn === "function" ? fn : null;
+  }
+  function nativeArgon2idInstalled() {
+    return nativeArgon2id !== null;
+  }
   function deriveKey(passphrase, salt, params) {
+    if (nativeArgon2id) {
+      const key = nativeArgon2id(passphrase, salt, params, KEY_BYTES);
+      if (key instanceof Uint8Array && key.length === KEY_BYTES) return key;
+    }
     return argon2id(passphrase, salt, { t: params.t, m: params.m, p: params.p, dkLen: KEY_BYTES });
   }
   function seal(secret, passphrase, random, params = DEFAULT_KDF) {
@@ -17737,7 +17748,7 @@ zoo`.split("\n"));
   }
   var HOST_VERSION = 3;
   var api = {
-    version: guarded("version", () => done({ version: HOST_VERSION })),
+    version: guarded("version", () => done({ version: HOST_VERSION, kdf: nativeArgon2idInstalled() ? "native" : "engine" })),
     /** The launch gate. Nothing else should be called until this passes. */
     selfTest: guarded("selfTest", () => {
       const checks = selfTest4();
@@ -18017,7 +18028,26 @@ zoo`.split("\n"));
   }
   function resetHost() {
     lockInternal();
+    setNativeArgon2id(null);
+    adoptNativeArgon2id();
   }
+  function adoptNativeArgon2id() {
+    const host = globalThis.__labyrinthArgon2id;
+    if (typeof host !== "function") return;
+    const call = host;
+    setNativeArgon2id((passphrase, salt, params, dkLen) => {
+      const answer = call(
+        Array.from(passphrase),
+        Array.from(salt),
+        params.t,
+        params.m,
+        params.p,
+        dkLen
+      );
+      return Array.isArray(answer) ? Uint8Array.from(answer) : null;
+    });
+  }
+  adoptNativeArgon2id();
   globalThis.LabyrinthVault = api;
   var SEAL_PARAMS_DEFAULT = null;
 })();

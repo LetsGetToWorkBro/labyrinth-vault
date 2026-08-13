@@ -74,7 +74,15 @@ import {
 } from '../keys/monero';
 import { MONERO_UNSUPPORTED, readContainer, readContainerText } from '../keys/monerotx';
 import { demoUnsignedPsbt, describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
-import { calibrateKdf, looksSealed, seal, unseal, type KdfParams } from '../keys/seal';
+import {
+  calibrateKdf,
+  looksSealed,
+  nativeArgon2idInstalled,
+  seal,
+  setNativeArgon2id,
+  unseal,
+  type KdfParams,
+} from '../keys/seal';
 import { wipe } from '../keys/wipe';
 import { allChecksPass, selfTest } from '../selftest';
 import { moneroToWire, toWire } from './summary';
@@ -298,7 +306,8 @@ function requireSession(): Session {
 export const HOST_VERSION = 3;
 
 export const api = {
-  version: guarded('version', () => done({ version: HOST_VERSION })),
+  version: guarded('version', () =>
+    done({ version: HOST_VERSION, kdf: nativeArgon2idInstalled() ? 'native' : 'engine' })),
 
   /** The launch gate. Nothing else should be called until this passes. */
   selfTest: guarded('selfTest', () => {
@@ -626,7 +635,53 @@ function lockInternal(): void {
 /** For tests, which need a clean slate between cases. */
 export function resetHost(): void {
   lockInternal();
+  setNativeArgon2id(null);
+  adoptNativeArgon2id();
 }
+
+/**
+ * Take the host's Argon2id, if it left one on the global.
+ *
+ * The name is the whole of the contract between the two languages here, and
+ * it is read once at boot rather than looked up per derivation, so that a
+ * global appearing later cannot change how an already-running session derives
+ * keys.
+ *
+ * Everything about the shape of what comes back is checked in `seal.ts` at the
+ * point of use: a key of the wrong length is discarded and the JavaScript runs
+ * instead. This function's only job is to notice the thing exists.
+ */
+function adoptNativeArgon2id(): void {
+  const host = (globalThis as unknown as { __labyrinthArgon2id?: unknown }).__labyrinthArgon2id;
+  if (typeof host !== 'function') return;
+  const call = host as (
+    passphrase: number[],
+    salt: number[],
+    t: number,
+    m: number,
+    p: number,
+    dkLen: number,
+  ) => number[] | null | undefined;
+
+  setNativeArgon2id((passphrase, salt, params, dkLen) => {
+    /* Arrays of numbers rather than typed arrays or hex, because that is what
+     * survives the JavaScriptCore boundary in both directions without a
+     * conversion either side could get wrong — and because a hex string would
+     * put the passphrase back in an immutable JS string, which is the exact
+     * thing Passphrase.swift and `passphraseFromWire` exist to prevent. */
+    const answer = call(
+      Array.from(passphrase),
+      Array.from(salt),
+      params.t,
+      params.m,
+      params.p,
+      dkLen,
+    );
+    return Array.isArray(answer) ? Uint8Array.from(answer) : null;
+  });
+}
+
+adoptNativeArgon2id();
 
 export type HostApi = typeof api;
 

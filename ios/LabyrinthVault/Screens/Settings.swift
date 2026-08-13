@@ -149,6 +149,14 @@ struct RecoveryView: View {
 
                         Eyebrow("AT REST", color: Ink.paperDim).padding(.top, 22).padding(.bottom, 8)
                         FieldRow(label: "ENCRYPTION", value: "ARGON2ID + XCHACHA20", tone: .verified)
+                        /* Not decoration. The native derivation is installed
+                         * by a string literal shared between Swift and the
+                         * bundle, and a mismatch does not fail: it silently
+                         * costs a minute on every unlock. This is where that
+                         * shows. */
+                        FieldRow(label: "KEY STRETCHING",
+                                 value: vault.kdfIsNative ? "COMPILED" : "INTERPRETED",
+                                 tone: vault.kdfIsNative ? .verified : .dim)
                         FieldRow(label: "PASSPHRASE", value: "REQUIRED TO OPEN")
                         FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                         FieldRow(label: "EXPORTABLE", value: "NO")

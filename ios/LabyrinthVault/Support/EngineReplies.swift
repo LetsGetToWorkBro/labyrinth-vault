@@ -75,7 +75,20 @@ enum EngineError: LocalizedError, Equatable {
 
 /// Every shape the engine can answer with. One per host function, same name.
 enum EngineReply {
-    struct Version: Decodable { let version: Int }
+    /// `kdf` says which implementation a derivation would actually use:
+    /// "native" once the host's Argon2id has been adopted, "engine" when the
+    /// interpreted one is still doing the work. Optional so that a bundle
+    /// built before this existed still decodes rather than failing the launch
+    /// gate over a field nobody had heard of.
+    ///
+    /// It is worth reporting because the failure it catches is silent. A
+    /// native derivation that never gets installed is not an error anywhere;
+    /// it is an unlock that takes a minute, on a build that was supposed to
+    /// take a second, with nothing on screen to say which happened.
+    struct Version: Decodable {
+        let version: Int
+        let kdf: String?
+    }
 
     struct SelfTest: Decodable {
         let passed: Bool

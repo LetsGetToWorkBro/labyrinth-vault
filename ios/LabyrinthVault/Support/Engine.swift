@@ -37,6 +37,9 @@ final class Engine {
 
     private let context: JSContext
     private let api: JSValue
+    /// Whether the engine adopted the native derivation at boot. Surfaced on
+    /// the Settings screen next to the bundle digest.
+    private(set) var kdfIsNative = false
     private let decoder = JSONDecoder()
 
     init(bundle: Bundle = .main) throws {
@@ -72,6 +75,37 @@ final class Engine {
         guard let context = JSContext() else { throw EngineError.bundleFailed("no context") }
         self.context = context
 
+        /* ## The one function that goes the other way
+         *
+         * Every other call crosses Swift to JavaScript. This one is installed
+         * before the bundle is evaluated so that the bundle's top level can
+         * find it, because a derivation adopted later would mean two sessions
+         * of the same app deriving keys by different routes.
+         *
+         * Only the derivation crosses. It is handed bytes and four numbers and
+         * hands back bytes; it is told nothing about vaults, blobs, headers or
+         * limits, and it decides nothing. What a parameter may be and what
+         * gets refused stays in src/keys/seal.ts. docs/native-primitives.md
+         * argues why this function is allowed to leave and its neighbours are
+         * not.
+         *
+         * Arrays of numbers rather than hex, because a hex passphrase would be
+         * an immutable JavaScript string, which is exactly what Passphrase.swift
+         * exists to keep it from being. */
+        let derive: @convention(block) ([Any], [Any], Int, Int, Int, Int) -> [UInt8]? = {
+            passphrase, salt, t, m, p, dkLen in
+            var passBytes = passphrase.compactMap { ($0 as? NSNumber).map { n in UInt8(truncatingIfNeeded: n.intValue) } }
+            let saltBytes = salt.compactMap { ($0 as? NSNumber).map { n in UInt8(truncatingIfNeeded: n.intValue) } }
+            defer { for i in passBytes.indices { passBytes[i] = 0 } }
+            guard passBytes.count == passphrase.count, saltBytes.count == salt.count else { return nil }
+            /* Refusals come back as nil, never as a short key: seal.ts checks
+             * the length and falls back to its own Argon2id, so a refusal
+             * costs a slow unlock and never a weaker vault. */
+            return try? Argon2id.deriveKey(passphrase: passBytes, salt: saltBytes,
+                                           t: t, m: m, p: p, dkLen: dkLen)
+        }
+        context.setObject(derive, forKeyedSubscript: "__labyrinthArgon2id" as NSString)
+
         var thrown: String?
         context.exceptionHandler = { _, value in thrown = value?.toString() ?? "unknown" }
         context.evaluateScript(source)
@@ -87,6 +121,11 @@ final class Engine {
         guard version.version == Engine.expectedVersion else {
             throw EngineError.versionMismatch(version.version, Engine.expectedVersion)
         }
+        /* Recorded rather than enforced. A build where the native derivation
+         * failed to install still works — it is the app people have been using
+         * — it is just a minute slower per unlock, and that is a difference
+         * worth being able to see rather than guess at. */
+        self.kdfIsNative = version.kdf == "native"
     }
 
     // MARK: - Calling

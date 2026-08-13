@@ -163,7 +163,62 @@ export function passphraseToBytes(passphrase: string): Uint8Array {
   return new TextEncoder().encode(String(passphrase ?? '').normalize('NFKD'));
 }
 
+/**
+ * A native Argon2id, if the host has one.
+ *
+ * Measured on an iPhone 17 Pro Max, one pass of this derivation costs about 67
+ * seconds in JavaScriptCore, which gets no JIT inside a third-party app. The
+ * same derivation through the Argon2 reference C costs a fraction of a second.
+ * docs/native-primitives.md carries the argument for why this one function is
+ * allowed to leave and nothing around it is.
+ *
+ * The contract is deliberately narrow. It receives bytes and parameters and
+ * returns bytes. It is told nothing about blobs, headers, versions or limits,
+ * and it decides nothing: everything in this file above and below it — what a
+ * parameter may be, what a header commits to, what gets refused — stays here,
+ * because that is judgement and judgement does not get a second
+ * implementation.
+ */
+export type NativeArgon2id = (
+  passphrase: Uint8Array,
+  salt: Uint8Array,
+  params: KdfParams,
+  dkLen: number,
+) => Uint8Array | null | undefined;
+
+let nativeArgon2id: NativeArgon2id | null = null;
+
+/**
+ * Install the host's derivation, or clear it with null.
+ *
+ * Called from the bridge at boot and by tests. Not read from a global inside
+ * `deriveKey`, because a dependency that arrives through `globalThis` is one
+ * nothing can test and nobody can find.
+ */
+export function setNativeArgon2id(fn: NativeArgon2id | null): void {
+  nativeArgon2id = typeof fn === 'function' ? fn : null;
+}
+
+/** Whether a derivation right now would go native. For the version reply. */
+export function nativeArgon2idInstalled(): boolean {
+  return nativeArgon2id !== null;
+}
+
 function deriveKey(passphrase: Uint8Array, salt: Uint8Array, params: KdfParams): Uint8Array {
+  if (nativeArgon2id) {
+    const key = nativeArgon2id(passphrase, salt, params, KEY_BYTES);
+    /* Length-checked rather than trusted. A short key would be a weaker vault
+     * that still opened, which is the one failure mode worth spending a branch
+     * on, and it cannot be detected later: by the time anything notices, the
+     * blob is sealed.
+     *
+     * Anything else falls through to the JavaScript below rather than
+     * throwing. A host that refuses — out of memory, parameters it cannot
+     * express — has not produced a wrong answer, and the slow path produces
+     * the right one. A person waiting a minute is a worse experience than they
+     * expected; a person who cannot open their vault has lost it. */
+    if (key instanceof Uint8Array && key.length === KEY_BYTES) return key;
+  }
   return argon2id(passphrase, salt, { t: params.t, m: params.m, p: params.p, dkLen: KEY_BYTES });
 }
 

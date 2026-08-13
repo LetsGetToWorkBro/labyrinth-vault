@@ -18,6 +18,7 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import * as btc from '@scure/btc-signer';
 import { addressAt, openWatch } from '../src/keys/bitcoin';
 import { passphraseToBytes } from '../src/keys/seal';
@@ -136,8 +137,14 @@ describe('the built bundle', () => {
     /* It loaded in a bare context in beforeAll; this asserts the consequence.
      * The version is a literal on purpose: bumping HOST_VERSION should touch
      * this test, because a bump is a claim that the Swift side moved with it.
-     * 3 is the contract with moneroKeyImages in it. */
-    expect(call(api, 'version')).toEqual({ ok: true, version: 3 });
+     * 3 is the contract with moneroKeyImages in it.
+     *
+     * `kdf` is "engine" here and that is the point of asserting it. This
+     * context has no `__labyrinthArgon2id` on its global, so the bundle found
+     * no native derivation and said so. On the phone the same call answers
+     * "native", and a build where it does not is a build that silently kept
+     * the minute-long unlock. */
+    expect(call(api, 'version')).toEqual({ ok: true, version: 3, kdf: 'engine' });
   });
 
   it('passes its own self-test inside the bundle', () => {
@@ -393,4 +400,49 @@ describe('the simulator demo transaction, through the bundle', () => {
     expect(signed.signed).toBe(1);
     expect(signed.frames[0]).toMatch(/^LV1:TXSIGNED:/);
   });
+});
+
+describe('the bundle adopts a host derivation when there is one', () => {
+  /* The other half of the version assertion above, and the one that would
+   * have caught the whole feature failing to arrive. The bundle is loaded in
+   * a fresh bare context with a fake `__labyrinthArgon2id` on the global,
+   * exactly as Engine.swift installs one before evaluating.
+   *
+   * What this proves is that the name matches on both sides and that the
+   * bundle reads it at load. What it cannot prove is that Swift's block has
+   * the signature this fake has, because nothing here runs Swift;
+   * test/app-wiring.test.ts holds the two names together instead. */
+  it('finds it, calls it, and reports itself as native', () => {
+    const seen: number[][] = [];
+    const context: Record<string, unknown> = {
+      __labyrinthArgon2id: (
+        passphrase: number[],
+        salt: number[],
+        t: number,
+        m: number,
+        p: number,
+        dkLen: number,
+      ) => {
+        seen.push([passphrase.length, salt.length, t, m, p, dkLen]);
+        // Wrong on purpose: a refusal, so seal.ts falls back and the round
+        // trip below still has to work.
+        return null;
+      },
+    };
+    runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
+    const hosted = context.LabyrinthVault as ReturnType<typeof loadBundle>;
+
+    expect(call(hosted, 'version')).toEqual({ ok: true, version: 3, kdf: 'native' });
+
+    const made = call(
+      hosted,
+      'create',
+      Array.from({ length: 88 }, (_, i) => ((i * 31 + 7) & 0xff).toString(16).padStart(2, '0')).join(''),
+      Array.from(new TextEncoder().encode('a passphrase of ordinary length')),
+    );
+    expect(made.ok, made.problem).toBe(true);
+    expect(seen.length, 'the host derivation was never called').toBeGreaterThan(0);
+    const [first] = seen;
+    expect(first!.slice(1)).toEqual([16, 3, 65536, 1, 32]);
+  }, 600000);
 });

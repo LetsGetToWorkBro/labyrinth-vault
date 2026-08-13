@@ -227,12 +227,44 @@ Speed did not pay for it, which was the obvious worry:
 The third row is the trap. `swift test` builds C at `-O0`, so a timing from an
 ordinary test run is five times pessimistic and says nothing about the app.
 
-**Step 3 has not started, and it is now the only thing between here and a fast
-unlock.** No key material goes through Swift yet: the bridge still calls
-`deriveKey` in `src/keys/seal.ts` on every path, so an unlock is still 67
-seconds on a phone. What remains is a host function that hands the passphrase,
-salt and parameters out to `Argon2id.deriveKey` and returns 32 bytes, with
-`seal.ts` keeping every decision about what those parameters may be.
+**Step 3 is done.** `deriveKey` in `src/keys/seal.ts` consults a host
+derivation if one was installed and runs its own otherwise. `Engine.swift`
+installs a block on the JavaScriptCore global as `__labyrinthArgon2id` before
+evaluating the bundle, and `host.ts` adopts it once, at load. Bytes and four
+numbers cross; nothing else does.
+
+The three ways that seam turns a fast unlock into a lost vault are each held
+by a test rather than by care:
+
+- **Installed but never called.** `test/bundle.test.ts` loads the real bundle
+  in a bare context with a fake host function on the global, and asserts both
+  that `version` answers `kdf: "native"` and that the fake was actually
+  reached, with the salt length and parameters it was reached with.
+- **Named differently on each side.** The literal appears in Swift and in
+  TypeScript and no compiler sees both. `test/app-wiring.test.ts` asserts the
+  name matches and that Swift installs it *before* `evaluateScript`, since an
+  install afterwards is one the bundle never sees. Mutation checked by
+  renaming the Swift side.
+- **Believed when it should not be.** A key of the wrong length is discarded
+  and the JavaScript runs instead, because a short key is a weaker vault that
+  still opens and nothing later could notice. A refusal falls back rather than
+  throwing: the slow path gives the right answer, and someone waiting a minute
+  still has their vault.
+
+`test/native-kdf.test.ts` also seals with one path and opens with the other,
+both ways round, and asserts the sealed bytes are identical. That is the
+property that matters, because if it ever fails a vault made on one build does
+not open on another and nothing on the way in would have said so.
+
+**Step 4, keeping the JavaScript path, is what makes all of the above
+possible.** It is not dead weight and it is not a legacy branch. It is the
+fallback that lets a refusal be survivable, and it is half of the cross-check.
+
+What is not proved here: that Apple's compiler builds any of it. The vendored
+C and `Argon2id.swift` reach the app as a local Swift package rather than as
+loose files, so `Package.swift` is the single description of how they are
+built and `swift build` checks it on every `npm test`. But the iOS target
+itself only ever compiles on a Mac.
 
 ## What was done instead, now
 

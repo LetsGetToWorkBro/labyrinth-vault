@@ -633,6 +633,58 @@ describe('the screen model matches the wire, field for field', () => {
   });
 });
 
+describe('the native derivation is wired by the same name on both sides', () => {
+  /* The one call that goes JavaScript to Swift rather than the other way, and
+   * it is joined by a string literal in two languages neither of which can see
+   * the other. Nothing in a compiler catches a typo here.
+   *
+   * What a typo does is not fail. `adoptNativeArgon2id` finds no function,
+   * installs nothing, and every derivation quietly runs the interpreted path:
+   * a working app with a sixty-seven second unlock, which is precisely the app
+   * we already had. The version reply says "engine" instead of "native" and
+   * nobody is looking at it. So the name is asserted here, in the one place
+   * that reads both files. */
+  const NAME = '__labyrinthArgon2id';
+
+  it('Engine.swift installs it under that name, before evaluating the bundle', () => {
+    const swift = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+    expect(swift, `Engine.swift does not install ${NAME}`)
+      .toMatch(new RegExp(`setObject\\(derive, forKeyedSubscript: "${NAME}"`));
+
+    /* Order matters and is invisible at a glance: the bundle's top level reads
+     * the global as it loads, so an install after `evaluateScript` would be an
+     * install nothing ever sees. */
+    const installedAt = swift.indexOf(NAME);
+    const evaluatedAt = swift.indexOf('context.evaluateScript(source)');
+    expect(installedAt).toBeGreaterThan(-1);
+    expect(evaluatedAt).toBeGreaterThan(-1);
+    expect(installedAt, 'the derivation is installed after the bundle is evaluated, so it is never adopted')
+      .toBeLessThan(evaluatedAt);
+  });
+
+  it('host.ts reads that same name', () => {
+    const host = readFileSync('src/bridge/host.ts', 'utf8');
+    expect(host, `host.ts does not read ${NAME}`).toContain(NAME);
+  });
+
+  it('seal.ts keeps every decision, and takes only bytes and numbers across', () => {
+    /* The rule in docs/native-primitives.md is that the primitive moves and
+     * the judgement does not. These are the names of the judgement: if any of
+     * them ever needs to be known on the far side of the seam, the seam is in
+     * the wrong place. */
+    const seal = readFileSync('src/keys/seal.ts', 'utf8');
+    expect(seal).toMatch(/export function setNativeArgon2id/);
+    for (const decision of ['KDF_LIMITS', 'paramsAcceptable', 'HEADER_BYTES', 'MAGIC']) {
+      expect(seal, `${decision} left seal.ts`).toContain(decision);
+    }
+    const swift = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+    for (const decision of ['KDF_LIMITS', 'paramsAcceptable', 'HEADER_BYTES']) {
+      expect(swift, `${decision} appears in Swift; judgement is leaking across the seam`)
+        .not.toContain(decision);
+    }
+  });
+});
+
 describe('the QR aperture never subscripts a frame it does not have', () => {
   /* Opening Export crashed the app, every time, and it was not the engine.
    *
