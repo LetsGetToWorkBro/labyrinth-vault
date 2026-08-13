@@ -1,113 +1,124 @@
 {
- "note": "Cross-language vectors. Every value here was produced by an implementation that is not this repository — the Argon2 reference C code via argon2-cffi, libsodium, the published Keccak vectors — except the passphrase normalisation, which is Unicode NFKD and is pinned so that two platform implementations can be shown to agree rather than assumed to.",
- "why": "src/keys/seal.ts and ios/LabyrinthVault/Support/Passphrase.swift implement the same normalisation in two languages. That is the only behaviour in this project deliberately implemented twice, and this file is the reason it is allowed to be.",
- "argon2id": [
-  {
-   "password": "correct horse battery staple",
-   "salt": "sixteen byte salt",
-   "t": 3,
-   "m": 8192,
-   "p": 1,
-   "dkLen": 32,
-   "key": "2bfe6ca0ec5cbc6ce9006453956327aee67eea39a4c021bb0454d614bf25ca5b",
-   "source": "argon2-cffi (reference C)"
-  },
-  {
-   "password": "password",
-   "salt": "somesaltsomesalt",
-   "t": 2,
-   "m": 65536,
-   "p": 1,
-   "dkLen": 32,
-   "key": "fc33b78139231d34b71626bd6245c1d72efa190ad605c3d8166a72adcedfa2c2",
-   "source": "argon2-cffi (reference C)"
-  }
- ],
- "xchacha20poly1305": [
-  {
-   "keyPattern": "i",
-   "noncePattern": "0xa0 + i",
-   "adPattern": "0x50 + i",
-   "plaintext": "the vault seals thirty-two bytes",
-   "ciphertext": "31846f3dc13cd1c0154f5eec105cd0e04fc2f65ede7fe7ad6a2fab859ed79b45f37dd9c8efc22fd1ed34f7bf5b90ad05",
-   "source": "libsodium crypto_aead_xchacha20poly1305_ietf_encrypt"
-  }
- ],
- "keccak256": [
-  {
-   "input": "",
-   "digest": "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
-  },
-  {
-   "input": "abc",
-   "digest": "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
-  }
- ],
- "passphraseNormalisation": [
-  {
-   "note": "plain ASCII",
-   "text": "open sesame",
-   "nfkdUtf8": "6f70656e20736573616d65"
-  },
-  {
-   "note": "composed e-acute",
-   "text": "café",
-   "nfkdUtf8": "63616665cc81"
-  },
-  {
-   "note": "decomposed e-acute",
-   "text": "café",
-   "nfkdUtf8": "63616665cc81"
-  },
-  {
-   "note": "angstrom sign",
-   "text": "AÅngström",
-   "nfkdUtf8": "4141cc8a6e677374726fcc886d"
-  },
-  {
-   "note": "compatibility ligature fi",
-   "text": "a ﬁre",
-   "nfkdUtf8": "612066697265"
-  },
-  {
-   "note": "circled digit one",
-   "text": "level ①",
-   "nfkdUtf8": "6c6576656c2031"
-  },
-  {
-   "note": "halfwidth katakana",
-   "text": "ｱｲｳ",
-   "nfkdUtf8": "e382a2e382a4e382a6"
-  },
-  {
-   "note": "hangul syllable",
-   "text": "한국어",
-   "nfkdUtf8": "e18492e185a1e186abe18480e185aee186a8e1848be185a5"
-  },
-  {
-   "note": "combining mark after newline",
-   "text": "ab\ńcd",
-   "nfkdUtf8": "61620acc816364"
-  },
-  {
-   "note": "roman numeral four",
-   "text": "part Ⅳ",
-   "nfkdUtf8": "70617274204956"
-  },
-  {
-   "note": "no-break space",
-   "text": "two words",
-   "nfkdUtf8": "74776f20776f726473"
-  },
-  {
-   "note": "emoji with skin tone",
-   "text": "key 🔑🏽",
-   "nfkdUtf8": "6b657920f09f9491f09f8fbd"
-  },
-  {
-   "note": "already NFKD",
-   "text": "nothing to do",
-   "nfkdUtf8": "6e6f7468696e6720746f20646f"
-  }
- ]
+  "note": "Cross-language vectors. Every value here was produced by an implementation that is not this repository — the Argon2 reference C code via argon2-cffi, libsodium, the published Keccak vectors — except the passphrase normalisation, which is Unicode NFKD and is pinned so that two platform implementations can be shown to agree rather than assumed to.",
+  "why": "src/keys/seal.ts and ios/LabyrinthVault/Support/Passphrase.swift implement the same normalisation in two languages. That is the only behaviour in this project deliberately implemented twice, and this file is the reason it is allowed to be.",
+  "argon2id": [
+    {
+      "password": "correct horse battery staple",
+      "salt": "sixteen byte salt",
+      "t": 3,
+      "m": 8192,
+      "p": 1,
+      "dkLen": 32,
+      "key": "2bfe6ca0ec5cbc6ce9006453956327aee67eea39a4c021bb0454d614bf25ca5b",
+      "source": "argon2-cffi (reference C)"
+    },
+    {
+      "password": "password",
+      "salt": "somesaltsomesalt",
+      "t": 2,
+      "m": 65536,
+      "p": 1,
+      "dkLen": 32,
+      "key": "fc33b78139231d34b71626bd6245c1d72efa190ad605c3d8166a72adcedfa2c2",
+      "source": "argon2-cffi (reference C)"
+    },
+    {
+      "note": "The parameters this app actually seals with (DEFAULT_KDF), and a salt of exactly SALT_BYTES. The other two vectors predate the port and use neither, which left the shipping configuration unpinned by anything external.",
+      "password": "correct horse battery staple",
+      "salt": "labyrinth vault!",
+      "t": 3,
+      "m": 65536,
+      "p": 1,
+      "dkLen": 32,
+      "key": "a7c80b67d54485f58415a60b7c6d52faf6eddccc56dee04e0d8a1f7c0fe1babe",
+      "source": "argon2-cffi 25.1.0 (reference C), argon2id v19"
+    }
+  ],
+  "xchacha20poly1305": [
+    {
+      "keyPattern": "i",
+      "noncePattern": "0xa0 + i",
+      "adPattern": "0x50 + i",
+      "plaintext": "the vault seals thirty-two bytes",
+      "ciphertext": "31846f3dc13cd1c0154f5eec105cd0e04fc2f65ede7fe7ad6a2fab859ed79b45f37dd9c8efc22fd1ed34f7bf5b90ad05",
+      "source": "libsodium crypto_aead_xchacha20poly1305_ietf_encrypt"
+    }
+  ],
+  "keccak256": [
+    {
+      "input": "",
+      "digest": "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+    },
+    {
+      "input": "abc",
+      "digest": "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
+    }
+  ],
+  "passphraseNormalisation": [
+    {
+      "note": "plain ASCII",
+      "text": "open sesame",
+      "nfkdUtf8": "6f70656e20736573616d65"
+    },
+    {
+      "note": "composed e-acute",
+      "text": "café",
+      "nfkdUtf8": "63616665cc81"
+    },
+    {
+      "note": "decomposed e-acute",
+      "text": "café",
+      "nfkdUtf8": "63616665cc81"
+    },
+    {
+      "note": "angstrom sign",
+      "text": "AÅngström",
+      "nfkdUtf8": "4141cc8a6e677374726fcc886d"
+    },
+    {
+      "note": "compatibility ligature fi",
+      "text": "a ﬁre",
+      "nfkdUtf8": "612066697265"
+    },
+    {
+      "note": "circled digit one",
+      "text": "level ①",
+      "nfkdUtf8": "6c6576656c2031"
+    },
+    {
+      "note": "halfwidth katakana",
+      "text": "ｱｲｳ",
+      "nfkdUtf8": "e382a2e382a4e382a6"
+    },
+    {
+      "note": "hangul syllable",
+      "text": "한국어",
+      "nfkdUtf8": "e18492e185a1e186abe18480e185aee186a8e1848be185a5"
+    },
+    {
+      "note": "combining mark after newline",
+      "text": "ab\ńcd",
+      "nfkdUtf8": "61620acc816364"
+    },
+    {
+      "note": "roman numeral four",
+      "text": "part Ⅳ",
+      "nfkdUtf8": "70617274204956"
+    },
+    {
+      "note": "no-break space",
+      "text": "two words",
+      "nfkdUtf8": "74776f20776f726473"
+    },
+    {
+      "note": "emoji with skin tone",
+      "text": "key 🔑🏽",
+      "nfkdUtf8": "6b657920f09f9491f09f8fbd"
+    },
+    {
+      "note": "already NFKD",
+      "text": "nothing to do",
+      "nfkdUtf8": "6e6f7468696e6720746f20646f"
+    }
+  ]
 }

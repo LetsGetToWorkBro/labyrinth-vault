@@ -82,3 +82,18 @@ native Argon2id one day, and because one behavior is already implemented
 twice: NFKD passphrase normalization, in `src/keys/seal.ts` and in
 `ios/LabyrinthVault/Support/Passphrase.swift`. Neither side of that is allowed
 to be the oracle for the other: both are checked against the file.
+
+## libsodium
+
+Reached by `ios/LabyrinthVaultKDF` for one function: Argon2id key derivation,
+used to replace an interpreted derivation that measured ~67 seconds per pass
+on an iPhone 17 Pro Max. Nothing else crosses to it. The sealed-blob format,
+the parameter limits, the header authentication and every refusal stay in
+`src/keys/seal.ts`, per the rule in `docs/native-primitives.md`.
+
+libsodium is ISC licensed, © 2013-2025 Frank Denis and contributors.
+<https://github.com/jedisct1/libsodium>
+
+Today this is a build- and test-time dependency only, satisfied by the
+platform (apt, Homebrew). It is not yet in the iOS app, and
+`ios/LabyrinthVaultKDF/README.md` states what that would still take.

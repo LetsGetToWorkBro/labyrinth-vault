@@ -163,7 +163,7 @@ Do not skip the measurement to save an hour, because the whole method of this
 repository is that the thing that ships is the thing that was measured, and a
 41x figure from a different engine is not that thing.
 
-When the gate opens, the order is:
+When the gate opens, the order is (steps 1 and 2 are done; see below):
 
 1. Add libsodium to the iOS target and nothing else. One dependency, one
    reason, written down in `NOTICE.md`.
@@ -177,6 +177,48 @@ When the gate opens, the order is:
 4. Keep the JavaScript path in the build and keep testing it. Two
    implementations of a standard, both pinned to the reference, is a
    cross-check. Deleting one throws that away.
+
+## Where the port actually is
+
+**Step 2 is finished and it is the one that mattered.** `swift test`, inside
+`npm test`, derives keys through libsodium and reproduces every vector in
+`test/fixtures/primitives.json` that the library can express, and asserts a
+named refusal for the ones it cannot. Both implementations answer to
+argon2-cffi, which wraps the reference C, so neither is the oracle for the
+other.
+
+The fixture gained a third vector while doing it, because the two it had used
+neither `DEFAULT_KDF` nor a salt of `SALT_BYTES`. The configuration this app
+actually ships was pinned by nothing outside this repository until now.
+
+    Argon2id, t=3 m=64MiB p=1, dkLen=32
+
+      JavaScriptCore on an iPhone 17 Pro Max      ~67 s     (measured, build 3)
+      libsodium on the build machine              ~0.16 s
+
+Different hardware, so that is not a ratio to quote at anyone. What it settles
+is that the cost is the interpreter and not the algorithm, which the 41x
+analogy above could only suggest.
+
+**Step 1 is deliberately unfinished, and it is not the small half.**
+`Package.swift` reaches libsodium as a `.systemLibrary`: apt here, Homebrew on
+a Mac. A phone has no system libsodium, so putting this in the app means
+choosing how it gets one, and that is a supply-chain decision rather than a
+line of Swift. `ios/LabyrinthVaultKDF/README.md` costs the three options. One
+of them is the Argon2 reference C rather than libsodium, which is worth
+weighing first, because:
+
+**libsodium cannot compute every blob this format permits.** `crypto_pwhash`
+fixes parallelism at one and `KDF_LIMITS.maxP` is 4. Nothing this app creates
+is affected, since every vault it seals uses `p = 1`, but the native path
+refuses those blobs rather than approximating them, and the JavaScript path
+takes them. Ignoring `p` would return a different key and the vault would fail
+to open with no error a person could read. Those refusals are tested rather
+than skipped, because a fallback nobody has proved reachable is not a fallback.
+
+**Step 3 has not started.** No key material goes through Swift yet. The bridge
+still calls `deriveKey` in `src/keys/seal.ts` on every path, so this changes
+nothing a person can feel until the packaging question is answered.
 
 ## What was done instead, now
 

@@ -90,6 +90,39 @@ let package = Package(
                 "Support/BundleDigest.swift",
             ]
         ),
+        /* libsodium, from whatever the platform already has: apt on the
+         * Linux container this runs in, Homebrew on a Mac. That is enough to
+         * settle step 2 of the port in docs/native-primitives.md — does a
+         * native Argon2id reproduce the reference vectors, and can it express
+         * the parameters this format uses — which is the question worth
+         * answering before any key material moves.
+         *
+         * It is deliberately not how the iOS app gets libsodium. A phone has
+         * no system libsodium, so the app needs one built for it, and that is
+         * a supply-chain decision with its own diff. Keeping the two apart
+         * means the cryptographic question is answered and checked in `npm
+         * test` today, while the packaging question stays open and visible
+         * instead of being half-done inside an Xcode project nobody here can
+         * build. ios/LabyrinthVaultKDF/README.md carries the options. */
+        .systemLibrary(
+            name: "Csodium",
+            path: "ios/LabyrinthVaultKDF/Csodium",
+            pkgConfig: "libsodium",
+            providers: [.apt(["libsodium-dev"]), .brew(["libsodium"])]
+        ),
+        .target(
+            name: "LabyrinthVaultKDF",
+            dependencies: ["Csodium"],
+            path: "ios/LabyrinthVaultKDF",
+            exclude: ["Csodium", "README.md"],
+            sources: ["Argon2id.swift"]
+        ),
+        .testTarget(
+            name: "LabyrinthVaultKDFTests",
+            dependencies: ["LabyrinthVaultKDF"],
+            path: "ios/LabyrinthVaultKDFTests",
+            resources: [.copy("Fixtures/primitives.json")]
+        ),
         .testTarget(
             name: "LabyrinthVaultCoreTests",
             dependencies: ["LabyrinthVaultCore"],
