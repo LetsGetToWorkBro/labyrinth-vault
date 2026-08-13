@@ -6,6 +6,10 @@
 //  the person can (pull the tray).
 
 import SwiftUI
+// For `isIdleTimerDisabled` on the key generation screen. SwiftUI has no
+// modifier for it, and the alternative is a screen that asks a person to keep
+// a phone awake that the phone is about to put to sleep underneath them.
+import UIKit
 
 struct SetupView: View {
     let stage: SetupStage
@@ -319,6 +323,17 @@ private struct EntropyView: View {
     @State private var bits = 0
     /// The choreography has finished; the engine may still be sealing.
     @State private var fieldDone = false
+    /// Seconds since this screen appeared, ticked by the timer below.
+    ///
+    /// Held as state rather than read from the clock inside the body, so every
+    /// number here derives from one value SwiftUI knows has changed. A `Date()`
+    /// inside a computed property only updates when something else happens to
+    /// redraw, which is how a clock comes to look stuck on the one screen where
+    /// looking stuck is the whole problem.
+    @State private var elapsed: Double = 0
+    /// What `elapsed` read when the second derivation began, so its estimate
+    /// counts down from there.
+    @State private var reopenAt: Double?
 
     private var failure: String? {
         if case .failed(let sentence) = vault.creation { return sentence }
@@ -341,9 +356,62 @@ private struct EntropyView: View {
          * progress and moves on when both the drawing and the sealing are
          * done, whichever finishes last. */
         .onChange(of: vault.creation) { _ in advance() }
-        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { now in
-            bits = min(256, Int(now.timeIntervalSince(began) / 5.2 * 256))
+        .onChange(of: vault.sealing) { _ in
+            if case .reopening = vault.sealing, reopenAt == nil { reopenAt = elapsed }
         }
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { now in
+            elapsed = now.timeIntervalSince(began)
+            bits = min(256, Int(elapsed / 5.2 * 256))
+        }
+        /* ## The app holds the screen awake, rather than asking
+         *
+         * Both derivations run on a detached task, so the main thread stays
+         * responsive and the screen keeps drawing. That is not enough. Auto
+         * Lock is thirty seconds on a new phone and this screen asks somebody
+         * to sit and watch it for minutes without touching anything, so the
+         * phone locks itself, the app goes to the background, and iOS stops an
+         * app that keeps burning CPU there. Telling a person not to leave the
+         * screen does not help when the party that leaves is the phone.
+         *
+         * So the idle timer goes off for exactly as long as this screen is up
+         * and comes back on the way out, including when creation fails. It is
+         * a system-wide setting owned by whoever set it last, and a screen
+         * that turned it off and did not turn it back on would be a battery
+         * bug filed against the wrong feature. */
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    /// Which pass, in the person's words rather than the engine's.
+    private var step: String {
+        switch vault.sealing {
+        case .sealing: return "1 OF 2 · SEALING"
+        case .reopening: return "2 OF 2 · REOPENING"
+        case .idle: return vault.creation == .done ? "COMPLETE" : "STARTING"
+        }
+    }
+
+    /// How far through the second pass, or nil while nothing can honestly be
+    /// predicted. The first pass has no precedent on this device, and a bar
+    /// that crept along to a number nobody measured would be a lie told
+    /// slowly.
+    private var progress: Double? {
+        guard case .reopening(let expected) = vault.sealing,
+              let from = reopenAt, expected > 0 else { return nil }
+        return (elapsed - from) / expected
+    }
+
+    private var remaining: String {
+        guard case .reopening(let expected) = vault.sealing, let from = reopenAt else {
+            return "MEASURING"
+        }
+        let left = expected - (elapsed - from)
+        return left <= 1 ? "ANY MOMENT" : "ABOUT \(clock(left))"
+    }
+
+    private func clock(_ seconds: Double) -> String {
+        let whole = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", whole / 60, whole % 60)
     }
 
     private func advance() {
@@ -367,20 +435,63 @@ private struct EntropyView: View {
                 Statement("GENERATING", "KEY MATERIAL", size: 32).padding(.top, 30)
                 FieldRow(label: "ENTROPY COLLECTED", value: "\(bits) / 256 BITS")
                     .padding(.top, 10)
-                FieldRow(label: "SEALING",
-                         value: vault.creation == .done ? "COMPLETE" : "ARGON2ID RUNNING",
+                FieldRow(label: "ARGON2ID",
+                         value: vault.creation == .done ? "COMPLETE" : step,
                          tone: vault.creation == .done ? .verified : .plain)
+                FieldRow(label: "ELAPSED", value: clock(elapsed))
+                FieldRow(label: "REMAINING", value: vault.creation == .done ? "NONE" : remaining)
+                SealBar(progress: vault.creation == .done ? 1 : progress)
+                    .padding(.top, 16)
             }
             .padding(.horizontal, 24)
 
+            patience
+                .padding(.horizontal, 24)
+                .padding(.top, 26)
+
             Spacer()
-            Text("DO NOT LEAVE THIS SCREEN")
+            Text("THIS SCREEN IS BEING HELD AWAKE")
                 .font(Type.mono(10))
                 .kerning(2.2)
-                .foregroundStyle(Ink.paper)
+                .foregroundStyle(Ink.paperDim)
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 24)
         }
+    }
+
+    /// The box that answers the question a person is actually asking.
+    ///
+    /// Which is never "what algorithm is this". It is "has it died, and am I
+    /// about to lose my keys". Everything here is written to answer that, and
+    /// the reason the wait exists is included because a cost somebody
+    /// understands is a cost they will tolerate, and this one is bought
+    /// entirely on their behalf.
+    private var patience: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Eyebrow("THIS IS NOT FROZEN", color: Ink.attention)
+            Text("Turning your passphrase into a key is meant to be slow. The same " +
+                 "work stands between anyone who takes this phone and the keys inside " +
+                 "it, so every second spent here is a second charged for each guess " +
+                 "they make, and they would need billions of guesses.")
+                .font(Type.body(13))
+                .lineSpacing(4)
+                .foregroundStyle(Ink.paperDim)
+            Text("It runs twice: once to seal the vault, once to open it again from " +
+                 "storage. What proves the vault will still open tomorrow is the " +
+                 "stored bytes opening, not the ones just made.")
+                .font(Type.body(13))
+                .lineSpacing(4)
+                .foregroundStyle(Ink.paperDim)
+            Text("The phone will not sleep while this runs. Do not lock it by hand and " +
+                 "do not leave the app: iOS stops the work of an app in the " +
+                 "background, and no keys would be made.")
+                .font(Type.body(13))
+                .lineSpacing(4)
+                .foregroundStyle(Ink.paper)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay { Rectangle().strokeBorder(Ink.rule, lineWidth: 1) }
     }
 
     /// Nothing was kept: every failure path in `createVault` erases whatever
@@ -448,5 +559,53 @@ private struct CreatedView: View {
                 .padding(.bottom, 12)
             }
         }
+    }
+}
+
+/// The one bar in this app, and it appears on the one screen that has to prove
+/// it is alive.
+///
+/// Two behaviors, because there are two honest states. Once the first
+/// derivation has finished, the device has measured itself and the second can
+/// be shown as a real proportion. Before that nothing is known, so the bar
+/// sweeps instead of filling: it says "working" without claiming to know how
+/// far through it is. A determinate bar creeping toward a number nobody
+/// measured is a lie told slowly, and this screen is asking to be trusted for
+/// several minutes.
+///
+/// Driven by `TimelineView(.animation)` rather than a repeating animation on a
+/// modifier, so it keeps moving through the state changes that redraw the rest
+/// of the screen.
+private struct SealBar: View {
+    /// Nil while nothing can honestly be predicted.
+    var progress: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Ink.rule)
+                if let progress {
+                    Rectangle()
+                        .fill(Ink.paper)
+                        /* Never the full width until it is genuinely done: a
+                         * bar sitting at 100% while work continues is the same
+                         * defect as a bar that stopped moving. */
+                        .frame(width: max(2, geo.size.width * min(1, max(0, progress))))
+                } else {
+                    TimelineView(.animation) { timeline in
+                        let span = geo.size.width * 0.3
+                        let travel = geo.size.width + span
+                        let cycle = timeline.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: 2.2) / 2.2
+                        Rectangle()
+                            .fill(Ink.paper)
+                            .frame(width: span)
+                            .offset(x: cycle * travel - span)
+                    }
+                }
+            }
+        }
+        .frame(height: 2)
+        .clipped()
     }
 }

@@ -293,6 +293,27 @@ final class Vault: ObservableObject {
         case idle, working, done
         case failed(String)
     }
+
+    /// Which of the two key derivations creation is currently inside.
+    ///
+    /// Making a vault runs Argon2id twice: once to seal, and once more to open
+    /// the blob read back out of the keychain, because what proves a relaunch
+    /// will work is the stored bytes opening rather than the reply that made
+    /// them. Interpreted on a phone each pass takes minutes, and a screen
+    /// that says only "running" for the whole of it is indistinguishable from
+    /// one that has hung. Saying which half is happening is not decoration.
+    ///
+    /// `reopening` carries how long the first pass took, which is the only
+    /// honest estimate available for the second: the two do identical work, so
+    /// the device has just measured itself. Nothing predicts the first, and
+    /// the screen says so rather than inventing a number.
+    enum Sealing: Equatable {
+        case idle
+        case sealing
+        case reopening(afterSeconds: Double)
+    }
+    @Published private(set) var sealing: Sealing = .idle
+
     /// Frames gathered so far, for the scanner's progress line.
     @Published private(set) var scanProgress: (have: Int, total: Int) = (0, 0)
 
@@ -409,14 +430,24 @@ final class Vault: ObservableObject {
             return
         }
         creation = .working
+        sealing = .sealing
         Task.detached(priority: .userInitiated) { [weak self] in
             var problem: String?
             var sealed: String?
             var opened: Engine.UnlockReply?
             if let randomHex = Engine.freshRandomHex(bytes: Vault.createRandomBytes) {
                 do {
+                    let startedSealing = Date()
                     let created = try Passphrase.withBytes(of: pass) { bytes in
                         try engine.create(randomHex: randomHex, passphrase: bytes)
+                    }
+                    /* Measured rather than guessed, and measured on this
+                     * phone. The reopen below is the same derivation over the
+                     * same parameters, so the pass that just finished is the
+                     * estimate for the pass about to start. */
+                    let sealSeconds = Date().timeIntervalSince(startedSealing)
+                    await MainActor.run { [weak self] in
+                        self?.sealing = .reopening(afterSeconds: sealSeconds)
                     }
                     if let storeProblem = SealedStore.save(created.sealed) {
                         problem = storeProblem
@@ -449,6 +480,7 @@ final class Vault: ObservableObject {
     }
 
     private func finishCreate(problem: String?, sealed: String?, opened: Engine.UnlockReply?) {
+        sealing = .idle
         if let problem {
             creation = .failed(problem)
             return
@@ -530,6 +562,7 @@ final class Vault: ObservableObject {
     func sleep() {
         lock()
         creation = .idle
+        sealing = .idle
         demoActive = false
         guard hasVault else { return }         // mid-setup: nothing to gate yet
         if case .launch = route { return }     // still behind the boot gate
@@ -545,6 +578,7 @@ final class Vault: ObservableObject {
         lock()
         stored = .none
         creation = .idle
+        sealing = .idle
         go(.setup(.declaration))
     }
 
@@ -555,6 +589,7 @@ final class Vault: ObservableObject {
         SealedStore.forgetWitness()
         stored = .none
         creation = .idle
+        sealing = .idle
         go(.setup(.declaration))
     }
 

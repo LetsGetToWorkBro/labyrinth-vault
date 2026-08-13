@@ -633,6 +633,75 @@ describe('the screen model matches the wire, field for field', () => {
   });
 });
 
+describe('a screen that runs the KDF holds the phone awake', () => {
+  /* The vault crashed on the setup screen on the first phone it ever ran on,
+   * and the reason was not the cryptography.
+   *
+   * Argon2id interpreted takes minutes per pass, and making a vault runs two.
+   * Both are on a detached task, so the main thread stays responsive and the
+   * screen keeps drawing, which is why this looked like a working screen right
+   * up until it died. The screen also asks a person to sit and watch it
+   * without touching anything, and Auto Lock is thirty seconds out of the box.
+   * The phone locks itself, the app goes to the background, and iOS stops an
+   * app that is still burning CPU there.
+   *
+   * The copy said DO NOT LEAVE THIS SCREEN, which was addressed to the wrong
+   * party. Nobody left. The phone did.
+   *
+   * So both screens that can be up while a derivation runs turn the idle timer
+   * off, and both turn it back on. That second half is what this mostly
+   * guards: `isIdleTimerDisabled` is a system-wide setting owned by whoever
+   * set it last, and a screen that disables it and never restores it is a
+   * battery bug that gets filed against something else entirely. */
+
+  const screens = {
+    'Setup.swift': 'ios/LabyrinthVault/Screens/Setup.swift',
+    'Unlock.swift': 'ios/LabyrinthVault/Screens/Unlock.swift',
+  };
+
+  for (const [name, path] of Object.entries(screens)) {
+    it(`${name} keeps the screen awake while the key is derived`, () => {
+      const text = readFileSync(path, 'utf8');
+      expect(text, `${name} does not touch the idle timer`).toMatch(/isIdleTimerDisabled/);
+      expect(text, `${name} turns the idle timer off and never restores it`)
+        .toMatch(/isIdleTimerDisabled = false/);
+    });
+  }
+
+  it('leaves it alone everywhere else', () => {
+    /* Scoped to the two screens that wait on a derivation. Anywhere else it
+     * would be a phone that stops sleeping for no reason a reader could find. */
+    const guilty: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith('.swift')) {
+          const code = readFileSync(path, 'utf8')
+            .split('\n')
+            .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+            .join('\n');
+          if (/isIdleTimerDisabled/.test(code) && !Object.values(screens).includes(path)) {
+            guilty.push(path);
+          }
+        }
+      }
+    };
+    walk('ios/LabyrinthVault');
+    expect(guilty, 'these files hold the screen awake and should not').toEqual([]);
+  });
+
+  it('says the wait is expected, on the screen where it is longest', () => {
+    /* A clock that moves is the part a person actually believes, so the screen
+     * has to have one. Checking for the reading rather than for reassuring
+     * words: copy can be rewritten, but a screen with no elapsed time on it
+     * has gone back to being indistinguishable from a hung one. */
+    const setup = readFileSync('ios/LabyrinthVault/Screens/Setup.swift', 'utf8');
+    expect(setup, 'the key generation screen shows no elapsed time').toMatch(/"ELAPSED"/);
+    expect(setup, 'nothing tells the person this is not frozen').toMatch(/NOT FROZEN/i);
+  });
+});
+
 describe('every screen the router can show has a way in', () => {
   /* The bug this exists for shipped. `SettingsView` was written, wired into
    * the router, given a `Route` case, given transition rules in Flow.swift and

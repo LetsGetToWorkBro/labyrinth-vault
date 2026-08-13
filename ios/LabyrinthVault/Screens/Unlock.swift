@@ -27,6 +27,8 @@
 //  argument about what it costs.
 
 import SwiftUI
+// For `isIdleTimerDisabled`. See the comment on `.onChange(of: vault.opening)`.
+import UIKit
 
 struct UnlockView: View {
     @EnvironmentObject private var vault: Vault
@@ -34,6 +36,9 @@ struct UnlockView: View {
     @State private var problem: String?
     @State private var remember = false
     @FocusState private var field: PassphraseFocus?
+    /// When the current derivation started, so the screen can show that it is
+    /// still going rather than only that it began.
+    @State private var openedAt: Date?
 
     /// Offer to store it only where there is a sensor and nothing stored yet.
     private var canOfferToRemember: Bool {
@@ -91,7 +96,9 @@ struct UnlockView: View {
                             .padding(.top, 12)
                     }
 
-                    if canOfferToRemember {
+                    if vault.opening {
+                        working.padding(.top, 14)
+                    } else if canOfferToRemember {
                         rememberOffer.padding(.top, 8)
                     }
                 }
@@ -112,6 +119,46 @@ struct UnlockView: View {
              * both puts a system sheet over a keyboard that is animating in,
              * and a person has to dismiss furniture before they can act. */
             if !vault.biometricsEnrolled { field = .entry }
+        }
+        /* ## The phone must not sleep in the middle of a derivation
+         *
+         * Argon2id here takes as long as it takes on the setup screen, and a
+         * person waiting on it is by definition not touching the phone. Auto
+         * Lock fires, the app goes to the background, `sleep()` wipes the
+         * session, and iOS may stop an app still burning CPU there. The unlock
+         * a person was waiting for then either never lands or lands on a
+         * screen that has thrown it away.
+         *
+         * Scoped to the derivation rather than the screen. A passphrase screen
+         * can sit up for as long as somebody leaves it up, and holding a phone
+         * awake for that is a battery complaint with no security to show for
+         * it. Off again on the way out, because whoever turned it on owns
+         * turning it off. */
+        .onChange(of: vault.opening) { opening in
+            openedAt = opening ? Date() : nil
+            UIApplication.shared.isIdleTimerDisabled = opening
+        }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    /// Shown only while the key is being derived: a clock that moves, and the
+    /// two sentences a person waiting on a blank-looking screen needs.
+    private var working: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                let seconds = max(0, timeline.date.timeIntervalSince(openedAt ?? timeline.date))
+                Text("WORKING · \(Int(seconds) / 60):\(String(format: "%02d", Int(seconds) % 60))")
+                    .font(Type.mono(11))
+                    .kerning(1.6)
+                    .foregroundStyle(Ink.attention)
+            }
+            Text("Not frozen. Stretching the passphrase into the key is the work that " +
+                 "makes guessing it expensive, and it costs you once what it costs an " +
+                 "attacker every attempt. The phone is being held awake until it " +
+                 "finishes; do not leave the app.")
+                .font(Type.body(12))
+                .lineSpacing(3)
+                .foregroundStyle(Ink.paperFaint)
         }
     }
 
