@@ -191,8 +191,16 @@ struct EntropyField: View {
 /// imitate it: a bar creeping toward an arrival nobody measured is a lie told
 /// slowly.
 struct KeyMaking: View {
-    /// Real progress through the derivation, or nil while none is knowable.
+    /// Real progress through the derivation, when the caller computes it.
     var reach: Double?
+    /// Or, for a caller that knows when the pass began and what one costs on
+    /// this device, the two facts themselves. Given these the figure tracks
+    /// the work continuously off its own clock, which a `reach` recomputed by
+    /// the parent cannot do: the parent only redraws when something else makes
+    /// it, and a proportion that updates once a second is a proportion that
+    /// stutters.
+    var start: Date?
+    var expected: Double?
     var turns: Int = 7
 
     @State private var targets: [CGPoint] = []
@@ -214,10 +222,17 @@ struct KeyMaking: View {
                              width: side, height: side)
             TimelineView(.animation) { timeline in
                 Canvas { ctx, size in
+                    let live: Double?
+                    if let start, let expected, expected > 0 {
+                        live = min(0.995, max(0, timeline.date.timeIntervalSince(start) / expected))
+                    } else {
+                        live = nil
+                    }
                     render(&ctx,
                            box: box,
                            canvas: size,
-                           clock: timeline.date.timeIntervalSinceReferenceDate)
+                           clock: timeline.date.timeIntervalSinceReferenceDate,
+                           reach: reach ?? live)
                 }
             }
             .onAppear { rebuild(side) }
@@ -240,7 +255,8 @@ struct KeyMaking: View {
         return v - v.rounded(.down)
     }
 
-    private func render(_ ctx: inout GraphicsContext, box: CGRect, canvas: CGSize, clock: Double) {
+    private func render(_ ctx: inout GraphicsContext, box: CGRect, canvas: CGSize,
+                        clock: Double, reach: Double?) {
         if let reach {
             let depth = min(1, max(0, reach))
             let path = LabyrinthShape(turns: turns).path(in: box)

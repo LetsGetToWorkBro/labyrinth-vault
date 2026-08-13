@@ -8,6 +8,8 @@
 
 import SwiftUI
 import Combine
+// For the background-time assertion around the two long derivations.
+import UIKit
 
 /// Which chain a summary is about.
 ///
@@ -314,6 +316,15 @@ final class Vault: ObservableObject {
     }
     @Published private(set) var sealing: Sealing = .idle
 
+    /// How long one Argon2id pass took when this vault was made, on this
+    /// device. Nil until a vault has been made here.
+    ///
+    /// An unlock is one pass over the same parameters, so this is a real
+    /// estimate rather than a guess: the phone timed itself once and the
+    /// answer does not change. It is why the unlock screen can count down
+    /// instead of spinning.
+    var passSeconds: Double? { SealedStore.passSeconds() }
+
     /// Frames gathered so far, for the scanner's progress line.
     @Published private(set) var scanProgress: (have: Int, total: Int) = (0, 0)
 
@@ -446,6 +457,11 @@ final class Vault: ObservableObject {
                      * same parameters, so the pass that just finished is the
                      * estimate for the pass about to start. */
                     let sealSeconds = Date().timeIntervalSince(startedSealing)
+                    /* Kept, because the unlock screen has no other way to know
+                     * what a pass costs on this particular phone, and would
+                     * otherwise show a spinner and no number for over a
+                     * minute, every single time. */
+                    SealedStore.rememberPassSeconds(sealSeconds)
                     await MainActor.run { [weak self] in
                         self?.sealing = .reopening(afterSeconds: sealSeconds)
                     }
@@ -514,7 +530,27 @@ final class Vault: ObservableObject {
         guard let sealedHex else { return "No vault exists on this device." }
         guard !opening else { return nil }
         opening = true
-        defer { opening = false }
+        /* ## Buying a little time against the app switcher
+         *
+         * A pass takes about 67 seconds on the fastest phone Apple sells, and
+         * a person waiting on it will sometimes switch away. iOS suspends the
+         * app a few seconds after that, and an app still burning a core in a
+         * detached task gets killed rather than suspended, which is what
+         * "switching apps mid-unlock crashes it" actually is.
+         *
+         * This asks for background execution time so a short absence survives
+         * instead of ending the process. Be clear about the size of the fix:
+         * the grant is on the order of thirty seconds and the work needs
+         * sixty-seven, so leaving early still loses the attempt. It converts
+         * some kills into completions and it does not convert all of them.
+         * The thing that actually fixes this is the native KDF, where a pass
+         * is a second and the question stops arising —
+         * docs/native-primitives.md. */
+        let grace = UIApplication.shared.beginBackgroundTask(withName: "vault.unlock")
+        defer {
+            opening = false
+            if grace != .invalid { UIApplication.shared.endBackgroundTask(grace) }
+        }
         let outcome: Result<Engine.UnlockReply, Error> = await Task.detached(priority: .userInitiated) {
             do {
                 let opened = try Passphrase.withBytes(of: passphrase) { bytes in

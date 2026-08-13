@@ -633,6 +633,37 @@ describe('the screen model matches the wire, field for field', () => {
   });
 });
 
+describe('the QR aperture never subscripts a frame it does not have', () => {
+  /* Opening Export crashed the app, every time, and it was not the engine.
+   *
+   * SwiftUI evaluates a view's body before its `onAppear`. `ExportView` starts
+   * with no frames and fetches them on appear, because the watch-only export
+   * comes from the engine's live session and there is no session until the
+   * vault is open. So the first render asked an empty array for element zero,
+   * which in Swift is not nil — it is a trap instruction and a dead process.
+   *
+   * The fix belongs in the aperture rather than in Export: three other screens
+   * pass frames straight out of a reply and happen to be non-empty today, and
+   * "happens to be non-empty" is not an invariant anybody wrote down. */
+  const aperture = 'ios/LabyrinthVault/Support/QRCode.swift';
+
+  it('reads through a guarded accessor, not a bare subscript', () => {
+    const text = readFileSync(aperture, 'utf8');
+    const code = text
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(code, 'frames[...] is subscripted directly again').not.toMatch(/frames\[\s*index\s*\]/);
+    expect(code, 'the empty case is not handled').toMatch(/frames\.isEmpty/);
+  });
+
+  it('clamps the index it does use, because the count is the caller\'s', () => {
+    const text = readFileSync(aperture, 'utf8');
+    expect(text, 'a payload that shrinks would index past the end')
+      .toMatch(/min\(index, frames\.count - 1\)/);
+  });
+});
+
 describe('a screen that runs the KDF holds the phone awake', () => {
   /* The vault crashed on the setup screen on the first phone it ever ran on,
    * and the reason was not the cryptography.

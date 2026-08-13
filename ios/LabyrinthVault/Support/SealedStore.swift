@@ -48,6 +48,17 @@ enum SealedStore {
     /// survives the one event that deletes the blob (see `witnessExists`),
     /// which is what lets boot tell a fresh device from a bereaved one.
     private static let witnessAccount = "vault-witness"
+    /// A third item, and the least interesting one: how many seconds a single
+    /// Argon2id pass took when the vault was made on this hardware.
+    ///
+    /// It is here rather than in `UserDefaults` for one reason, and it is not
+    /// secrecy — a duration describes the phone, which the phone already
+    /// knows. `UserDefaults` is on Apple's required-reason API list, and
+    /// `test/shipping.test.ts` holds this app to an empty privacy manifest.
+    /// One cached number is not worth the first entry in a file whose being
+    /// empty is a claim the project makes out loud. The keychain is already
+    /// declared, already used, and does not care.
+    private static let timingAccount = "pass-seconds"
 
     private static func base(_ account: String) -> [String: Any] {
         [
@@ -154,11 +165,46 @@ enum SealedStore {
         }
     }
 
+    /// Remember what one key derivation costs on this device.
+    ///
+    /// Written once, at creation, where a pass has just been timed for real.
+    /// Read by the unlock screen, which runs the same pass over the same
+    /// parameters and can therefore show a true countdown instead of a
+    /// spinner. Failure is ignored on purpose: the worst case is an unlock
+    /// screen that loops rather than counts, which is what it did before.
+    static func rememberPassSeconds(_ seconds: Double) {
+        guard seconds.isFinite, seconds > 0,
+              let data = String(seconds).data(using: .utf8) else { return }
+        SecItemDelete(base(timingAccount) as CFDictionary)
+        var item = base(timingAccount)
+        item[kSecValueData as String] = data
+        /* Deliberately the weaker class of the two used here. It has to be
+         * readable on the unlock screen, which is by definition before the
+         * vault is open, and it protects nothing that would matter if read. */
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(item as CFDictionary, nil)
+    }
+
+    /// What a pass cost last time, or nil on a device that never made one.
+    static func passSeconds() -> Double? {
+        var query = base(timingAccount)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let text = String(data: data, encoding: .utf8),
+              let seconds = Double(text),
+              seconds.isFinite, seconds > 0 else { return nil }
+        return seconds
+    }
+
     /// Remove the sealed blob and the witness both. The keys are
     /// unrecoverable after this except from the recovery phrases; the caller
     /// is the screen that says so.
     static func erase() {
         SecItemDelete(base(account) as CFDictionary)
         SecItemDelete(base(witnessAccount) as CFDictionary)
+        SecItemDelete(base(timingAccount) as CFDictionary)
     }
 }

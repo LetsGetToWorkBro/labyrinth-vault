@@ -33,15 +33,42 @@ struct QRAperture: View {
     @State private var index = 0
     private var timer: Timer.TimerPublisher { Timer.publish(every: interval, on: .main, in: .common) }
 
+    /* `frames[index]` was a crash with two ways to reach it, and the export
+     * screen took the first one every time it opened.
+     *
+     * A view's body is evaluated before its `onAppear`, so a screen that
+     * starts with no frames and fetches them on appear — exactly what
+     * `ExportView` does, because the frames come from the engine's live
+     * session and there is no session until the vault is open — renders once
+     * against an empty array. `frames[0]` on empty is not nil. It is a trap.
+     *
+     * The second way is subtler and would have outlived a fix aimed only at
+     * the first: `index` is this view's own state while the frame count
+     * belongs to the caller, so a payload that shrinks between renders leaves
+     * the index past the end. Nothing in the app does that today.
+     *
+     * So the array is asked rather than assumed, in one place, for every
+     * screen that shows an aperture. */
+    private var current: String? {
+        guard !frames.isEmpty else { return nil }
+        return frames[min(index, frames.count - 1)]
+    }
+
     var body: some View {
         VStack(spacing: 10) {
             ZStack {
                 Rectangle().fill(Ink.paper)
-                Image(uiImage: QRCode.image(frames[index]))
-                    .resizable()
-                    .interpolation(.none)
-                    .aspectRatio(1, contentMode: .fit)
-                    .padding(18)
+                if let current {
+                    Image(uiImage: QRCode.image(current))
+                        .resizable()
+                        .interpolation(.none)
+                        .aspectRatio(1, contentMode: .fit)
+                        .padding(18)
+                } else {
+                    // Nothing to show yet. The aperture holds its shape so the
+                    // screen does not jump when the frames arrive.
+                    Rectangle().fill(Ink.void.opacity(0.05)).padding(18)
+                }
             }
             .aspectRatio(1, contentMode: .fit)
             .overlay { PerimeterTrace(active: frames.count > 1) }
@@ -50,7 +77,7 @@ struct QRAperture: View {
                 HStack {
                     Eyebrow("FRAME")
                     Spacer()
-                    Text("\(index + 1) / \(frames.count)")
+                    Text("\(min(index, frames.count - 1) + 1) / \(frames.count)")
                         .font(Type.mono(12))
                         .foregroundStyle(Ink.paper)
                 }

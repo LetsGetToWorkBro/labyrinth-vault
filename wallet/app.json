@@ -24,7 +24,7 @@
         },
         "NSLocalNetworkUsageDescription": "Only to reach a node you run yourself, at an address you typed in. The wallet never searches your network and talks to nothing on it that you did not name."
       },
-      "buildNumber": "2",
+      "buildNumber": "3",
       "privacyManifests": {
         "NSPrivacyTracking": false,
         "NSPrivacyTrackingDomains": [],

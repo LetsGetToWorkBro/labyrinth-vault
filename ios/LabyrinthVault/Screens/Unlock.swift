@@ -47,6 +47,21 @@ struct UnlockView: View {
 
     var body: some View {
         Screen {
+            ZStack {
+                /* The same figure the setup screen uses, for the same reason
+                 * and at the same cost. Only while the work is running: a
+                 * passphrase screen sitting idle should be still. */
+                if vault.opening {
+                    KeyMaking(start: openedAt, expected: vault.passSeconds)
+                        .ignoresSafeArea()
+                    LinearGradient(
+                        colors: [Ink.void.opacity(0), Ink.void.opacity(0.9), Ink.void],
+                        startPoint: UnitPoint(x: 0.5, y: 0.30),
+                        endPoint: UnitPoint(x: 0.5, y: 0.56))
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+
             VStack(alignment: .leading, spacing: 0) {
                 VaultBar()
                 Spacer()
@@ -112,6 +127,7 @@ struct UnlockView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 12)
             }
+            }
         }
         .onAppear {
             vault.refreshBiometricState()
@@ -141,16 +157,38 @@ struct UnlockView: View {
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
-    /// Shown only while the key is being derived: a clock that moves, and the
-    /// two sentences a person waiting on a blank-looking screen needs.
+    /// Shown only while the key is being derived.
+    ///
+    /// This screen is entered far more often than setup and costs the same
+    /// minute every time, so it gets the same treatment: a figure that moves,
+    /// a clock, and — where the device has earned one — a real countdown.
+    ///
+    /// The estimate is not a guess. Creation timed a pass on this phone and
+    /// kept the number, and an unlock is one pass over the same parameters, so
+    /// the descent can be a true proportion that arrives as the work ends. On
+    /// a vault restored to a phone that never ran setup there is no
+    /// measurement, `passSeconds` is nil, and the figure loops rather than
+    /// pretending to know.
     private var working: some View {
         VStack(alignment: .leading, spacing: 9) {
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 let seconds = max(0, timeline.date.timeIntervalSince(openedAt ?? timeline.date))
-                Text("WORKING · \(Int(seconds) / 60):\(String(format: "%02d", Int(seconds) % 60))")
-                    .font(Type.mono(11))
-                    .kerning(1.6)
-                    .foregroundStyle(Ink.attention)
+                HStack(spacing: 0) {
+                    Text("WORKING · \(Int(seconds) / 60):\(String(format: "%02d", Int(seconds) % 60))")
+                        .font(Type.mono(11))
+                        .kerning(1.6)
+                        .foregroundStyle(Ink.attention)
+                    Spacer()
+                    if let expected = vault.passSeconds {
+                        let left = Int(max(0, expected - seconds).rounded())
+                        Text(left <= 1
+                             ? "ANY MOMENT"
+                             : "ABOUT \(left / 60):\(String(format: "%02d", left % 60)) LEFT")
+                            .font(Type.mono(11))
+                            .kerning(1.6)
+                            .foregroundStyle(Ink.paperFaint)
+                    }
+                }
             }
             Text("Not frozen. Stretching the passphrase into the key is the work that " +
                  "makes guessing it expensive. The phone is being held awake until it " +
