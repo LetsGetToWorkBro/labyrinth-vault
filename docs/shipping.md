@@ -56,9 +56,10 @@ passcode.
 
 ## Export compliance: the two apps have different true answers
 
-App Store Connect asks whether the app uses non-exempt encryption. Both apps
-now answer in their Info.plist so the question stops appearing on every upload.
-They answer differently, and that is correct rather than an inconsistency.
+App Store Connect asks whether the app uses non-exempt encryption. The wallet
+answers in its Info.plist; the vault answers in App Store Connect, per build,
+for the reason set out below. They answer differently, and that is correct
+rather than an inconsistency.
 
 **The wallet answers no.** It is watch only. It holds an extended public key, a
 Monero view key, addresses and balances, and there is no secret in it to
@@ -108,6 +109,40 @@ to mismatch. This is a retreat rather than a fix. An answer in a manifest is
 version controlled and one in a form is not, and `test/shipping.test.ts` can
 now only check that the key stayed out and that this paragraph still says YES.
 Put it back the moment Apple's side is understood.
+
+### Why the manifest-first approach could not have worked, and how to undo the retreat
+
+App Store Connect's own per-build dialog says it, in a yellow box under the
+question:
+
+> To bypass setting up export compliance in App Store Connect, you can specify
+> your use of encryption directly in the information property list (Info.plist)
+> in your Xcode project. If you need to provide documentation, **Apple will
+> provide you with a key value to add to the Info.plist.**
+
+That key value is `ITSEncryptionExportComplianceCode`, and Apple issues it
+only after the compliance flow is completed on their side. So the order runs
+the other way from what putting the answer in the manifest assumed: the form
+comes first, the code comes back, and *then* the manifest can carry both keys
+and stop being asked.
+
+Which makes the original error literal and correct rather than mysterious. The
+app record expected a code, the plist had none, and no edit to this repository
+could have supplied one, because the value did not exist yet.
+
+**To undo the retreat once Apple issues a code**: put both keys back in
+`ios/project.yml`, `ITSAppUsesNonExemptEncryption: true` and
+`ITSEncryptionExportComplianceCode` set to the issued value, and restore the
+guard in `test/shipping.test.ts` that checks the answer is `true`. That is
+strictly better than where this started: a real code in a version-controlled
+manifest, rather than an empty string that answered the question wrongly.
+
+**The per-build question, until then.** Answer with the second option,
+"standard encryption algorithms instead of, or in addition to, using or
+accessing the encryption within Apple's operating system". Everything the
+vault implements is a published standard and all of it is in the app's own
+bundle rather than the operating system's. Not "both", because nothing here is
+proprietary; not "none", because the app plainly implements encryption.
 
 ### Apple wants its own documentation, and it wants it before the Store
 

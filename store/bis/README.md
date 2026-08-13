@@ -33,10 +33,12 @@ usually to make the facts easy to check.
 
 The two apps have different true answers, and `docs/shipping.md` argues that
 out at length. In short: the vault encrypts a seed for confidentiality, and
-the wallet is watch only and has no secret in it to protect. The vault's
-Info.plist answers `ITSAppUsesNonExemptEncryption: true` and the wallet's
-answers false, and this report has to agree with those two declarations,
-because they are the same claim made to two agencies.
+the wallet is watch only and has no secret in it to protect. The wallet's
+Info.plist answers `ITSAppUsesNonExemptEncryption: false`; the vault answers
+**yes, in App Store Connect rather than in its Info.plist**, because the key
+in the manifest made Apple refuse four uploads and `docs/shipping.md` records
+that retreat. This report has to agree with both answers, because they are the
+same claim made to two agencies.
 
 If you would rather take the conservative view that any app doing TLS is a
 5D992.c mass market item, add a second row for the wallet with the same
@@ -106,8 +108,11 @@ A cover message is not required and one sentence is plenty:
   reach for CCATS because the encryption rules used to require far more; they
   were relaxed, and this report is the whole of what is left.
 - **No `ITSEncryptionExportComplianceCode`.** That Info.plist key is for apps
-  that went through CCATS. It stays empty. `project.yml` sets it to `""`
-  deliberately.
+  that went through CCATS, and this is not one, so there is no code to give.
+  The key must be **absent** rather than present and empty: App Store Connect
+  validates the value it finds instead of ignoring it, so `""` answers the
+  question wrongly rather than declining to answer, and the upload is
+  rejected. `test/shipping.test.ts` fails if it comes back.
 - **Not a one-off.** It repeats every year by 1 February for anything exported
   in the previous calendar year. If nothing changed, BIS accepts a
   confirmation of no change or a resubmission of the previous report.
