@@ -98,14 +98,15 @@ Four things follow, and the third one is what changed.
 the default and only ever walks upward, so a slow device gets a slow unlock and
 never a weaker vault.
 
-**Calibration is currently doing nothing useful.** `app/storage.ts` calls
-`calibrateForThisDevice`, which targets 1000 ms, and the default already costs
-1554 ms on hardware far faster than the target device. So the walk exits on its
-first iteration, always, and the only thing calibration achieves today is
-spending one full derivation at setup to rediscover the default. It is harmless
-and it is not free. If the native port happens, calibration starts mattering
-again and the target should be revisited then; if it does not, this is a
-candidate for deletion.
+**Calibration is gone, along with its only caller.** `calibrateForThisDevice`
+lived in `app/storage.ts` and targeted 1000 ms, while the default already cost
+1554 ms on hardware far faster than a phone, so the walk exited on its first
+iteration every time and achieved nothing but one full derivation at setup. The
+React Native shell that called it has been deleted; `calibrateKdf` remains in
+`src/keys/seal.ts`, tested and unused. Now that a derivation is native and
+costs a fraction of a second, calibrating to a one-second target would mean
+walking the memory parameter *up*, which is a real design question and a
+separate piece of work.
 
 **The parameter dial cannot solve this, so the port is not optional.** Read the
 floor row rather than the default row. `t=1 m=8 MiB` is the weakest thing
@@ -308,7 +309,14 @@ one ⌘U.
 **The Secure Enclave**, which comes up whenever this subject does. It is worth
 doing and it is not a port: nothing in `src/` moves. Wrapping the sealed blob's
 key with an SE-backed key gated on biometrics or the passcode is a change to
-`app/storage.ts`'s Keychain usage, and it would help far more than a faster KDF
-It makes the file useless off the device it was sealed on. It belongs in its
-own piece of work, against a real device, and it is the strongest remaining
-item on this list.
+the Keychain usage in `SealedStore.swift`, and it would help far more than a
+faster KDF: it makes the file useless off the device it was sealed on.
+
+**Half of that is now done, and not with the Secure Enclave.** A vault is
+sealed under the device's 32-byte keychain secret *and* the typed passphrase,
+so an extracted blob is already useless off the phone it was sealed on. The
+secret sits under the same passcode-bound, device-only class as the blob. What
+the Secure Enclave would add on top is that the secret cannot be read even by
+code running on the device with the keychain unlocked, which is a real step
+further and still worth doing. It belongs in its own piece of work, against a
+real device.

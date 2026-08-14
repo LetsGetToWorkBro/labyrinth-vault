@@ -17746,7 +17746,7 @@ zoo`.split("\n"));
     if (!session) throw new Error("The vault is locked.");
     return session;
   }
-  var HOST_VERSION = 3;
+  var HOST_VERSION = 4;
   var api = {
     version: guarded("version", () => done({ version: HOST_VERSION, kdf: nativeArgon2idInstalled() ? "native" : "engine" })),
     /** The launch gate. Nothing else should be called until this passes. */
@@ -17780,6 +17780,64 @@ zoo`.split("\n"));
         return done({ sealed: toHex2(sealed.sealed) });
       } finally {
         wipe(secret, pass);
+      }
+    }),
+    /**
+     * Re-seal an existing vault under a different passphrase.
+     *
+     * The one operation that needs a vault's secret without wanting a session,
+     * and it exists for exactly one caller: the migration that moves a vault
+     * sealed under a typed passphrase alone onto the two-layer scheme, where the
+     * device's keychain secret participates too.
+     *
+     * It happens in here rather than in the app because the secret must not
+     * cross the bridge to do it. Unsealing and re-sealing both occur inside this
+     * function, the plaintext is wiped on every path, and what comes back is a
+     * blob. Nothing about the session changes: a vault that was locked stays
+     * locked, and one that was open stays open with the keys it already had.
+     *
+     * The result is proved to open before it is returned. That check costs one
+     * extra derivation and buys the only thing worth having here — a caller that
+     * is about to overwrite the one copy of somebody's vault gets a blob that
+     * has already been shown to work, rather than one that merely came back
+     * without an error.
+     */
+    reseal: guarded("reseal", (sealedHex, from, to, randomHex) => {
+      const blob = fromHex2(sealedHex);
+      if (!blob || !looksSealed(blob)) return fail("That is not a sealed vault.");
+      const random = fromHex2(randomHex);
+      if (!random || random.length !== SEAL_RANDOM_BYTES) {
+        return fail(`Re-sealing needs ${SEAL_RANDOM_BYTES} bytes of randomness.`);
+      }
+      const oldPass = passphraseFromWire(from);
+      const newPass = passphraseFromWire(to);
+      if (!oldPass || !newPass) {
+        wipe(oldPass ?? new Uint8Array(0), newPass ?? new Uint8Array(0));
+        return fail(PASSPHRASE_CONTRACT);
+      }
+      let opened;
+      try {
+        opened = unseal(blob, oldPass);
+      } finally {
+        wipe(oldPass);
+      }
+      if (!opened.ok || !opened.secret) {
+        wipe(newPass);
+        return fail(opened.problem ?? "The vault did not open.");
+      }
+      try {
+        const sealed = seal(opened.secret, newPass, random);
+        if (!sealed.ok || !sealed.sealed) {
+          return fail(sealed.problem ?? "Could not re-seal the vault.");
+        }
+        const proof = unseal(sealed.sealed, newPass);
+        if (!proof.ok || !proof.secret) {
+          return fail("The re-sealed vault did not open, so it was not returned.");
+        }
+        wipe(proof.secret);
+        return done({ sealed: toHex2(sealed.sealed) });
+      } finally {
+        wipe(opened.secret, newPass);
       }
     }),
     /** Open the vault. Everything afterwards depends on this having succeeded. */

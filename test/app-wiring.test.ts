@@ -1,274 +1,142 @@
 /**
- * The React Native wiring, run through the same code paths the phone runs.
+ * Guards that hold the two languages together.
  *
- * app/storage.ts and app/session.ts take their platform as arguments — the
- * store, the RNG, the foreground events — precisely so this file can be the
- * platform: a Map plays the Keychain, a counter plays the CSPRNG, a function
- * call plays the app switcher. What is asserted here is the behavior the
- * README promises: ciphertext-only at rest, transient unseal with a
- * guaranteed wipe, both-layers-required passphrases, and keys that die when
- * the app leaves the foreground while watching survives.
+ * Everything here is a check no compiler can make: a name that has to match
+ * across Swift and TypeScript, a Swift file that has to import the module it
+ * calls into, a refusal code that has to exist on both sides. Most of the
+ * Swift under `ios/` imports SwiftUI or JavaScriptCore, so
+ * `scripts/swift-check.sh` can only parse it, and a parser is content with a
+ * name that resolves to nothing. These tests are what stands in that gap.
  *
- * The tail of the file is guards over the source itself, in the house style
- * of no-network.test.ts: the polyfill order in boot.js, the Keychain
- * accessibility class, the absence of any sync attribute, and the absence of
- * clipboard code anywhere in the app tree.
+ * This file used to open with behavioural tests of `app/storage.ts` and
+ * `app/session.ts`, running the React Native shell's logic against a Map
+ * playing the Keychain. That shell has been deleted — it had no build system
+ * and had never been compiled — and those tests went with it. What they
+ * asserted about the Keychain now lives as source guards over
+ * `SealedStore.swift`, which is the code that actually runs.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import {
-  DEVICE_KEY,
-  SEALED_KEY,
-  calibrateForThisDevice,
-  createVault,
-  destroyVault,
-  vaultExists,
-  withUnsealedSeed,
-  type SecretStore,
-} from '../app/storage';
-import { Session } from '../app/session';
-import { KDF_LIMITS, looksSealed } from '../src/keys/seal';
-import { addressAt, mnemonicFromEntropy, privateKeyAt } from '../src/keys/bitcoin';
-import { toHex } from '../src/keys/monero';
-
-/** Small enough to keep the suite fast; the floors in seal.ts still apply. */
-const FAST_KDF = { t: 1, m: 8192, p: 1 };
-
-/** The Keychain, played by a Map that remembers how it was asked to store. */
-function fakeStore() {
-  const items = new Map<string, { value: string; accessibility?: string }>();
-  const store: SecretStore = {
-    get: async (key) => items.get(key)?.value ?? null,
-    set: async (key, value, options) => {
-      items.set(key, { value, ...(options?.accessibility ? { accessibility: options.accessibility } : {}) });
-    },
-    remove: async (key) => {
-      items.delete(key);
-    },
-  };
-  return { store, items };
-}
-
-/** Deterministic bytes that never repeat, which is all seal() asks of them. */
-function fakeRng() {
-  let counter = 0;
-  return (bytes: number) => {
-    const out = new Uint8Array(bytes);
-    for (let i = 0; i < bytes; i++) out[i] = (i * 31 + ++counter) & 0xff;
-    return out;
-  };
-}
-
-function fromHex(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length >> 1);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+/** Every Swift source in the shipping app, for the tree-wide guards. */
+function appSources(dir = 'ios/LabyrinthVault'): { path: string; text: string }[] {
+  const out: { path: string; text: string }[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...appSources(path));
+    else if (/\.(swift|m|h)$/.test(entry.name)) out.push({ path, text: readFileSync(path, 'utf8') });
+  }
   return out;
 }
 
-const mnemonic = mnemonicFromEntropy(new Uint8Array(32).fill(9));
-const seedBytes = () => new TextEncoder().encode(mnemonic);
+describe('guards over the app that actually ships', () => {
+  const files = appSources();
 
-describe('sealed storage against the keystore', () => {
-  it('stores only ciphertext, and the device passphrase goes passcode-bound', async () => {
-    const { store, items } = fakeStore();
-    const result = await createVault(store, fakeRng(), seedBytes(), { params: FAST_KDF });
-    expect(result.ok).toBe(true);
-
-    // Exactly two items: the device passphrase and the blob. Nothing else.
-    expect([...items.keys()].sort()).toEqual([DEVICE_KEY, SEALED_KEY].sort());
-    expect(items.get(DEVICE_KEY)!.accessibility).toBe('whenPasscodeSetThisDeviceOnly');
-    expect(items.get(SEALED_KEY)!.accessibility).toBe('whenPasscodeSetThisDeviceOnly');
-
-    // The blob is a sealed blob, and the seed appears nowhere in the store
-    // in any encoding the store ever saw.
-    expect(looksSealed(fromHex(items.get(SEALED_KEY)!.value))).toBe(true);
-    const seedHex = toHex(seedBytes());
-    for (const { value } of items.values()) {
-      expect(value.includes(seedHex)).toBe(false);
-      expect(value.includes(mnemonic)).toBe(false);
-    }
+  it('found the sources, so a pass means something', () => {
+    expect(files.length).toBeGreaterThan(20);
   });
 
-  it('round-trips the seed, and wipes it after use even so', async () => {
-    const { store } = fakeStore();
-    await createVault(store, fakeRng(), seedBytes(), { params: FAST_KDF });
-
-    let captured: Uint8Array | null = null;
-    const outcome = await withUnsealedSeed(store, undefined, (seed) => {
-      captured = seed;
-      return new TextDecoder().decode(seed);
-    });
-
-    expect(outcome.ok).toBe(true);
-    expect(outcome.value).toBe(mnemonic);
-    // The buffer the callback saw has been zeroed behind it.
-    expect(captured).not.toBeNull();
-    expect([...captured!].every((byte) => byte === 0)).toBe(true);
-  });
-
-  it('wipes the seed even when the callback throws', async () => {
-    const { store } = fakeStore();
-    await createVault(store, fakeRng(), seedBytes(), { params: FAST_KDF });
-
-    let captured: Uint8Array | null = null;
-    await expect(
-      withUnsealedSeed(store, undefined, (seed) => {
-        captured = seed;
-        throw new Error('mid-use failure');
-      }),
-    ).rejects.toThrow('mid-use failure');
-    expect([...captured!].every((byte) => byte === 0)).toBe(true);
-  });
-
-  it('a layered user passphrase means both layers or nothing', async () => {
-    const { store } = fakeStore();
-    await createVault(store, fakeRng(), seedBytes(), {
-      params: FAST_KDF,
-      userPassphrase: 'correct horse',
-    });
-
-    const without = await withUnsealedSeed(store, undefined, () => 'opened');
-    const wrong = await withUnsealedSeed(store, 'wrong horse', () => 'opened');
-    const right = await withUnsealedSeed(store, 'correct horse', () => 'opened');
-
-    expect(without.ok).toBe(false);
-    expect(wrong.ok).toBe(false);
-    expect(right.ok).toBe(true);
-  });
-
-  it('exists and destroys, with no recovery path left behind', async () => {
-    const { store, items } = fakeStore();
-    expect(await vaultExists(store)).toBe(false);
-    await createVault(store, fakeRng(), seedBytes(), { params: FAST_KDF });
-    expect(await vaultExists(store)).toBe(true);
-    await destroyVault(store);
-    expect(await vaultExists(store)).toBe(false);
-    expect(items.size).toBe(0);
-  });
-
-  it('calibration returns parameters this build will actually run', () => {
-    // A timer that reports the target met immediately, so the walk stops at
-    // its first, smallest step without burning CI minutes on real Argon2id.
-    const ticks = [0, 5000];
-    const params = calibrateForThisDevice(() => ticks.shift() ?? 10000);
-    expect(params.m).toBeGreaterThanOrEqual(KDF_LIMITS.minM);
-    expect(params.m).toBeLessThanOrEqual(KDF_LIMITS.maxM);
-    expect(params.t).toBeGreaterThanOrEqual(KDF_LIMITS.minT);
-  });
-});
-
-describe('the session and the foreground', () => {
-  function openSession() {
-    const session = new Session();
-    session.unlock(seedBytes());
-    return session;
-  }
-
-  it('unlocking opens a signing wallet', () => {
-    const session = openSession();
-    expect(session.state).toBe('signing');
-    expect(privateKeyAt(session.current!, 0, 0)).not.toBeNull();
-  });
-
-  it('leaving the foreground wipes keys but keeps watching', () => {
-    const session = openSession();
-    const before = addressAt(session.current!, 0, 0).address;
-
-    session.handleForeground('background');
-
-    expect(session.state).toBe('watching');
-    // Watching survives: same object, same addresses, no secrets.
-    expect(addressAt(session.current!, 0, 0).address).toBe(before);
-    expect(privateKeyAt(session.current!, 0, 0)).toBeNull();
-  });
-
-  it('the app switcher counts as leaving', () => {
-    const session = openSession();
-    session.handleForeground('inactive');
-    expect(session.state).toBe('watching');
-  });
-
-  it('signing again requires a fresh unseal, and a fresh unseal restores it', () => {
-    const session = openSession();
-    session.handleForeground('background');
-    expect(session.state).toBe('watching');
-    session.unlock(seedBytes());
-    expect(session.state).toBe('signing');
-  });
-
-  it('attaches to foreground events and locks through them', () => {
-    const session = openSession();
-    let emit: ((next: 'active' | 'background' | 'inactive') => void) | null = null;
-    session.attach((handler) => {
-      emit = handler;
-      return () => {
-        emit = null;
-      };
-    });
-    emit!('background');
-    expect(session.state).toBe('watching');
-    session.detach();
-    expect(emit).toBeNull();
-  });
-});
-
-describe('guards over the app source itself', () => {
-  function sources(dir: string): { path: string; text: string }[] {
-    const out: { path: string; text: string }[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) out.push(...sources(path));
-      else if (/\.(ts|tsx|js|swift|m|h)$/.test(entry.name)) {
-        out.push({ path, text: readFileSync(path, 'utf8') });
-      }
-    }
-    return out;
-  }
-  const files = sources('app');
-
-  it('boot.js loads the CSPRNG before anything else', () => {
-    const boot = readFileSync('app/boot.js', 'utf8');
-    const firstImport = boot.match(/^\s*(import|const .* = require).*$/m)?.[0] ?? '';
-    expect(firstImport).toContain('react-native-get-random-values');
-    // And the entry point loads boot before the app.
-    const entry = readFileSync('app/index.js', 'utf8');
-    expect(entry.indexOf("import './boot'")).toBeGreaterThanOrEqual(0);
-    expect(entry.indexOf("import './boot'")).toBeLessThan(entry.indexOf('./App'));
-  });
-
-  it('the keychain item class is passcode-bound and device-only', () => {
-    const keychain = readFileSync('app/ios/VaultKeychain.swift', 'utf8');
-    expect(keychain).toContain('kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly');
-    // No sync attribute in any form: absence is the design, so presence —
-    // even set to false — is a diff somebody has to explain.
-    expect(keychain).not.toContain('kSecAttrSynchronizable');
-  });
-
-  it('the vault app holds its sealed blob to the same standard', () => {
-    /* Same rule, other device. The blob is passcode-bound; the witness item
-     * (which holds no secret, only the fact a vault existed) is deliberately
-     * one class weaker so it survives the passcode being turned off — that
-     * survival is its entire purpose. Both are ThisDeviceOnly, and the sync
-     * attribute stays unmentionable here too. */
+  it('holds every keychain item to a passcode-bound, device-only class', () => {
+    /* The blob is passcode-bound. The witness (which holds no secret, only
+     * the fact a vault existed) is deliberately one class weaker so it
+     * survives the passcode being turned off — that survival is its whole
+     * purpose. The device half of the passphrase is passcode-bound like the
+     * blob it protects: putting the two halves under different locks would
+     * make the vault only as strong as the weaker one.
+     *
+     * No sync attribute in any form. Absence is the design, so presence, even
+     * set to false, is a diff somebody has to explain. */
     const store = readFileSync('ios/LabyrinthVault/Support/SealedStore.swift', 'utf8');
     expect(store).toContain('kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly');
     expect(store).toContain('kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly');
     expect(store).not.toContain('kSecAttrSynchronizable');
   });
 
-  it('nothing in the app tree touches the clipboard', () => {
-    const clipboard = /(UIPasteboard\s*\.|@react-native-clipboard|\bClipboard\s*\.|expo-clipboard)/;
+  it('erases the device half with the vault it sealed', () => {
+    /* Leaving it would mean the next vault made on this phone silently
+     * inherits the last one's device secret, which is not a secret anybody
+     * decided to reuse. */
+    const store = readFileSync('ios/LabyrinthVault/Support/SealedStore.swift', 'utf8');
+    const erase = store.slice(store.indexOf('static func erase()'));
+    expect(erase).toContain('deviceAccount');
+  });
+
+  it('touches no clipboard', () => {
+    const clipboard = /(UIPasteboard\s*\.|\bClipboard\s*\.)/;
     const guilty = files.filter((f) => clipboard.test(f.text)).map((f) => f.path);
     expect(guilty, 'clipboard code appears in these files').toEqual([]);
   });
 
-  it('nothing in the app tree opens a network path', () => {
-    const network = /\b(URLSession|fetch\s*\(|XMLHttpRequest|WebSocket)\b/;
+  it('opens no network path', () => {
+    const network = /\b(URLSession|NSURLConnection|CFSocket|fetch\s*\()/;
     const guilty = files.filter((f) => network.test(f.text)).map((f) => f.path);
     expect(guilty, 'network code appears in these files').toEqual([]);
+  });
+});
+
+describe('the vault seals under both layers, not just the typed one', () => {
+  /* The device half is 32 bytes that never leave this phone's keychain, and
+   * layering means AND: an extracted blob is useless off the device it was
+   * sealed on. That property is worth more than any amount of key stretching
+   * and it is one function call away from being silently lost, because a vault
+   * sealed under the typed passphrase alone still works perfectly. It just
+   * stops being protected against the case that matters.
+   *
+   * Nothing compiles this file off a Mac, so these are the guards.
+   * `LayeredPassphraseTests` proves the bytes are right; this proves the app
+   * asks for them. */
+  const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+  const code = vault
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+
+  it('creates under the layered passphrase', () => {
+    const create = code.slice(code.indexOf('func beginCreate'), code.indexOf('func finishCreate'));
+    expect(create, 'creation seals under the typed passphrase alone')
+      .toMatch(/withLayeredBytes\(deviceHex:/);
+    expect(create, 'creation still has an unlayered seal in it')
+      .not.toMatch(/Passphrase\.withBytes\(of:/);
+  });
+
+  it('refuses to make a vault when the device half cannot be stored', () => {
+    /* Falling back to a one-layer vault would be quietly giving somebody a
+     * weaker vault than the one they asked for, which is the trade this whole
+     * project exists to refuse. */
+    const create = code.slice(code.indexOf('func beginCreate'), code.indexOf('func finishCreate'));
+    expect(create).toMatch(/deviceHex == nil/);
+    expect(create).toMatch(/No keys were made/);
+  });
+
+  it('tries the other scheme before calling a passphrase wrong', () => {
+    /* The marker and the blob are two keychain items with no transaction
+     * between them, so an interrupted migration can leave them disagreeing.
+     * Without the fallback, a person with the right passphrase is told it is
+     * wrong. */
+    const open = code.slice(code.indexOf('func openVault'), code.indexOf('func migrateToLayeredScheme'));
+    expect(open).toMatch(/existingDeviceSecret\(\)/);
+    expect(open).toMatch(/attempt\(layeredWith: nil\)/);
+  });
+
+  it('migrates in an order where every interruption is survivable', () => {
+    /* Device secret, then a re-seal the engine has already proved opens, then
+     * the overwrite. Any earlier order can leave a blob nothing can open. */
+    const migrate = code.slice(code.indexOf('func migrateToLayeredScheme'));
+    const secretAt = migrate.indexOf('deviceSecretHex(orMakeWith');
+    const resealAt = migrate.indexOf('engine.reseal');
+    const saveAt = migrate.indexOf('SealedStore.save');
+    expect(secretAt).toBeGreaterThan(-1);
+    expect(resealAt).toBeGreaterThan(secretAt);
+    expect(saveAt, 'the blob is overwritten before it has been re-sealed').toBeGreaterThan(resealAt);
+  });
+
+  it('re-seals inside the engine, so the secret never crosses the bridge', () => {
+    const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+    expect(engine).toMatch(/func reseal\(sealedHex:/);
+    const host = readFileSync('src/bridge/host.ts', 'utf8');
+    expect(host).toMatch(/reseal: guarded\('reseal'/);
   });
 });
 

@@ -453,10 +453,19 @@ final class Vault: ObservableObject {
             var problem: String?
             var sealed: String?
             var opened: Engine.UnlockReply?
-            if let randomHex = Engine.freshRandomHex(bytes: Vault.createRandomBytes) {
+            /* The device half of the passphrase, made now and kept for the
+             * life of this vault. If the keychain will not hold it, no vault
+             * is made: sealing under the typed passphrase alone would be a
+             * weaker vault than the one being asked for, and doing that
+             * silently is the trade this whole project refuses. */
+            let deviceHex = SealedStore.deviceSecretHex(orMakeWith: Engine.freshRandomBytes)
+            if deviceHex == nil {
+                problem = "This device would not store the key that protects your vault. No keys were made."
+            } else if let randomHex = Engine.freshRandomHex(bytes: Vault.createRandomBytes),
+                      let deviceHex {
                 do {
                     let startedSealing = Date()
-                    let created = try Passphrase.withBytes(of: pass) { bytes in
+                    let created = try Passphrase.withLayeredBytes(deviceHex: deviceHex, user: pass) { bytes in
                         try engine.create(randomHex: randomHex, passphrase: bytes)
                     }
                     /* Measured rather than guessed, and measured on this
@@ -478,7 +487,7 @@ final class Vault: ObservableObject {
                         /* Unlock from the read-back, not from the reply: what
                          * this proves is that the blob at rest opens, which is
                          * the thing a relaunch depends on. */
-                        opened = try Passphrase.withBytes(of: pass) { bytes in
+                        opened = try Passphrase.withLayeredBytes(deviceHex: deviceHex, user: pass) { bytes in
                             try engine.unlock(sealedHex: storedHex, passphrase: bytes)
                         }
                         sealed = storedHex
@@ -558,18 +567,64 @@ final class Vault: ObservableObject {
             opening = false
             if grace != .invalid { UIApplication.shared.endBackgroundTask(grace) }
         }
+        /* ## Two schemes, and why both are tried
+         *
+         * A vault made before the device layer existed was sealed under the
+         * typed passphrase alone. One made since is sealed under the device
+         * secret and the passphrase together. The keychain says which to
+         * expect — the device secret exists, or it does not — and that is the
+         * order they are tried in.
+         *
+         * But the marker and the blob are two keychain items with no
+         * transaction between them, so a migration interrupted at the wrong
+         * instant leaves them disagreeing, and a person whose passphrase is
+         * correct would be told it is wrong. So the other scheme is tried
+         * before anything is refused.
+         *
+         * This is only affordable because the derivation is native now. Two
+         * attempts used to be over two minutes and would have been out of the
+         * question; they are a fraction of a second, and only on a mismatch.
+         * A fast KDF bought a correctness property, not just comfort. */
+        let deviceHex = SealedStore.existingDeviceSecret()
         let outcome: Result<Engine.UnlockReply, Error> = await Task.detached(priority: .userInitiated) {
-            do {
-                let opened = try Passphrase.withBytes(of: passphrase) { bytes in
+            func attempt(layeredWith device: String?) throws -> Engine.UnlockReply {
+                guard let device else {
+                    return try Passphrase.withBytes(of: passphrase) { bytes in
+                        try engine.unlock(sealedHex: sealedHex, passphrase: bytes)
+                    }
+                }
+                return try Passphrase.withLayeredBytes(deviceHex: device, user: passphrase) { bytes in
                     try engine.unlock(sealedHex: sealedHex, passphrase: bytes)
                 }
-                return .success(opened)
+            }
+            do {
+                return .success(try attempt(layeredWith: deviceHex))
             } catch {
-                return .failure(error)
+                /* Only one direction of fallback exists, and only one is safe.
+                 *
+                 * A device secret with a blob that predates it is a migration
+                 * interrupted between two keychain writes, and the unlayered
+                 * form is worth trying. The reverse is not: no device secret
+                 * and a layered blob means the secret is gone, and with it the
+                 * keys, so there is nothing to fall back to and pretending
+                 * otherwise would only be a second wrong answer.
+                 *
+                 * A wrong passphrase still fails both attempts. This widens
+                 * what is accepted by exactly one legitimate scheme, not by
+                 * anything weaker. */
+                guard deviceHex != nil,
+                      let recovered = try? attempt(layeredWith: nil) else {
+                    return .failure(error)
+                }
+                return .success(recovered)
             }
         }.value
         switch outcome {
         case .success(let opened):
+            /* The vault opened, so this is the one moment its passphrase is
+             * known to be correct — which is the only moment a migration can
+             * safely run. */
+            migrateToLayeredScheme(engine: engine, sealedHex: sealedHex, passphrase: passphrase)
             // Identity from the account key, so it means something. The
             // formatting lives in Model/Identity.swift, where it is compiled
             // and tested off-device.
@@ -584,6 +639,52 @@ final class Vault: ObservableObject {
             return error.localizedDescription
         }
     }
+
+    /// Move a vault sealed under the typed passphrase alone onto the scheme
+    /// where the device's keychain secret participates too.
+    ///
+    /// ## Why it runs here
+    ///
+    /// A migration needs the passphrase to be right, and the only way to know
+    /// that is to have just opened the vault with it. So this runs on the
+    /// success path of an unlock and nowhere else.
+    ///
+    /// ## The order, which is the whole of the safety
+    ///
+    /// 1. Make the device secret. If the keychain refuses, stop: nothing has
+    ///    changed and the vault still opens the way it did.
+    /// 2. Ask the engine to re-seal. It proves the new blob opens before
+    ///    returning it, so what arrives here has already been shown to work.
+    /// 3. Only then overwrite the stored blob.
+    ///
+    /// Every step before the last is reversible, and the last one writes bytes
+    /// that have been tested. An interruption anywhere leaves a device secret
+    /// beside an old blob, which is exactly the state `openVault` falls back
+    /// through, so the next unlock works and migrates again.
+    ///
+    /// ## Why a failure here is silent
+    ///
+    /// A person who has just typed their passphrase correctly has earned their
+    /// vault. If any of this fails they still have it, sealed the old way, and
+    /// telling them their unlock half-worked would be alarming about something
+    /// that cost them nothing. The next unlock tries again.
+    private func migrateToLayeredScheme(engine: Engine, sealedHex: String, passphrase: String) {
+        guard SealedStore.existingDeviceSecret() == nil else { return }
+        guard let deviceHex = SealedStore.deviceSecretHex(orMakeWith: Engine.freshRandomBytes),
+              let randomHex = Engine.freshRandomHex(bytes: Vault.resealRandomBytes) else { return }
+
+        let resealed = Passphrase.withBytes(of: passphrase) { from -> String? in
+            Passphrase.withLayeredBytes(deviceHex: deviceHex, user: passphrase) { to -> String? in
+                try? engine.reseal(sealedHex: sealedHex, from: from, to: to, randomHex: randomHex).sealed
+            }
+        }
+        guard let resealed, SealedStore.save(resealed) == nil else { return }
+        stored = .found(resealed)
+    }
+
+    /// Salt and nonce for a re-seal. The secret is not re-drawn: it is the
+    /// same vault, and drawing a new one would be making a different one.
+    private static let resealRandomBytes = 40
 
     /// Called on lock, on backgrounding and on the app switcher. Wipes keys.
     func lock() {

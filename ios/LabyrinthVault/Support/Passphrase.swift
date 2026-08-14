@@ -96,4 +96,55 @@ enum Passphrase {
         defer { Self.wipe(&bytes) }
         return try use(bytes)
     }
+
+    /// The bytes a blob is actually sealed under: what the keychain guards,
+    /// then what the person knows.
+    ///
+    /// ## Why there are two layers
+    ///
+    /// Sealing under the typed passphrase alone protects a vault while the
+    /// phone is intact, because the blob lives in a passcode-bound keychain
+    /// item. It protects nothing once the ciphertext is out — a forensic
+    /// image, a backup that should not exist — because from that point an
+    /// attacker has the file and all the time in the world, and the only thing
+    /// between them and the keys is how good the passphrase was.
+    ///
+    /// The device secret is 32 random bytes that never leave the keychain and
+    /// never leave this phone. Layering means AND: unsealing needs what the
+    /// keychain guards *and* what the person knows, so an extracted blob is
+    /// useless off the device it was sealed on. That property is worth more
+    /// than any amount of key stretching, and it costs nothing to compute.
+    ///
+    /// ## Why a newline, and why joined after normalising
+    ///
+    /// The device secret arrives as hex, and `\n` is not in the hex alphabet,
+    /// so the two layers cannot slide into one another: no user passphrase can
+    /// impersonate a longer device secret or vice versa.
+    ///
+    /// The parts are normalised separately and then joined, rather than joined
+    /// and then normalised. The two are supposed to agree — U+000A is a
+    /// starter, so NFKD can neither compose nor reorder across it — but
+    /// "supposed to" is how subtle Unicode bugs get in, and a vault that seals
+    /// under one byte sequence and unseals under another opens on no device at
+    /// all. `PassphraseContractTests` asserts the two forms agree over inputs
+    /// chosen to break it if it is breakable.
+    ///
+    /// Ported from `app/storage.ts`, which specified this and never shipped.
+    static func withLayeredBytes<T>(deviceHex: String,
+                                    user: String,
+                                    _ use: ([UInt8]) throws -> T) rethrows -> T {
+        var device = Self.bytes(from: deviceHex)
+        var userBytes = Self.bytes(from: user)
+        var layered = [UInt8]()
+        layered.reserveCapacity(device.count + 1 + userBytes.count)
+        layered.append(contentsOf: device)
+        layered.append(0x0a)
+        layered.append(contentsOf: userBytes)
+        defer {
+            Self.wipe(&device)
+            Self.wipe(&userBytes)
+            Self.wipe(&layered)
+        }
+        return try use(layered)
+    }
 }

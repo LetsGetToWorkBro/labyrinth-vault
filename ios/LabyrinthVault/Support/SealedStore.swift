@@ -59,6 +59,13 @@ enum SealedStore {
     /// empty is a claim the project makes out loud. The keychain is already
     /// declared, already used, and does not care.
     private static let timingAccount = "pass-seconds"
+    /// The device half of the passphrase: 32 random bytes as hex, generated
+    /// once, never shown, never leaving this keychain or this phone.
+    ///
+    /// Its presence is also the scheme marker. A vault made before this
+    /// existed was sealed under the typed passphrase alone, and the way to
+    /// tell is that there is no device secret beside it.
+    private static let deviceAccount = "device-passphrase.v1"
 
     private static func base(_ account: String) -> [String: Any] {
         [
@@ -165,6 +172,50 @@ enum SealedStore {
         }
     }
 
+    /// The device half of the passphrase, made if this phone has none.
+    ///
+    /// Returns nil only when the keychain refuses to keep it, which on a
+    /// passcode-set device it does not. A nil is a refusal to seal rather than
+    /// a licence to seal without the layer: the caller must treat it as a
+    /// failure, because quietly falling back to a one-layer vault would be the
+    /// weaker vault nobody chose.
+    static func deviceSecretHex(orMakeWith random: (Int) -> [UInt8]?) -> String? {
+        if let existing = existingDeviceSecret() { return existing }
+
+        guard let bytes = random(deviceSecretBytes), bytes.count == deviceSecretBytes else {
+            return nil
+        }
+        let hex = bytes.map { String(format: "%02x", $0) }.joined()
+        guard let data = hex.data(using: .utf8) else { return nil }
+
+        SecItemDelete(base(deviceAccount) as CFDictionary)
+        var item = base(deviceAccount)
+        item[kSecValueData as String] = data
+        /* The same class as the blob it protects. Anything weaker would put
+         * the two halves under different locks, and the vault is then only as
+         * protected as the weaker one. */
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
+        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { return nil }
+        return hex
+    }
+
+    static let deviceSecretBytes = 32
+
+    /// The device secret if this phone has one, without making one.
+    ///
+    /// Absence is meaningful: it says the vault beside it predates the layer.
+    static func existingDeviceSecret() -> String? {
+        var query = base(deviceAccount)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let hex = String(data: data, encoding: .utf8),
+              hex.count == deviceSecretBytes * 2 else { return nil }
+        return hex
+    }
+
     /// Remember what one key derivation costs on this device.
     ///
     /// Written once, at creation, where a pass has just been timed for real.
@@ -206,5 +257,9 @@ enum SealedStore {
         SecItemDelete(base(account) as CFDictionary)
         SecItemDelete(base(witnessAccount) as CFDictionary)
         SecItemDelete(base(timingAccount) as CFDictionary)
+        /* The device secret goes with the blob it sealed. Leaving it would
+         * mean the next vault made on this phone inherits the last one's
+         * device half, which is not a secret anybody chose to reuse. */
+        SecItemDelete(base(deviceAccount) as CFDictionary)
     }
 }

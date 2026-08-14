@@ -40,7 +40,7 @@ import Security
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 3
+    static let expectedVersion = 4
 
     private let context: JSContext
     private let api: JSValue
@@ -220,6 +220,15 @@ final class Engine {
         try call("create", [randomHex, passphrase, extraHex])
     }
 
+    /// Re-seal a vault under a different passphrase, without opening a session.
+    ///
+    /// The secret never crosses this bridge: the engine unseals and re-seals
+    /// inside its own context and hands back a blob. Used by the migration
+    /// that moves a vault onto the two-layer scheme.
+    func reseal(sealedHex: String, from: [UInt8], to: [UInt8], randomHex: String) throws -> CreateReply {
+        try call("reseal", [sealedHex, from, to, randomHex])
+    }
+
     func unlock(sealedHex: String, passphrase: [UInt8]) throws -> UnlockReply {
         try call("unlock", [sealedHex, passphrase])
     }
@@ -273,6 +282,13 @@ final class Engine {
     /// engine takes. `SecRandomCopyBytes` is the platform CSPRNG; a failure —
     /// which documented practice treats as effectively impossible — returns
     /// nil rather than weaker bytes, and the caller refuses to proceed.
+    /// Fresh bytes from the platform CSPRNG, or nil. Never a weaker substitute.
+    static func freshRandomBytes(_ count: Int) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: count)
+        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else { return nil }
+        return bytes
+    }
+
     static func freshRandomHex(bytes count: Int) -> String? {
         var bytes = [UInt8](repeating: 0, count: count)
         guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else { return nil }

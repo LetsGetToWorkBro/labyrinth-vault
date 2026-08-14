@@ -141,3 +141,64 @@ final class PassphraseContractTests: XCTestCase {
         XCTAssertFalse(seen.isEmpty, "the body never ran, so nothing was tested")
     }
 }
+
+/// The two-layer passphrase: what the keychain guards, then what a person
+/// knows. Ported from `app/storage.ts`, which specified it and never shipped.
+final class LayeredPassphraseTests: XCTestCase {
+    private let device = "9f2a1c04e7b83d56aa41c07d9e3f5b28c1d0a4f7e2b95836aa41c07d9e3f5b28"
+
+    /// The property the whole layer rests on.
+    ///
+    /// If joining normalised parts ever differs from normalising the joined
+    /// string, a vault seals under one byte sequence and unseals under
+    /// another, and opens on no device at all. U+000A is a starter so NFKD
+    /// cannot compose or reorder across it, which is the argument. This is the
+    /// test, over inputs picked to break the argument if it is breakable.
+    func testJoiningNormalisedPartsMatchesNormalisingTheJoin() {
+        let awkward = [
+            "café",                       // e + combining acute, or precomposed
+            "ﬁre",                        // a ligature NFKD decomposes
+            "ｆｕｌｌｗｉｄｔｈ",                  // fullwidth forms
+            "a\u{0301}\u{0327}",          // two combining marks, reorderable
+            "\u{1E9B}\u{0323}",           // the canonical ordering example
+            "🔑 emoji",
+            "",
+            " leading and trailing ",
+            "パスフレーズ",
+        ]
+        for user in awkward {
+            let joinedThenNormalised = Passphrase.bytes(from: device + "\n" + user)
+            let normalisedThenJoined = Passphrase.withLayeredBytes(deviceHex: device, user: user) { $0 }
+            XCTAssertEqual(normalisedThenJoined, joinedThenNormalised,
+                           "the two forms disagree for \(user.debugDescription)")
+        }
+    }
+
+    func testTheLayersCannotCollide() {
+        /* Hex has no newline in it, so no user passphrase can dress itself up
+         * as a longer device secret. Two different splits must never produce
+         * the same bytes. */
+        let a = Passphrase.withLayeredBytes(deviceHex: device, user: "abc") { $0 }
+        let b = Passphrase.withLayeredBytes(deviceHex: device + "\nabc", user: "") { $0 }
+        XCTAssertNotEqual(a, b)
+    }
+
+    func testTheDeviceSecretAlwaysParticipates() {
+        let withUser = Passphrase.withLayeredBytes(deviceHex: device, user: "passphrase") { $0 }
+        let userOnly = Passphrase.bytes(from: "passphrase")
+        XCTAssertNotEqual(withUser, userOnly)
+        XCTAssertGreaterThan(withUser.count, userOnly.count)
+        // And the device half is genuinely at the front, in full.
+        XCTAssertEqual(Array(withUser.prefix(device.utf8.count)), Array(device.utf8))
+        XCTAssertEqual(withUser[device.utf8.count], 0x0a)
+    }
+
+    func testAnEmptyUserPassphraseStillSeals() {
+        /* Not a case the app offers, but the shape has to be defined: the
+         * device secret alone is still 32 bytes of keychain-guarded entropy,
+         * and it must not silently become the unlayered form. */
+        let layered = Passphrase.withLayeredBytes(deviceHex: device, user: "") { $0 }
+        XCTAssertEqual(layered.count, device.utf8.count + 1)
+        XCTAssertNotEqual(layered, Passphrase.bytes(from: device))
+    }
+}
