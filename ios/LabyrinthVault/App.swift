@@ -138,7 +138,7 @@ struct VaultTabs: View {
      * its way in again, which is the check that was missing. */
     private let items: [(String, Route)] = [
         ("VAULT", .home), ("SIGN", .scanner),
-        ("EXPORT", .export), ("SECURITY", .settings),
+        ("EXPORT", .export), ("SETTINGS", .settings),
     ]
 
     var body: some View {

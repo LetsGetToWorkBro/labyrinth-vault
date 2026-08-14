@@ -10,16 +10,77 @@
 
 import SwiftUI
 
+/// ## The audit this screen came out of
+///
+/// It was called SECURITY, sat under a tab called SECURITY, and its first row
+/// said SECURITY DIAGNOSTICS. Three uses of one word for three different
+/// things, none of which was "the place the settings are".
+///
+/// Worse, the value column was doing three incompatible jobs at once. AIRGAP
+/// was a topic, ENCRYPTED was a status, BIP84 · ACCOUNT 0 was a fact, and one
+/// row had nothing at all. There was no pattern to learn, so a person could
+/// not predict what any row would do before tapping it.
+///
+/// And the row reading KEY MANAGEMENT · ENCRYPTED led to the screen that shows
+/// your recovery phrases and erases your vault. The two most consequential
+/// things in the app were behind the vaguest label on the screen.
+///
+/// So: every row now says what is behind it in a sentence, the rows are
+/// grouped by what they are for, and rows that *do* something are marked apart
+/// from rows that only show something.
 struct SettingsView: View {
     @EnvironmentObject private var vault: Vault
 
-    private var rows: [(String, String, Route)] {
+    /// A row: what it is, what is actually behind it, the fact worth showing
+    /// on the right, and where it goes.
+    private struct Entry {
+        let title: String
+        let inside: String
+        let fact: String
+        let route: Route
+        /// True when tapping starts a procedure rather than opening a page.
+        var acts: Bool = false
+    }
+
+    private var thisDevice: [Entry] {
         [
-            ("SECURITY DIAGNOSTICS", "AIRGAP", .airgap),
-            ("KEY MANAGEMENT", "ENCRYPTED", .recovery),
-            ("RE-RUN AIRGAP CHECK", "", .setup(.verify)),
-            ("BITCOIN", "BIP84 · ACCOUNT 0", .bitcoin),
-            ("MONERO", "CLSAG SIGNING", .monero),
+            Entry(title: "AIRGAP STATUS",
+                  inside: "What this build can and cannot reach, and which half is yours",
+                  fact: "NO NETWORK CODE",
+                  route: .airgap),
+            Entry(title: "RE-RUN THE AIRGAP CHECK",
+                  inside: "Walk the radio steps again and re-verify this phone",
+                  fact: "5 STEPS",
+                  route: .setup(.verify),
+                  acts: true),
+        ]
+    }
+
+    private var yourKeys: [Entry] {
+        [
+            Entry(title: "RECOVERY PHRASES",
+                  /* Naming the erase here is the point. It is the one
+                   * irreversible action in the app and it used to live behind
+                   * a row that said ENCRYPTED. Nobody should meet it by
+                   * accident, and nobody should have to hunt for it either. */
+                  inside: vault.biometricsEnrolled
+                      ? "Show the words on paper, turn \(vault.biometricKind.name) off, or erase this vault"
+                      : "Show the words on paper, or erase this vault",
+                  fact: "12 + 25 WORDS",
+                  route: .recovery),
+        ]
+    }
+
+    private var whatItSigns: [Entry] {
+        [
+            Entry(title: "BITCOIN",
+                  inside: "Derivation path, address type, and what the watcher gets",
+                  fact: "BIP84 · ACCOUNT 0",
+                  route: .bitcoin),
+            Entry(title: "MONERO",
+                  inside: "Ring signatures, key images, and what a companion may ask for",
+                  fact: "CLSAG SIGNING",
+                  route: .monero),
         ]
     }
 
@@ -29,45 +90,26 @@ struct SettingsView: View {
                 VaultBar()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        Statement("SECURITY", size: 40).padding(.top, 16).padding(.bottom, 20)
+                        Statement("SETTINGS", size: 40).padding(.top, 16).padding(.bottom, 4)
 
-                        ForEach(rows, id: \.0) { row in
-                            Button {
-                                Haptic.tick()
-                                vault.go(row.2)
-                            } label: {
-                                VStack(spacing: 0) {
-                                    HStack {
-                                        Text(row.0)
-                                            .font(.system(size: 15, weight: .medium))
-                                            .foregroundStyle(Ink.paper)
-                                        Spacer()
-                                        Text(row.1.isEmpty ? "→" : "\(row.1)  →")
-                                            .font(Type.mono(12))
-                                            .foregroundStyle(Ink.paperDim)
-                                    }
-                                    .padding(.vertical, 17)
-                                    Hairline()
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        section("THIS DEVICE", thisDevice)
+                        section("YOUR KEYS", yourKeys)
+                        section("WHAT THIS VAULT SIGNS", whatItSigns)
 
-                        FieldRow(label: "APP VERSION", value: "0.1.0").padding(.top, 22)
+                        Eyebrow("THIS BUILD", color: Ink.paperDim)
+                            .padding(.top, 26).padding(.bottom, 8)
+                        FieldRow(label: "APP VERSION", value: "0.1.0")
                         FieldRow(label: "WIRE", value: "LV1 · BC-UR")
                         /* A fact about this build rather than about the vault
-                         * at rest, which is why it sits with the version and
-                         * not under AT REST where it started. The same vault
-                         * opens either way; what differs is whether opening it
-                         * takes a second or a minute.
+                         * at rest. The same vault opens either way; what
+                         * differs is whether opening it takes a second or a
+                         * minute.
                          *
-                         * It is on the first screen because of how it fails.
-                         * The native derivation is adopted through a string
+                         * On the first screen because of how it fails. The
+                         * native derivation is adopted through a string
                          * literal shared between Swift and the bundle, and a
-                         * mismatch does not error: it silently falls back and
-                         * the app is merely slow. Two taps deep is not where
-                         * you put the readout for a fault with no other
-                         * symptom. */
+                         * mismatch does not error: it falls back and the app
+                         * is merely slow. */
                         FieldRow(label: "KEY STRETCHING",
                                  value: vault.kdfIsNative ? "COMPILED" : "INTERPRETED",
                                  tone: vault.kdfIsNative ? .verified : .dim)
@@ -75,24 +117,89 @@ struct SettingsView: View {
 
                         VStack(alignment: .leading, spacing: 10) {
                             Eyebrow("WHAT IS NOT HERE", color: Ink.paper)
-                            Text("No cloud backup. No account. No price feed. No address book " +
-                                 "synced from anywhere. No notifications. Each of those would " +
-                                 "need a network, and this build has no code that could open one.")
+                            Text("No cloud backup. No account. No price feed. No address book synced " +
+                                 "from anywhere. No notifications. Each of those would need a network, " +
+                                 "and this build has no code that could open one.")
                                 .font(Type.body(13))
                                 .lineSpacing(4)
                                 .foregroundStyle(Ink.paperDim)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(18)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .overlay { Rectangle().strokeBorder(Ink.rule, lineWidth: 1) }
                         .padding(.top, 28)
-                        .padding(.bottom, 24)
+                        .padding(.bottom, 28)
                     }
                     .padding(.horizontal, 24)
                 }
-                VaultTabs(current: "SECURITY")
+                VaultTabs(current: "SETTINGS")
             }
         }
+    }
+
+    private func section(_ heading: String, _ entries: [Entry]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Eyebrow(heading, color: Ink.paperDim)
+                .padding(.top, 26)
+                .padding(.bottom, 6)
+            ForEach(entries, id: \.title) { entry in
+                row(entry)
+            }
+        }
+    }
+
+    private func row(_ entry: Entry) -> some View {
+        Button {
+            Haptic.tick()
+            vault.go(entry.route)
+        } label: {
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text(entry.title)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(Ink.paper)
+                            /* Rows that start a procedure are marked, because
+                             * an arrow that sometimes opens a page and
+                             * sometimes begins a walkthrough teaches nothing.
+                             * The chevron says "forward"; this says which
+                             * kind of forward. */
+                            if entry.acts {
+                                Text("RUNS")
+                                    .font(Type.mono(8))
+                                    .kerning(1.2)
+                                    .foregroundStyle(Ink.attention)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .overlay { Rectangle().strokeBorder(Ink.attention.opacity(0.5), lineWidth: 1) }
+                            }
+                        }
+                        Text(entry.inside)
+                            .font(Type.body(12))
+                            .lineSpacing(3)
+                            .foregroundStyle(Ink.paperFaint)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 8)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("→")
+                            .font(Type.mono(13))
+                            .foregroundStyle(Ink.paperDim)
+                        Text(entry.fact)
+                            .font(Type.mono(9))
+                            .kerning(1.1)
+                            .foregroundStyle(Ink.paperGhost)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                .padding(.vertical, 15)
+                Hairline()
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

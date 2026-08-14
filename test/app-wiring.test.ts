@@ -76,6 +76,55 @@ describe('guards over the app that actually ships', () => {
   });
 });
 
+describe('every settings row says what is behind it', () => {
+  /* From an audit of that screen. It was titled SECURITY, under a tab called
+   * SECURITY, with a first row reading SECURITY DIAGNOSTICS, and its value
+   * column mixed topics, statuses and facts with no pattern to learn. The
+   * complaint that started it was the true one: you could not tell what any
+   * row would open before tapping it.
+   *
+   * The fix is that every row carries a sentence naming what is inside. This
+   * guards that, because a row added later without one costs nothing at
+   * compile time and quietly undoes the audit. */
+  const settings = readFileSync('ios/LabyrinthVault/Screens/Settings.swift', 'utf8');
+
+  it('gives every row a description', () => {
+    const entries = [...settings.matchAll(/Entry\(title: "([^"]+)"/g)].map((m) => m[1]!);
+    expect(entries.length, 'no rows found, so a pass would mean nothing').toBeGreaterThanOrEqual(4);
+
+    const insides = [...settings.matchAll(/inside: (?:vault\.[A-Za-z]+\s*\n?\s*\?\s*)?"([^"]+)"/g)];
+    expect(insides.length, 'a row was added without an `inside`').toBeGreaterThanOrEqual(entries.length);
+    for (const [, text] of insides) {
+      expect(text!.length, `"${text}" is too short to tell anybody anything`).toBeGreaterThan(20);
+    }
+  });
+
+  it('names the erase where a person can find it', () => {
+    /* The one irreversible action in the app. It used to sit behind a row
+     * labelled KEY MANAGEMENT with the value ENCRYPTED, which named neither
+     * the recovery phrases nor the erase. */
+    const recovery = settings.slice(settings.indexOf('RECOVERY PHRASES'));
+    expect(recovery.slice(0, 400).toLowerCase()).toContain('erase');
+  });
+
+  it('marks rows that run something apart from rows that open something', () => {
+    expect(settings).toMatch(/var acts: Bool = false/);
+    expect(settings).toMatch(/acts: true/);
+  });
+
+  it('does not call the tab SECURITY any more, anywhere', () => {
+    /* Three uses of one word for three different things was the original
+     * complaint, and a stale VaultTabs(current:) elsewhere would light the
+     * wrong tab. */
+    const guilty: string[] = [];
+    for (const { path, text } of appSources()) {
+      if (/VaultTabs\(current: "SECURITY"\)/.test(text)) guilty.push(path);
+    }
+    expect(guilty).toEqual([]);
+    expect(readFileSync('ios/LabyrinthVault/App.swift', 'utf8')).toContain('("SETTINGS", .settings)');
+  });
+});
+
 describe('the vault seals under both layers, not just the typed one', () => {
   /* The device half is 32 bytes that never leave this phone's keychain, and
    * layering means AND: an extracted blob is useless off the device it was

@@ -61,7 +61,7 @@ struct AirgapView: View {
                     }
                     .padding(.horizontal, 24)
                 }
-                VaultTabs(current: "SECURITY")
+                VaultTabs(current: "SETTINGS")
             }
         }
     }
