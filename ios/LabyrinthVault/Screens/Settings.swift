@@ -55,6 +55,22 @@ struct SettingsView: View {
 
                         FieldRow(label: "APP VERSION", value: "0.1.0").padding(.top, 22)
                         FieldRow(label: "WIRE", value: "LV1 · BC-UR")
+                        /* A fact about this build rather than about the vault
+                         * at rest, which is why it sits with the version and
+                         * not under AT REST where it started. The same vault
+                         * opens either way; what differs is whether opening it
+                         * takes a second or a minute.
+                         *
+                         * It is on the first screen because of how it fails.
+                         * The native derivation is adopted through a string
+                         * literal shared between Swift and the bundle, and a
+                         * mismatch does not error: it silently falls back and
+                         * the app is merely slow. Two taps deep is not where
+                         * you put the readout for a fault with no other
+                         * symptom. */
+                        FieldRow(label: "KEY STRETCHING",
+                                 value: vault.kdfIsNative ? "COMPILED" : "INTERPRETED",
+                                 tone: vault.kdfIsNative ? .verified : .dim)
                         FieldRow(label: "VAULT ID", value: vault.vaultID)
 
                         VStack(alignment: .leading, spacing: 10) {
@@ -149,14 +165,6 @@ struct RecoveryView: View {
 
                         Eyebrow("AT REST", color: Ink.paperDim).padding(.top, 22).padding(.bottom, 8)
                         FieldRow(label: "ENCRYPTION", value: "ARGON2ID + XCHACHA20", tone: .verified)
-                        /* Not decoration. The native derivation is installed
-                         * by a string literal shared between Swift and the
-                         * bundle, and a mismatch does not fail: it silently
-                         * costs a minute on every unlock. This is where that
-                         * shows. */
-                        FieldRow(label: "KEY STRETCHING",
-                                 value: vault.kdfIsNative ? "COMPILED" : "INTERPRETED",
-                                 tone: vault.kdfIsNative ? .verified : .dim)
                         FieldRow(label: "PASSPHRASE", value: "REQUIRED TO OPEN")
                         FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                         FieldRow(label: "EXPORTABLE", value: "NO")
