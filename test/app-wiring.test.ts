@@ -662,6 +662,47 @@ describe('the native derivation is wired by the same name on both sides', () => 
       .toBeLessThan(evaluatedAt);
   });
 
+  it('Engine.swift imports the module Argon2id lives in', () => {
+    /* This one cost an archive. `Argon2id` is in the LabyrinthVaultKDF module
+     * because it is a separate SwiftPM target, which is the whole reason
+     * `swift build` can check it on Linux. The price is that Engine.swift
+     * needs an import, and Engine.swift imports JavaScriptCore and CryptoKit,
+     * so it is tier 2 in scripts/swift-check.sh: parsed, never type checked.
+     * A parser is perfectly happy with a name that resolves to nothing.
+     *
+     * So the pairing is asserted here, where both halves are just text. If a
+     * file calls into that module, it has to say so. */
+    const swift = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+    expect(swift, 'Engine.swift calls Argon2id without importing LabyrinthVaultKDF')
+      .toMatch(/^import LabyrinthVaultKDF$/m);
+  });
+
+  it('and no other Apple-only file calls Argon2id without importing it', () => {
+    /* The general form of the same mistake, for the next file that reaches for
+     * the native derivation. Everything under ios/LabyrinthVault is parsed and
+     * not compiled off a Mac, so this is the only place the two can be held
+     * together before an archive. */
+    const guilty: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith('.swift')) {
+          const text = readFileSync(path, 'utf8');
+          const code = text
+            .split('\n')
+            .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+            .join('\n');
+          if (/\bArgon2id\s*\./.test(code) && !/^import LabyrinthVaultKDF$/m.test(text)) {
+            guilty.push(path);
+          }
+        }
+      }
+    };
+    walk('ios/LabyrinthVault');
+    expect(guilty, 'these call Argon2id without importing LabyrinthVaultKDF').toEqual([]);
+  });
+
   it('host.ts reads that same name', () => {
     const host = readFileSync('src/bridge/host.ts', 'utf8');
     expect(host, `host.ts does not read ${NAME}`).toContain(NAME);

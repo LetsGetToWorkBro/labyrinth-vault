@@ -21,6 +21,13 @@
 import CryptoKit
 import Foundation
 import JavaScriptCore
+// The native Argon2id, and the vendored reference C beneath it. A separate
+// module because it is a separate SwiftPM target, which is what lets
+// `swift build` check it on every `npm test` with no Xcode anywhere. The price
+// of that separation is this line: Xcode is the only thing that type checks
+// this file, so a missing import is a failed archive and nothing sooner.
+// test/app-wiring.test.ts holds the import to the use.
+import LabyrinthVaultKDF
 import Security
 
 /// What the bundle answered, before it means anything.
