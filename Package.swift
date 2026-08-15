@@ -89,6 +89,7 @@ let package = Package(
             sources: [
                 "Model/TxSummary.swift",
                 "Model/MoneroSummary.swift",
+                "Model/MoneroFile.swift",
                 "Model/Refusal.swift",
                 "Model/Flow.swift",
                 "Model/Identity.swift",
@@ -197,6 +198,7 @@ let package = Package(
                 .copy("Fixtures/primitives.json"),
                 .copy("Fixtures/summary.json"),
                 .copy("Fixtures/monero-summary.json"),
+                .copy("Fixtures/monero-file.json"),
             ]
         ),
     ]

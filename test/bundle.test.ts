@@ -99,6 +99,8 @@ describe('the built bundle', () => {
      * compared, the same way the bundle is. */
     const paths = [
       'ios/LabyrinthVaultTests/Fixtures/summary.json',
+      'ios/LabyrinthVaultTests/Fixtures/monero-summary.json',
+      'ios/LabyrinthVaultTests/Fixtures/monero-file.json',
       'ios/LabyrinthVaultTests/Fixtures/primitives.json',
     ];
     const before = paths.map((path) => readFileSync(path));
@@ -137,14 +139,15 @@ describe('the built bundle', () => {
     /* It loaded in a bare context in beforeAll; this asserts the consequence.
      * The version is a literal on purpose: bumping HOST_VERSION should touch
      * this test, because a bump is a claim that the Swift side moved with it.
-     * 4 is the contract with reseal in it, for the two-layer migration.
+     * 4 is the contract with reseal in it, for the two-layer migration; 6
+     * adds `moneroFile`, which the read-only Monero screen calls.
      *
      * `kdf` is "engine" here and that is the point of asserting it. This
      * context has no `__labyrinthArgon2id` on its global, so the bundle found
      * no native derivation and said so. On the phone the same call answers
      * "native", and a build where it does not is a build that silently kept
      * the minute-long unlock. */
-    expect(call(api, 'version')).toEqual({ ok: true, version: 5, kdf: 'engine', cryptonight: 'absent' });
+    expect(call(api, 'version')).toEqual({ ok: true, version: 6, kdf: 'engine', cryptonight: 'absent' });
   });
 
   it('passes its own self-test inside the bundle', () => {
@@ -287,7 +290,22 @@ describe('the whole flow, through the bundle', () => {
       expect(answer.ok).toBe(false);
       expect(answer.code).toBe('monero-file-unsupported');
       expect(answer.problem).toContain('Monero unsigned transaction set');
-      expect(answer.problem).toMatch(/CryptoNight/);
+      /* This used to assert the refusal blamed CryptoNight, which was right
+       * for as long as it was true: the body is ChaCha20 under a key
+       * `cn_slow_hash` derives, and the vault had no CryptoNight. The C is
+       * vendored now and the unsigned set opens. So the assertion moved to
+       * the reason that does not expire: the file is the sender describing
+       * itself, and a signature over one would be a signature over nobody's
+       * word but theirs.
+       *
+       * These two paths still refuse, and what they are is why. `scan` sees
+       * one frame; `describe` is the Bitcoin transaction reader. Neither is
+       * holding a whole file. Reading one happens in `moneroFile`, fed by a
+       * payload that arrived on the XMRFILE kind and therefore arrived
+       * complete. test/host-monerofile.test.ts covers that path. */
+      expect(answer.problem).toMatch(/own account of its own transaction/);
+      expect(answer.problem, 'the refusal blames a dependency this build now has')
+        .not.toMatch(/CryptoNight/);
     }
 
     // And the Bitcoin path is not affected by any of it.
@@ -432,7 +450,7 @@ describe('the bundle adopts a host derivation when there is one', () => {
     runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
     const hosted = context.LabyrinthVault as ReturnType<typeof loadBundle>;
 
-    expect(call(hosted, 'version')).toEqual({ ok: true, version: 5, kdf: 'native', cryptonight: 'absent' });
+    expect(call(hosted, 'version')).toEqual({ ok: true, version: 6, kdf: 'native', cryptonight: 'absent' });
 
     const made = call(
       hosted,

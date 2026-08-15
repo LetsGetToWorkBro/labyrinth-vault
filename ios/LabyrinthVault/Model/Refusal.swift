@@ -18,7 +18,10 @@ import Foundation
 
 /// Every condition the reader refuses over: one case per fatal warning code in
 /// src/keys/psbt.ts, plus the named refusals the bridge raises directly, such
-/// as a Monero wallet file this build cannot open. Each is fatal: there is
+/// as one of Monero's own wallet files arriving where a signature was the
+/// question. (Arriving where *reading* is the question, an unsigned
+/// transaction set gets described instead: see Screens/MoneroFile.swift. This
+/// enum is the signing path's vocabulary.) Each is fatal: there is
 /// deliberately no associated "override" payload, and no case carries a way to
 /// continue.
 ///
@@ -77,7 +80,7 @@ enum Refusal: Equatable {
         case .opaqueOutput: ["CANNOT", "READ", "DESTINATION"]
         case .noKeys: ["NO", "SIGNING", "KEY"]
         case .unreadable: ["CANNOT", "READ", "TRANSACTION"]
-        case .moneroFile: ["MONERO", "NOT YET"]
+        case .moneroFile: ["NOT SIGNED", "FROM A FILE"]
         case .digestMismatch: ["CANNOT", "SIGN"]
         case .unrecognised: ["CANNOT", "SIGN"]
         }
@@ -91,7 +94,7 @@ enum Refusal: Equatable {
         case .opaqueOutput: ["AN OUTPUT PAYS", "A SCRIPT WITH NO", "READABLE ADDRESS."]
         case .noKeys: ["THIS WALLET IS", "WATCH-ONLY. IT HAS", "NO PRIVATE KEY."]
         case .unreadable: ["THESE BYTES ARE NOT", "A TRANSACTION THIS", "DEVICE CAN READ."]
-        case .moneroFile: ["THIS IS A MONERO", "WALLET FILE. THE", "VAULT CANNOT OPEN IT."]
+        case .moneroFile: ["THIS IS A MONERO", "WALLET FILE, AND A", "SIGNER CANNOT USE ONE."]
         case .digestMismatch: ["TRANSACTION DIGEST", "DOES NOT MATCH", "APPROVED SUMMARY."]
         case .unrecognised: ["THE READER REFUSED", "FOR A REASON THIS", "SCREEN CANNOT NAME."]
         }
@@ -128,11 +131,11 @@ enum Refusal: Equatable {
             "frame, and scanning again fixes it. The vault will not guess at a partial parse."
         case .moneroFile:
             "This is one of Monero's own wallet files, and it is a perfectly good one. The " +
-            "vault recognizes the header. What it cannot do is open it: everything past the " +
-            "header is encrypted with a key derived by CryptoNight, which this build does not " +
-            "implement, and signing a Monero transaction needs CLSAG ring signatures on top of " +
-            "that. Bitcoin signing works today. Monero here is keys, addresses and recovery " +
-            "phrases only. Nothing was signed and nothing was changed."
+            "vault will not sign it. Everything such a file contains is the sending wallet's " +
+            "own account of its own transaction, and a signature has to be over destinations " +
+            "this device rebuilt from its own keys. To send Monero the vault will check, start " +
+            "the payment in the Labyrinth wallet and show this device the code it produces. " +
+            "Nothing was signed and nothing was changed."
         case .digestMismatch:
             "The bytes in front of the signer are not the bytes that were reviewed on the " +
             "previous screen. Whatever happened between the two steps, a signature over " +
@@ -175,7 +178,7 @@ enum Refusal: Equatable {
             ("NO SIGNATURE PRODUCED", true)]
         case .moneroFile: [
             ("MONERO WALLET FILE RECOGNIZED", true),
-            ("CONTENTS ENCRYPTED · CANNOT OPEN", false),
+            ("FILE DESCRIBES ITSELF · NOT CHECKABLE", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .digestMismatch: [
             ("APPROVED SUMMARY DIGEST 9F2A1C04", false),

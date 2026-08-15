@@ -1,5 +1,6 @@
 /**
- * wallet2's file formats: recognizing them, and refusing them by name.
+ * wallet2's file formats: recognizing them, and saying which ones this build
+ * can open.
  *
  * ## What this is for
  *
@@ -9,8 +10,8 @@
  * exports in both directions. Each of those files starts with a magic string,
  * and everything after it is encrypted.
  *
- * This vault cannot open any of them yet. That is a fact worth being precise
- * about rather than vague, because the two ways of being vague are both bad:
+ * Recognizing one is worth doing on its own, because the two ways of being
+ * vague are both bad:
  *
  *   - saying "that is not a transaction" to a file that plainly *is* one
  *     tells somebody their file is broken when their file is fine, and the
@@ -18,62 +19,64 @@
  *     or conclude the app is broken;
  *   - pretending to read it, or partially reading it, would be worse still.
  *
- * So this module does the one thing it can do honestly: it identifies the
- * file, says exactly what it is, and says exactly which missing piece stops
- * the vault going further. `docs/monero-signing.md` is the long version.
+ * So every entry below carries `readable`: whether this build can open the
+ * container and describe what is inside it, or whether naming the file is the
+ * whole of what it can honestly offer. `docs/monero-signing.md` is the long
+ * version.
  *
- * ## Why it stops here
+ * ## What changed, and what did not
  *
- * Three layers sit between these bytes and a wallet2-compatible answer, and
- * they have to be built in order. This list was wrong for a while and the way
- * it was wrong mattered, so it is now written from the source rather than from
- * recollection: the citations below are to
- * `monero/src/wallet/wallet2.cpp` on release-v0.18.
+ * One entry is `readable` now. `Monero unsigned tx set` opens: the ChaCha20
+ * key comes from `crypto::cn_slow_hash` over the view secret key — CryptoNight
+ * variant 0, vendored as C in `vendor/cryptonight` and wired through
+ * `moneroexport.ts` — and the plaintext is a `binary_archive`, read by
+ * `monerounsigned.ts`. Those two layers were the reason this header used to
+ * say no to everything, and both are built.
  *
- *   1. **CryptoNight.** The container's ChaCha20 key comes from
- *      `crypto::cn_slow_hash`, Monero's old proof-of-work hash, over the view
- *      secret key. Implementing it means a 2 MB scratchpad, an AES round
- *      function, and four more hash functions (Blake, Groestl, JH, Skein) that
- *      pick the final result between them. Until that exists the file cannot
- *      even be decrypted. This one is as advertised, and it is the reason the
- *      envelope is not a weekend's work.
- *   2. **Monero's own `binary_archive`, which is *not* Boost.** This comment
- *      used to say the plaintext was "a C++ object graph serialized by
- *      Boost.Serialization, not a documented wire format". That is false for
- *      every format the current wallet writes. `save_tx` and `sign_tx` build
- *      the payload with `binary_archive<true>` (wallet2.cpp:7703, :8016), the
- *      output export likewise (:14905), and all three are Monero's own
- *      serializer: varints, fixed-width little-endian integers, explicit
- *      container counts. Boost appears only on the deprecated `\003`/`\004`
- *      read paths that modern wallets refuse to load by default.
+ * **Readable is not signable, and this is the distinction the whole module
+ * turns on.** `signable` is false for every container here, by design rather
+ * than by omission. What a `tx_construction_data` contains is the *sending*
+ * wallet's account of its own transaction; nothing in the file is evidence for
+ * anything in it. Signing needs each destination re-derived from the vault's
+ * own keys before a person is asked to approve, which is what
+ * `monerobuild.ts` does on this project's own wire. A screen that offered a
+ * signature over a file's self-description would be the exact failure this
+ * vault exists to refuse.
+ *
+ * ## Two corrections this header has already needed
+ *
+ * Kept, because both were load-bearing mistakes and the record is worth more
+ * than the tidiness. Citations are to `monero/src/wallet/wallet2.cpp` on
+ * release-v0.18.
+ *
+ *   1. **The plaintext is not Boost.** This used to describe the payload as a
+ *      C++ object graph produced by Boost.Serialization rather than any
+ *      documented wire format. False for every format the current wallet
+ *      writes. `save_tx`
+ *      and `sign_tx` build it with `binary_archive<true>` (wallet2.cpp:7703,
+ *      :8016) and the output export likewise (:14905): varints, fixed-width
+ *      little-endian integers, explicit container counts. Boost appears only
+ *      on the deprecated `\003`/`\004` read paths that modern wallets refuse
+ *      to load by default. The false version pointed at a Boost
+ *      portable-archive reader, which nothing here needs and which is far
+ *      harder than the thing actually required.
  *
  *      The key image export uses no archive at all. It is fixed-width
  *      concatenation written by hand — a little-endian `uint32` offset, the
  *      account's two public keys, then 96 bytes per record
  *      (wallet2.cpp:13933-13946).
  *
- *      The correction is worth this much space because the false version sent
- *      the reader towards writing a Boost portable-archive reader, which
- *      nothing here needs and which is far harder than the thing that is
- *      actually required.
- *   3. **The `unsigned_tx_set` struct graph.** Construction data, sources,
- *      ring members, destinations, subaddress indices. This is the layer that
- *      dominates the work, and it is design rather than line count: our
- *      in-memory shapes and wallet2's are not the same shapes.
+ *   2. **CLSAG and Bulletproofs+ were described as absent** after they had
+ *      shipped — `clsagSign`/`clsagVerify` in `monerosign.ts`,
+ *      `proveBulletproofPlus`/`verifyBulletproofPlus` in `bulletproofplus.ts`,
+ *      anchored to real on-chain proofs. Claiming a gap that had closed is the
+ *      same defect as claiming a capability that does not exist, pointing the
+ *      other way, and it is why `readable` is a field on the data rather than
+ *      a sentence in a comment.
  *
- * What is no longer on this list: **CLSAG and Bulletproofs+.** They used to be
- * item four, described there as absent. Both now ship with
- * provers and verifiers — `clsagSign`/`clsagVerify` in `monerosign.ts`,
- * `proveBulletproofPlus`/`verifyBulletproofPlus` in `bulletproofplus.ts` —
- * anchored to real on-chain proofs. The file claimed a gap that had been
- * closed, which is the same defect as claiming a capability that does not
- * exist, pointing the other way.
- *
- * The primitives underneath all of that — the derivations, the key image — are
+ * The primitives underneath all of it — the derivations, the key image — are
  * in `monerocrypto.ts` and are checked against 720 of the Monero project's own
- * vectors. That is the floor being laid. The layers above it are not being
- * guessed at, because a signing device that guesses is worse than one that
- * says no.
+ * vectors.
  */
 
 /** Which wallet2 file this is. */
@@ -95,6 +98,14 @@ interface Magic {
   what: string;
   /** What it would let the vault do, if the vault could open it. */
   purpose: string;
+  /**
+   * Whether this build can open the container and describe what is inside.
+   *
+   * A property of the file format, not of the file: a `readable` container
+   * can still fail to open, because it belongs to another wallet or because
+   * it is damaged. That answer comes from the reader, not from here.
+   */
+  readable: boolean;
 }
 
 /**
@@ -118,13 +129,18 @@ const MAGICS: Magic[] = ([
     version: 1,
     what: 'a Monero multisig unsigned transaction set',
     purpose: 'sign as one of several required signers',
+    /* Not a missing reader: this vault does not do multisig at all, in either
+     * currency, and reading the container would be the first thing that made
+     * it look as though it might. */
+    readable: false,
   },
   {
     kind: 'unsigned-tx-set',
     magic: 'Monero unsigned tx set',
     version: 5,
     what: 'a Monero unsigned transaction set',
-    purpose: 'read the payment and sign it',
+    purpose: 'read what the sending wallet says the payment is',
+    readable: true,
   },
   {
     kind: 'signed-tx-set',
@@ -132,6 +148,9 @@ const MAGICS: Magic[] = ([
     version: 5,
     what: 'a Monero signed transaction set',
     purpose: 'hand it back to the online wallet to broadcast',
+    /* A finished transaction, which is a thing to broadcast rather than a
+     * thing to read on a signer. Nothing this device does needs it. */
+    readable: false,
   },
   {
     kind: 'key-image-export',
@@ -139,6 +158,11 @@ const MAGICS: Magic[] = ([
     version: 3,
     what: 'a Monero key image export',
     purpose: 'tell the watching wallet which outputs are already spent',
+    /* This vault *writes* this one — see `exportKeyImageBlob` — and has a
+     * reader for it in `readKeyImageBlob`, used to prove the writer against
+     * Monero's own bytes. Nothing on a signing device wants to import
+     * somebody else's key images, so no screen offers it. */
+    readable: false,
   },
   {
     kind: 'multisig-export',
@@ -146,6 +170,7 @@ const MAGICS: Magic[] = ([
     version: 1,
     what: 'a Monero multisig export',
     purpose: 'exchange multisig information with the other signers',
+    readable: false,
   },
   {
     kind: 'output-export',
@@ -153,6 +178,7 @@ const MAGICS: Magic[] = ([
     version: 4,
     what: 'a Monero output export',
     purpose: 'let the watching wallet see which outputs you own',
+    readable: false,
   },
 ] as Magic[])
   /* Longest first. "Monero multisig unsigned tx set" and "Monero
@@ -172,12 +198,25 @@ export interface Container {
   /** The version this build read the format from. */
   expectedVersion: number;
   /**
-   * Whether the vault can act on it. Always false in this build, and typed as
-   * a boolean rather than omitted so that the day it is not false, every
-   * caller is already asking.
+   * Whether this build can open it and describe what is inside.
+   *
+   * True for the unsigned transaction set and false for the rest. A caller
+   * that ignores this and reads anyway gets a refusal from the reader rather
+   * than a wrong answer, but the point of the flag is to let a screen offer
+   * the right thing before it tries.
    */
-  usable: boolean;
-  /** Why not, in words that name the actual missing piece. */
+  readable: boolean;
+  /**
+   * Whether the vault will produce a signature over it. False for every one
+   * of these, in this build and by design, and typed as a boolean rather than
+   * omitted so that a caller cannot forget to ask.
+   *
+   * `readable && !signable` is the whole shape of what this vault does with
+   * Monero's files: it can tell you what one says, and what one says is the
+   * sending wallet's own account of itself. See the module header.
+   */
+  signable: boolean;
+  /** What the vault will not do with it, in words fit for a screen. */
   refusal: string;
 }
 
@@ -209,12 +248,21 @@ export function readContainer(bytes: Uint8Array): Container | null {
       bodyLength: Math.max(0, bytes.length - entry.magic.length - 1),
       version,
       expectedVersion: entry.version,
-      usable: false,
-      refusal:
-        `This is ${entry.what}. The vault can tell you that much and no more: ` +
-        'everything after the header is encrypted with a key derived by CryptoNight, ' +
-        'which this build does not implement. Monero transactions cannot be signed here yet. ' +
-        'Nothing was signed and nothing was changed.',
+      readable: entry.readable,
+      /* Not a field with a `false` waiting to be flipped. Nothing this vault
+       * could learn about Monero's file formats would make one of them
+       * signable, because the obstacle is not a format: a construction plan
+       * is what the *sender* says, and a signature has to be over what the
+       * vault re-derived. See the module header. */
+      signable: false,
+      refusal: entry.readable
+        ? `This is ${entry.what}. The vault can open it and tell you what the sending ` +
+          'wallet says the payment is. It will not sign it: everything in the file is ' +
+          "that wallet's own account of its own transaction, and a signature has to be " +
+          "over destinations this device derived from its own keys. Nothing was signed."
+        : `This is ${entry.what}. The vault recognizes the header, and this build has no ` +
+          'reader for what follows it, so naming the file is the whole of what it can ' +
+          'honestly offer. Nothing was signed and nothing was changed.',
     };
   }
   return null;
@@ -237,6 +285,11 @@ export function readContainerText(text: string): Container | null {
 }
 
 /** Every magic this build knows, for tests and for documentation. */
-export function knownContainers(): { kind: ContainerKind; magic: string; purpose: string }[] {
-  return MAGICS.map(({ kind, magic, purpose }) => ({ kind, magic, purpose }));
+export function knownContainers(): {
+  kind: ContainerKind;
+  magic: string;
+  purpose: string;
+  readable: boolean;
+}[] {
+  return MAGICS.map(({ kind, magic, purpose, readable }) => ({ kind, magic, purpose, readable }));
 }

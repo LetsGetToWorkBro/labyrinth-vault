@@ -71,6 +71,23 @@ export type PayloadKind =
   | 'XMROUTPUTS'
   /** The vault's answer: one key image per output. See `XMROUTPUTS`. */
   | 'XMRKEYIMAGES'
+  /**
+   * One of Monero's own wallet files, byte for byte, on its way to the vault
+   * to be *read*.
+   *
+   * Deliberately distinct from `XMRUNSIGNED`, which is this project's own
+   * request format and the only thing the vault will sign. This kind carries
+   * whatever `wallet2` wrote — an `unsigned_monero_tx` from Feather or the
+   * Monero GUI, most usefully — and the vault opens it, describes it, and
+   * stops there. See `src/keys/monerotx.ts` for why describing and signing are
+   * different jobs rather than different amounts of the same job.
+   *
+   * It exists because the alternative was a reader nothing could reach. The
+   * describing side was built and had no route in: a wallet2 file arriving on
+   * any other kind would have been handed to the Bitcoin transaction reader,
+   * which would correctly say it is not a PSBT.
+   */
+  | 'XMRFILE'
   /** A finished, signed, broadcastable raw transaction. */
   | 'TXSIGNED';
 
@@ -86,6 +103,7 @@ const KINDS: PayloadKind[] = [
   'XMRSIGNED',
   'XMROUTPUTS',
   'XMRKEYIMAGES',
+  'XMRFILE',
   'TXSIGNED',
 ];
 

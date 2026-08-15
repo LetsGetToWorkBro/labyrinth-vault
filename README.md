@@ -182,12 +182,16 @@ Early. What exists and is tested:
   transcribed by hand here, and that is exactly why its 120 vectors are tested
   in isolation, with no hashing before and no cofactor multiplication after.
 
-  This is not Monero signing, and `src/keys/monerotx.ts` says so out loud:
-  it recognizes all six of wallet2's file formats and refuses them by name,
+  `src/keys/monerotx.ts` recognizes all six of wallet2's file formats by name,
   because telling somebody their perfectly good `unsigned_monero_tx` "is not a
-  transaction" sends them off to debug a file that was never wrong. See
-  [docs/monero-signing.md](docs/monero-signing.md) for the four layers that are
-  still missing and why none of them is being guessed at.
+  transaction" sends them off to debug a file that was never wrong. One of the
+  six opens: an `unsigned_monero_tx` is decrypted and read
+  (`src/keys/monerounsigned.ts`) and shown on a read-only screen. None of the
+  six is signed, and that one is a decision rather than a gap: the file is the
+  sending wallet's account of its own transaction, so a signature over it would
+  be a signature over nobody's word but theirs. See
+  [docs/monero-signing.md](docs/monero-signing.md) for what is left and why
+  none of it is being guessed at.
 
 - **The confirmation screen's contents** (`src/keys/psbt.ts`). The part that
   is actually the security. It reads an unsigned transaction and says what it
@@ -368,13 +372,15 @@ Next, in order:
 3. **A node client for the wallet**, so the numbers stop being fixtures. Until
    then every screen showing a balance says `DEMO DATA`, and external
    TestFlight is gated on this rather than on the calendar.
-4. **Monero transaction signing.** The primitives are built and pinned to
-   Monero's own vectors; what is left is CryptoNight, a Boost
-   portable-binary-archive reader, wallet2's `unsigned_tx_set` structure and
-   CLSAG with Bulletproofs+. Each is named, in order, in
-   [docs/monero-signing.md](docs/monero-signing.md), along with the reason none
-   of it ships until it can be tested against a real Monero wallet rather than
-   against itself.
+4. **Monero signing, proved against something that is not us.** The primitives,
+   CLSAG, Bulletproofs+, the transaction assembly and the confirmation screen
+   are built and pinned to Monero's own vectors and to bytes Monero's own code
+   produced. What has not happened is the differential test that matters:
+   generating a set with a real Monero wallet, signing it on this device, and
+   having a daemon accept the result. Until that has run on testnet and then
+   stagenet, this is code that agrees with a fixture rather than with the
+   network. [docs/monero-signing.md](docs/monero-signing.md) has the order of
+   work and the two claims this repository has already had to correct.
 
 ## Marketing site
 

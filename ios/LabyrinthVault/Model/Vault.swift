@@ -154,6 +154,9 @@ enum Route: Equatable {
     /// The answer to a companion's key image request: how many were
     /// computed, how many refused, and the frames to show back.
     case keyImages(Engine.KeyImagesReply)
+    /// One of Monero's own wallet files, read and described. Carries no
+    /// digest, because there is nothing here to approve: see MoneroFile.swift.
+    case xmrFile(MoneroFile)
     case refused(Refusal)
     case settings
     case bitcoin
@@ -805,6 +808,35 @@ final class Vault: ObservableObject {
             return
         }
 
+        if reply.kind == "XMRFILE" {
+            /* One of Monero's own wallet files, arriving to be *read*.
+             *
+             * A separate kind from XMRUNSIGNED and a separate destination,
+             * because the two are not degrees of the same thing. XMRUNSIGNED
+             * is this project's own request, shaped so the engine can
+             * re-derive every destination from the vault's keys before a
+             * person sees a number; it ends at a signature. This is whatever
+             * `wallet2` wrote, and the engine can open it and say what it
+             * claims and no more. The screens say which of the two you are
+             * looking at, and the routes cannot be confused for each other. */
+            do {
+                let file = try engine.moneroFile(payloadHex: payload)
+                Haptic.tick()
+                go(.xmrFile(file))
+            } catch EngineError.refusedAs(let code, _) {
+                Haptic.refuse()
+                go(.refused(Refusal(code: code)))
+            } catch {
+                /* A locked vault, or bytes that are not one of these files at
+                 * all. A file that is real and will not open is not here: it
+                 * comes back as a reply with `readable` false, and the screen
+                 * says which file it is and why. */
+                Haptic.refuse()
+                go(.refused(.unreadable))
+            }
+            return
+        }
+
         if reply.kind == "XMRUNSIGNED" {
             do {
                 let summary = try engine.moneroDescribe(payloadHex: payload)
@@ -916,6 +948,7 @@ final class Vault: ObservableObject {
         case .xmrSigned: .signed
         case .xmrSignedQR: .signedQR
         case .keyImages: .keyImages
+        case .xmrFile: .xmrFile
         case .refused: .refused
         case .settings: .settings
         case .bitcoin: .bitcoin

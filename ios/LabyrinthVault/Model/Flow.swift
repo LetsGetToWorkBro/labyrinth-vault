@@ -31,6 +31,10 @@ public enum RouteKind: String, CaseIterable, Sendable {
     case launch, setup, unlock, home, airgap, export, scanner, acquiring, received
     case review, destination, approve, signed, signedQR, refused
     case keyImages
+    /// The read-only Monero screen: one of `wallet2`'s own files, described.
+    /// A sibling of `keyImages` rather than of `review` — it is the end of a
+    /// scan, not the start of a signature.
+    case xmrFile
     case settings, bitcoin, monero, recovery
 }
 
@@ -75,6 +79,19 @@ public enum Flow {
              * image frames exists because a payload just finished assembling,
              * and walking into it from anywhere else would animate a stale
              * answer about a request nobody just made. */
+            return from == .scanner || from == .acquiring || from == .received
+        case .xmrFile:
+            /* The scan path only, for the same reason as `keyImages`: the
+             * screen exists because a payload just finished assembling, and
+             * arriving from anywhere else would describe a file nobody just
+             * showed the camera.
+             *
+             * It is listed here rather than left to the permissive default so
+             * that it can never be reached from `review`, `approve` or
+             * `signed`. Not because describing a file after a signature would
+             * be unsafe, but because a route between the signing path and a
+             * screen full of unverified amounts is the kind of adjacency that
+             * later gets read as continuity. */
             return from == .scanner || from == .acquiring || from == .received
         case .destination:
             return from == .review

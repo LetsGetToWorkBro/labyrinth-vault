@@ -1,5 +1,5 @@
 /**
- * The wallet2 files, recognized and refused.
+ * The wallet2 files: recognized, one of them opened, none of them signed.
  *
  * This is a small module and it would be easy to under-test, so it is worth
  * saying what the failure would look like. It is not a wrong signature; this
@@ -9,9 +9,17 @@
  * wallet, or to conclude the vault is broken.
  *
  * So what is tested is the honesty of the answer: that each of the six file
- * kinds is named, that a newer version of one is still named, that the refusal
- * says what is actually missing, and that nothing else in the world gets
- * mistaken for one.
+ * kinds is named, that a newer version of one is still named, that the words
+ * say what this build actually does with each, and that nothing else in the
+ * world gets mistaken for one.
+ *
+ * The two flags carry most of that and they are deliberately not one flag.
+ * `readable` moves as the build gains readers — it is true for the unsigned
+ * transaction set now and was false for everything when this file was written.
+ * `signable` does not move, because the obstacle is not a reader: what a
+ * wallet2 file contains is the sender's account of its own transaction, so a
+ * signature over one would be a signature over an unverified claim. The tests
+ * below hold each to its own standard.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -52,8 +60,15 @@ describe('the six wallet2 files', () => {
       const found = readContainer(container(magic, 5));
       expect(found, `${magic} was not recognized`).not.toBeNull();
       expect(found!.kind).toBe(kind);
-      expect(found!.usable).toBe(false);
+      expect(found!.signable).toBe(false);
     }
+  });
+
+  it('opens exactly one of them, and says which', () => {
+    /* Pinned to the kind rather than to a count, so that adding a reader is a
+     * deliberate edit here and not a number that quietly went up. */
+    const readable = knownContainers().filter((k) => k.readable).map((k) => k.kind);
+    expect(readable).toEqual(['unsigned-tx-set']);
   });
 
   it('cannot let a shorter magic shadow a longer one', () => {
@@ -108,21 +123,43 @@ describe('the six wallet2 files', () => {
 
 describe('the refusal is the point', () => {
   const found = readContainer(container('Monero unsigned tx set', 5))!;
+  const closed = readContainer(container('Monero output export', 4))!;
 
   it('says what the file is, not that it is unreadable', () => {
     expect(found.refusal).toContain('Monero unsigned transaction set');
     expect(found.refusal).not.toMatch(/not a transaction/i);
   });
 
-  it('names the actual missing piece', () => {
-    // Vague is the failure mode. "CryptoNight" is a thing somebody can look up.
-    expect(found.refusal).toMatch(/CryptoNight/);
+  it('says why a file it can open is still not signed', () => {
+    /* The sentence that has to survive every future edit of this module. The
+     * reason is not a missing feature — naming one would invite somebody to
+     * go and build it — it is that the file describes itself. */
+    expect(found.refusal).toMatch(/own account of its own transaction/);
+    expect(found.refusal).toMatch(/derived from its own keys/);
     expect(found.refusal).toMatch(/nothing was signed/i);
   });
 
-  it('is never usable in this build, whatever the file', () => {
+  it('says something different about a file it has no reader for', () => {
+    expect(closed.refusal).toMatch(/no reader/);
+    expect(closed.refusal).not.toMatch(/own account of its own transaction/);
+  });
+
+  it('no longer blames CryptoNight, which this build has', () => {
+    /* This test is the fossil of a true sentence that stopped being true.
+     * Every refusal here used to say the body was encrypted under a key
+     * derived by CryptoNight "which this build does not implement", and it
+     * was the honest answer for as long as it was the answer. The C is
+     * vendored now (vendor/cryptonight), the unsigned set opens, and a
+     * refusal citing a missing dependency that is present would send somebody
+     * to debug the one part of this that works. */
     for (const { magic } of knownContainers()) {
-      expect(readContainer(container(magic, 1))!.usable).toBe(false);
+      expect(readContainer(container(magic, 1))!.refusal).not.toMatch(/CryptoNight/);
+    }
+  });
+
+  it('is never signable in this build, whatever the file', () => {
+    for (const { magic } of knownContainers()) {
+      expect(readContainer(container(magic, 1))!.signable).toBe(false);
     }
   });
 
@@ -166,10 +203,24 @@ describe('what is not a Monero file', () => {
 describe('the module says what it cannot do, where somebody will read it', () => {
   const source = readFileSync('src/keys/monerotx.ts', 'utf8');
 
-  it('names all four missing layers', () => {
-    for (const layer of ['CryptoNight', 'Boost', 'unsigned_tx_set', 'CLSAG']) {
+  it('keeps the record of what it once got wrong', () => {
+    /* This used to assert that four missing layers were named. Three of the
+     * four are built, so asserting they are still described as missing would
+     * be a test pinning a stale claim — which this repository has done before
+     * and which is why the corrections stay in the header rather than being
+     * quietly deleted along with the mistakes. What must survive is the
+     * evidence: Boost was the wrong answer, CLSAG was called absent after it
+     * shipped, and both are written down as errors. */
+    for (const layer of ['CryptoNight', 'Boost', 'CLSAG', 'binary_archive']) {
       expect(source, `${layer} is not named in the module comment`).toContain(layer);
     }
+    expect(source, 'the Boost correction was dropped').toMatch(/not Boost|is not Boost/);
+  });
+
+  it('states the one thing that is not a missing layer', () => {
+    /* Readable and signable are different questions, and the header is where
+     * a reader learns that the second one is not waiting on work. */
+    expect(source).toMatch(/Readable is not signable/);
   });
 
   it('exports the code the app switches on', () => {

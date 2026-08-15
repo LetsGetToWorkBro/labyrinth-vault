@@ -77,6 +77,7 @@ struct RootView: View {
         case .xmrSigned(let tx, let result): XmrSignedView(tx: tx, result: result)
         case .xmrSignedQR(let tx, let result): XmrSignedQRView(tx: tx, result: result)
         case .keyImages(let result): KeyImagesView(result: result)
+        case .xmrFile(let file): MoneroFileView(file: file)
         case .refused(let refusal): RefusalView(refusal: refusal)
         case .settings: SettingsView()
         case .bitcoin: BitcoinView()
@@ -108,6 +109,7 @@ struct RootView: View {
         case .xmrSigned: "xmrsigned"
         case .xmrSignedQR: "xmrsignedqr"
         case .keyImages: "keyimages"
+        case .xmrFile: "xmrfile"
         case .refused(let r): "refused-\(r.headline.joined())"
         case .settings: "settings"
         case .bitcoin: "bitcoin"

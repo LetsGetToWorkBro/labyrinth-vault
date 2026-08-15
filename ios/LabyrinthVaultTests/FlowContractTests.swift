@@ -99,6 +99,31 @@ final class FlowContractTests: XCTestCase {
         XCTAssertFalse(Flow.allowed(from: .keyImages, to: .signed))
     }
 
+    func testTheReadOnlyMoneroScreenIsNotOnTheSigningPath() {
+        /* `xmrFile` renders one of Monero's own wallet files: the sending
+         * wallet's account of its own transaction, opened and shown, checked
+         * against nothing. It reaches no state that produces a signature, and
+         * no state that produces one reaches it.
+         *
+         * The second half is the one worth a test. Nothing would be unsafe
+         * about describing a file after signing something else; what would be
+         * unsafe is a route between the signing path and a screen full of
+         * unverified amounts, because adjacency is how two screens come to be
+         * read as one flow. */
+        let allowed: Set<RouteKind> = [.scanner, .acquiring, .received]
+        for from in RouteKind.allCases where Flow.allowed(from: from, to: .xmrFile) {
+            XCTAssertTrue(allowed.contains(from),
+                          "xmrFile reachable from \(from), which never read a file")
+        }
+        XCTAssertTrue(Flow.allowed(from: .xmrFile, to: .home))
+        XCTAssertTrue(Flow.allowed(from: .xmrFile, to: .scanner))
+        XCTAssertFalse(Flow.allowed(from: .xmrFile, to: .approve))
+        XCTAssertFalse(Flow.allowed(from: .xmrFile, to: .signed))
+        XCTAssertFalse(Flow.allowed(from: .review, to: .xmrFile))
+        XCTAssertFalse(Flow.allowed(from: .approve, to: .xmrFile))
+        XCTAssertFalse(Flow.allowed(from: .signed, to: .xmrFile))
+    }
+
     func testUnlockIsEnteredOnlyFromTheLaunchGate() {
         /* The other way in — the forced lock on backgrounding — bypasses the
          * table by design (see Flow.swift): a security preemption a table

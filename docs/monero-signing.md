@@ -34,8 +34,8 @@ exists only in Monero's `crypto-ops.c`. It is transcribed by hand in this
 repository, which is precisely why the Monero project's own vectors for it,
 with nothing wrapped around them, are in the test suite.
 
-`src/keys/monerotx.ts` recognizes Monero's own file formats and refuses them by
-name. All six magic strings from `src/wallet/wallet2.cpp`:
+`src/keys/monerotx.ts` recognizes Monero's own file formats by name. All six
+magic strings from `src/wallet/wallet2.cpp`:
 
 - `Monero unsigned tx set`: the file a watching wallet writes for an offline
   signer. This is the one that matters.
@@ -46,16 +46,27 @@ name. All six magic strings from `src/wallet/wallet2.cpp`:
 - `Monero output export`: which outputs you own.
 
 Each literal in wallet2.cpp ends in a version byte. That byte is deliberately
-not part of the match: the vault refuses all six anyway, and a file from a
-newer Monero should still be *named* rather than reported as unrecognised
-bytes. The version seen and the version this code was written against are both
-reported.
+not part of the match: a file from a newer Monero should still be *named*
+rather than reported as unrecognised bytes. The version seen and the version
+this code was written against are both reported.
+
+Each entry carries two booleans, and they are two rather than one because they
+move for different reasons.
+
+- **`readable`** is whether this build can open the container and describe
+  what is inside it. It is true for `Monero unsigned tx set` and false for the
+  other five, and it moves as readers get written. When this document was
+  first drafted it was false for everything.
+- **`signable`** is whether the vault will produce a signature over one. It is
+  false for all six and is not waiting on work. See "It reads and does not
+  sign" below: the obstacle is not a missing reader, it is that the file is
+  the sending wallet's account of its own transaction.
 
 Recognition is not a feature for its own sake. Consider the alternative: a
 signing device tells somebody their perfectly good `unsigned_monero_tx` "is not
 a transaction", and they go off to re-export a file that was never wrong, or
-conclude the app is broken. The refusal says what the file is and what is
-missing.
+conclude the app is broken. Naming the file says what it is and what the vault
+will do with it.
 
 ## Done since this document was written: CryptoNight, and the key-image export
 
@@ -143,6 +154,37 @@ is the *sender's* description of their own transaction and a watch-only wallet
 that lied about a destination produces a file that outlines beautifully.
 `outlineTx` is arithmetic over a claim and its own source says so.
 
+## Done since: the screen that shows it
+
+A reader nothing can reach is not a capability, and for one commit that is
+what this was: the engine could open an `unsigned_tx_set` and the app still
+answered every wallet2 file with a blanket refusal. Three things closed that.
+
+- **A wire kind.** `XMRFILE` in `src/airgap/envelope.ts` carries one of
+  Monero's own files, byte for byte, to be read. It is deliberately not
+  `XMRUNSIGNED`, which is this project's own request format and the only thing
+  the vault signs. A payload arriving on it has been assembled and checksummed,
+  which is what makes describing it possible at all: `scan` sees one frame and
+  `describe` is the Bitcoin transaction reader, so both of those still refuse.
+- **A host function.** `moneroFile` in `src/bridge/host.ts` requires an
+  unlocked vault, opens the container, and answers with what the file says.
+  A file it will not open is still an answer rather than a failure: the reply
+  names the file and carries the reason, because "this is a Monero unsigned
+  transaction set and it belongs to a different wallet" is more use than a
+  blank refusal, and there is no fail-closed decision resting on it.
+- **A screen.** `ios/LabyrinthVault/Screens/MoneroFile.swift`, reached by its
+  own route. It says what the file is, what it claims, whose claim that is,
+  and that the vault will not sign it. The design constraints are written at
+  the top of that file and guarded in `test/app-wiring.test.ts`: no lever that
+  signs, no hold, no use of the app's one green (which on the confirmation
+  screens means "the vault re-derived this and it matched"), the caveat placed
+  above the figures rather than under them, and a route that touches neither
+  end of the signing path.
+
+The last point on that screen is the one that keeps it from being a dead end:
+it names the route that does work, which is to start the payment in the
+Labyrinth wallet and let the vault check it before anybody approves anything.
+
 ## What is not built
 
 Two layers, in the order they have to be built.
@@ -222,8 +264,12 @@ verifier, and the verifier against real proofs taken off the chain, which is
 the arrangement that makes a second implementation of somebody else's
 cryptography defensible at all.
 
-What is *not* done is the wallet2 container around them, and the correction
-worth carrying forward is that its plaintext is **not** Boost.Serialization.
+What is *not* done is the differential test: generating a set with a real
+Monero wallet, signing it here, and having a daemon accept the result. The
+wallet2 container is no longer on that list in the reading direction (see
+"Done since", above); writing a `signed_monero_tx` back into one is, and is
+not started. The correction worth carrying forward is that the plaintext of
+these containers is **not** Boost.Serialization.
 `save_tx` and `sign_tx` use Monero's own `binary_archive`
 (`wallet2.cpp:7703`, `:8016`), and the key image export uses no archive at all,
 just fixed-width concatenation written by hand (`:13933-13946`). That was
@@ -260,11 +306,15 @@ half-built.
    `src/keys/monerounsigned.ts`, including the
    `encrypt_with_view_secret_key` envelope around it, so a whole file reads
    end to end. It does **not** sign one; see below.
-5. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
+5. ~~A way for a person to see any of that~~. Done: the `XMRFILE` wire kind,
+   `moneroFile` on the bridge, and a read-only screen. Listed as its own step
+   because it was briefly skipped, and a reader with no route to it is
+   indistinguishable from no reader at all.
+6. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
    then end to end against a daemon on testnet, then stagenet, before anything
    touches mainnet.
 
-Step 5 also needs the thing the Bitcoin side already has: a confirmation screen
+Step 6 also needs the thing the Bitcoin side already has: a confirmation screen
 that shows what is actually being signed, re-derived from the vault's own keys
 rather than read from the file. That is the security, and it does not come free
 with the signature.

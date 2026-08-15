@@ -40,7 +40,7 @@ import Security
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 5
+    static let expectedVersion = 6
 
     private let context: JSContext
     private let api: JSValue
@@ -289,6 +289,19 @@ final class Engine {
     /// description it produced.
     func sign(psbtHex: String, approvedDigest: String) throws -> SignReply {
         try call("sign", [psbtHex, approvedDigest])
+    }
+
+    /// Open one of Monero's own wallet files and say what is in it.
+    ///
+    /// Read only, and deliberately no sibling that signs. What comes back is
+    /// the sending wallet's account of its own transaction, unchecked and
+    /// uncheckable from the file alone, so the reply carries no digest and
+    /// there is nothing for `moneroSign` to act on. See MoneroFile.swift.
+    ///
+    /// Needs an unlocked vault: the file's body is encrypted under a key
+    /// derived from the view secret, which lives in the engine's session.
+    func moneroFile(payloadHex: String) throws -> MoneroFile {
+        try call("moneroFile", [payloadHex])
     }
 
     /// Read an unsigned Monero set. The engine parses, re-derives the change

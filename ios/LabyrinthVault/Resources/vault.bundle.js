@@ -1189,6 +1189,7 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     "XMRSIGNED",
     "XMROUTPUTS",
     "XMRKEYIMAGES",
+    "XMRFILE",
     "TXSIGNED"
   ];
   var DEFAULT_PART_BYTES = 400;
@@ -2777,6 +2778,11 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       clean2(s2, k2, i2);
     clean2(t);
   }
+  var chacha20orig = /* @__PURE__ */ createCipher(chachaCore, {
+    counterRight: false,
+    counterLength: 8,
+    allowShortKeys: true
+  });
   var xchacha20 = /* @__PURE__ */ createCipher(chachaCore, {
     counterRight: false,
     counterLength: 8,
@@ -6841,6 +6847,7 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     return out;
   })();
   var MAGIC_LENGTH = MAGIC_BYTES.length;
+  var IV_BYTES = 8;
   var SIGNATURE_BYTES = 64;
   var KEY_IMAGE_BYTES = 32;
   var RECORD_BYTES = KEY_IMAGE_BYTES + SIGNATURE_BYTES;
@@ -6851,6 +6858,34 @@ globalThis.TextDecoder.prototype.decode = function (input) {
   }
   function nativeCnSlowHashInstalled() {
     return nativeCnSlowHash !== null;
+  }
+  function chachaKeyFor(viewSecret, rounds = 1) {
+    if (viewSecret.length !== 32) throw new Error("A view secret key is 32 bytes.");
+    if (!Number.isInteger(rounds) || rounds < 1 || rounds > 1e4) {
+      throw new Error(`Refusing ${rounds} key derivation rounds.`);
+    }
+    if (!nativeCnSlowHash) {
+      throw new Error(
+        "This build has no CryptoNight, so a Monero key-image export cannot be encrypted the way other wallets read it."
+      );
+    }
+    let digest = nativeCnSlowHash(viewSecret);
+    if (digest.length !== 32) throw new Error("The native CryptoNight returned the wrong length.");
+    for (let n = 1; n < rounds; n++) {
+      digest = nativeCnSlowHash(digest);
+      if (digest.length !== 32) throw new Error("The native CryptoNight returned the wrong length.");
+    }
+    return digest;
+  }
+  function decryptWithViewSecretKey(body, viewSecret, kdfRounds = 1) {
+    if (body.length < IV_BYTES + SIGNATURE_BYTES) return null;
+    const iv = body.subarray(0, IV_BYTES);
+    const ciphertext = body.subarray(IV_BYTES, body.length - SIGNATURE_BYTES);
+    try {
+      return chacha20orig(chachaKeyFor(viewSecret, kdfRounds), iv, ciphertext);
+    } catch {
+      return null;
+    }
   }
 
   // node_modules/@noble/hashes/hmac.js
@@ -16455,42 +16490,57 @@ zoo`.split("\n"));
       magic: "Monero multisig unsigned tx set",
       version: 1,
       what: "a Monero multisig unsigned transaction set",
-      purpose: "sign as one of several required signers"
+      purpose: "sign as one of several required signers",
+      /* Not a missing reader: this vault does not do multisig at all, in either
+       * currency, and reading the container would be the first thing that made
+       * it look as though it might. */
+      readable: false
     },
     {
       kind: "unsigned-tx-set",
       magic: "Monero unsigned tx set",
       version: 5,
       what: "a Monero unsigned transaction set",
-      purpose: "read the payment and sign it"
+      purpose: "read what the sending wallet says the payment is",
+      readable: true
     },
     {
       kind: "signed-tx-set",
       magic: "Monero signed tx set",
       version: 5,
       what: "a Monero signed transaction set",
-      purpose: "hand it back to the online wallet to broadcast"
+      purpose: "hand it back to the online wallet to broadcast",
+      /* A finished transaction, which is a thing to broadcast rather than a
+       * thing to read on a signer. Nothing this device does needs it. */
+      readable: false
     },
     {
       kind: "key-image-export",
       magic: "Monero key image export",
       version: 3,
       what: "a Monero key image export",
-      purpose: "tell the watching wallet which outputs are already spent"
+      purpose: "tell the watching wallet which outputs are already spent",
+      /* This vault *writes* this one — see `exportKeyImageBlob` — and has a
+       * reader for it in `readKeyImageBlob`, used to prove the writer against
+       * Monero's own bytes. Nothing on a signing device wants to import
+       * somebody else's key images, so no screen offers it. */
+      readable: false
     },
     {
       kind: "multisig-export",
       magic: "Monero multisig export",
       version: 1,
       what: "a Monero multisig export",
-      purpose: "exchange multisig information with the other signers"
+      purpose: "exchange multisig information with the other signers",
+      readable: false
     },
     {
       kind: "output-export",
       magic: "Monero output export",
       version: 4,
       what: "a Monero output export",
-      purpose: "let the watching wallet see which outputs you own"
+      purpose: "let the watching wallet see which outputs you own",
+      readable: false
     }
   ].sort((a, b) => b.magic.length - a.magic.length);
   var MONERO_UNSUPPORTED = "monero-file-unsupported";
@@ -16512,8 +16562,14 @@ zoo`.split("\n"));
         bodyLength: Math.max(0, bytes.length - entry.magic.length - 1),
         version,
         expectedVersion: entry.version,
-        usable: false,
-        refusal: `This is ${entry.what}. The vault can tell you that much and no more: everything after the header is encrypted with a key derived by CryptoNight, which this build does not implement. Monero transactions cannot be signed here yet. Nothing was signed and nothing was changed.`
+        readable: entry.readable,
+        /* Not a field with a `false` waiting to be flipped. Nothing this vault
+         * could learn about Monero's file formats would make one of them
+         * signable, because the obstacle is not a format: a construction plan
+         * is what the *sender* says, and a signature has to be over what the
+         * vault re-derived. See the module header. */
+        signable: false,
+        refusal: entry.readable ? `This is ${entry.what}. The vault can open it and tell you what the sending wallet says the payment is. It will not sign it: everything in the file is that wallet's own account of its own transaction, and a signature has to be over destinations this device derived from its own keys. Nothing was signed.` : `This is ${entry.what}. The vault recognizes the header, and this build has no reader for what follows it, so naming the file is the whole of what it can honestly offer. Nothing was signed and nothing was changed.`
       };
     }
     return null;
@@ -16524,6 +16580,359 @@ zoo`.split("\n"));
     const bytes = new Uint8Array(value.length);
     for (let i = 0; i < value.length; i++) bytes[i] = value.charCodeAt(i) & 255;
     return readContainer(bytes);
+  }
+
+  // src/keys/binaryarchive.ts
+  var ArchiveError = class extends Error {
+    constructor(message, at) {
+      super(`${message} (at byte ${at})`);
+      __publicField(this, "at", at);
+      this.name = "ArchiveError";
+    }
+  };
+  var MAX_ARRAY = 1e6;
+  var BinaryArchive = class {
+    constructor(bytes) {
+      __publicField(this, "bytes", bytes);
+      __publicField(this, "at", 0);
+    }
+    get offset() {
+      return this.at;
+    }
+    get remaining() {
+      return this.bytes.length - this.at;
+    }
+    get done() {
+      return this.at >= this.bytes.length;
+    }
+    need(n, what) {
+      if (n < 0 || this.at + n > this.bytes.length) {
+        throw new ArchiveError(`${what} needs ${n} bytes and ${this.remaining} remain`, this.at);
+      }
+    }
+    /** Raw bytes, no length prefix. Keys, hashes, masks. */
+    readBlob(n) {
+      this.need(n, "a blob");
+      const out = this.bytes.slice(this.at, this.at + n);
+      this.at += n;
+      return out;
+    }
+    /** Exactly 32 bytes, which is every key and hash in this format. */
+    readKey() {
+      return this.readBlob(32);
+    }
+    readU8() {
+      this.need(1, "a byte");
+      return this.bytes[this.at++];
+    }
+    /**
+     * `serialize_blob(&v, sizeof(bool))`, which is one byte.
+     *
+     * Anything other than 0 or 1 is refused. C++ will happily treat 0x02 as
+     * true, and a file that reached this reader is a file somebody else wrote;
+     * a byte that is not a bool means the offset is wrong, and continuing from a
+     * wrong offset is how a parser invents a transaction.
+     */
+    readBool() {
+      const byte = this.readU8();
+      if (byte > 1) throw new ArchiveError(`a bool was ${byte}`, this.at - 1);
+      return byte === 1;
+    }
+    /** Fixed-width little-endian, as a plain `FIELD` on an integer writes it. */
+    readU32() {
+      this.need(4, "a uint32");
+      const b = this.bytes;
+      const i = this.at;
+      this.at += 4;
+      return (b[i] | b[i + 1] << 8 | b[i + 2] << 16 | b[i + 3] * 16777216) >>> 0;
+    }
+    /** Fixed-width little-endian. Returned as a bigint: Monero amounts are
+     *  atomic units and exceed what a JavaScript number holds exactly. */
+    readU64() {
+      this.need(8, "a uint64");
+      let value = 0n;
+      for (let i = 7; i >= 0; i--) value = value << 8n | BigInt(this.bytes[this.at + i]);
+      this.at += 8;
+      return value;
+    }
+    /**
+     * LEB128, with Monero's own canonicality rules.
+     *
+     * `tools::read_varint` refuses two things and so does this: a continuation
+     * that would overflow the target width, and a zero byte in any position but
+     * the first, which is a longer encoding of a value that had a shorter one.
+     * Both are `EVARINT_*` errors upstream. Accepting them would mean two
+     * different byte strings decode to the same set, which is the kind of
+     * malleability that makes a signature over "the file" meaningless.
+     */
+    readVarintU64() {
+      const start = this.at;
+      let value = 0n;
+      let shift = 0n;
+      for (; ; ) {
+        if (this.done) throw new ArchiveError("a varint ran off the end", start);
+        const byte = this.readU8();
+        if (byte === 0 && shift !== 0n) {
+          throw new ArchiveError("a varint had a non-canonical trailing zero", this.at - 1);
+        }
+        value |= BigInt(byte & 127) << shift;
+        if ((byte & 128) === 0) break;
+        shift += 7n;
+        if (shift >= 70n) throw new ArchiveError("a varint is too long for 64 bits", start);
+      }
+      if (value >= 1n << 64n) throw new ArchiveError("a varint overflowed 64 bits", start);
+      return value;
+    }
+    /** A varint that has to fit a JavaScript number, for counts and indices. */
+    readVarintNumber(what = "a count") {
+      const value = this.readVarintU64();
+      if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new ArchiveError(`${what} is larger than this reader will hold`, this.at);
+      }
+      return Number(value);
+    }
+    /**
+     * `begin_array`: a varint count, checked against what is actually left.
+     *
+     * `minimumElementBytes` is how small one element could possibly be, so a
+     * file claiming a million of something that cannot fit is refused before
+     * anything is allocated rather than after.
+     */
+    readCount(what, minimumElementBytes = 1) {
+      const count = this.readVarintNumber(`${what} count`);
+      if (count > MAX_ARRAY) throw new ArchiveError(`${what} claims ${count} entries`, this.at);
+      if (count * minimumElementBytes > this.remaining) {
+        throw new ArchiveError(
+          `${what} claims ${count} entries and only ${this.remaining} bytes remain`,
+          this.at
+        );
+      }
+      return count;
+    }
+    /** An array, with each element read by `read`. */
+    readArray(what, minimumElementBytes, read2) {
+      const count = this.readCount(what, minimumElementBytes);
+      const out = [];
+      for (let i = 0; i < count; i++) out.push(read2(i));
+      return out;
+    }
+    /**
+     * The `2` a pair writes before its elements.
+     *
+     * Read and checked rather than skipped. It is the one piece of redundancy
+     * this format has, and a stream that has desynchronised usually shows it
+     * here first.
+     */
+    expectPair() {
+      const two = this.readVarintNumber("a pair");
+      if (two !== 2) throw new ArchiveError(`a pair claimed ${two} elements`, this.at);
+    }
+    /**
+     * The count a `std::tuple` writes before its elements.
+     *
+     * The same shape as a pair's `2`, and worth its own method because the
+     * arity is part of the type: a three-element tuple that suddenly claims two
+     * is a stream that has gone wrong, not a tuple that shrank.
+     */
+    expectTuple(arity) {
+      const got = this.readVarintNumber("a tuple");
+      if (got !== arity) throw new ArchiveError(`a tuple claimed ${got} elements, not ${arity}`, this.at);
+    }
+    /** A varint length, then that many bytes, as UTF-8. */
+    readString(what = "a string") {
+      const length = this.readCount(what);
+      return new TextDecoder().decode(this.readBlob(length));
+    }
+    /** Everything must have been consumed; trailing bytes mean a wrong read. */
+    expectEnd() {
+      if (!this.done) {
+        throw new ArchiveError(`${this.remaining} bytes left over`, this.at);
+      }
+    }
+  };
+
+  // src/keys/monerounsigned.ts
+  var UNSIGNED_TX_MAGIC = "Monero unsigned tx set";
+  var UNSIGNED_TX_VERSION_BYTE = 5;
+  var SUPPORTED_ARCHIVE_VERSIONS = [2];
+  var FLAG_USE_RCT = 1 << 0;
+  var FLAG_USE_VIEW_TAGS = 1 << 1;
+  function readDestination(ar) {
+    return {
+      original: ar.readString("a destination address"),
+      /* VARINT_FIELD(amount). The source entry's amount is fixed-width; see the
+       * note at the top of binaryarchive.ts about why these two differ. */
+      amount: ar.readVarintU64(),
+      spendPublic: ar.readKey(),
+      viewPublic: ar.readKey(),
+      isSubaddress: ar.readBool(),
+      isIntegrated: ar.readBool()
+    };
+  }
+  function readSource(ar) {
+    const outputs = ar.readArray("ring members", 66, () => {
+      ar.expectPair();
+      return {
+        index: ar.readVarintU64(),
+        dest: ar.readKey(),
+        mask: ar.readKey()
+      };
+    });
+    return {
+      outputs,
+      /* FIELD(real_output): fixed eight bytes. */
+      realOutput: ar.readU64(),
+      realOutTxKey: ar.readKey(),
+      realOutAdditionalTxKeys: ar.readArray("additional tx keys", 32, () => ar.readKey()),
+      realOutputInTxIndex: ar.readU64(),
+      amount: ar.readU64(),
+      rct: ar.readBool(),
+      mask: ar.readKey(),
+      /* `multisig_kLRki` follows in the C++ struct and is four keys of zeroes
+       * for a single-signature wallet. It is read and discarded rather than
+       * skipped by length, so a file that puts something else there still
+       * advances the cursor correctly. This vault does not do multisig and does
+       * not interpret these. */
+      ...(() => {
+        ar.readKey();
+        ar.readKey();
+        ar.readKey();
+        ar.readKey();
+        return {};
+      })()
+    };
+  }
+  function readConstructionData(ar) {
+    const sources = ar.readArray("sources", 1, () => readSource(ar));
+    const changeDts = readDestination(ar);
+    const splittedDsts = ar.readArray("split destinations", 1, () => readDestination(ar));
+    const selectedTransfers = ar.readArray("selected transfers", 1, () => ar.readVarintU64());
+    const extra = new Uint8Array(ar.readArray("extra", 1, () => ar.readU8()));
+    const unlockTime = ar.readU64();
+    const constructionFlags = ar.readU8();
+    const useRct = (constructionFlags & FLAG_USE_RCT) !== 0;
+    const useViewTags = (constructionFlags & FLAG_USE_VIEW_TAGS) !== 0;
+    const rctConfigVersion = ar.readVarintNumber("an rct config version");
+    if (rctConfigVersion !== 0) {
+      throw new ArchiveError(`rct config version ${rctConfigVersion} is not one this reads`, ar.offset);
+    }
+    const rctType = ar.readVarintNumber("an rct range proof type");
+    const bpVersion = ar.readVarintNumber("a bulletproof version");
+    const dests = ar.readArray("destinations", 1, () => readDestination(ar));
+    const subaddrAccount = ar.readU32();
+    const subaddrIndices = ar.readArray(
+      "subaddress indices",
+      1,
+      () => ar.readVarintNumber("a subaddress index")
+    );
+    return {
+      sources,
+      changeDts,
+      splittedDsts,
+      selectedTransfers,
+      extra,
+      unlockTime,
+      useRct,
+      useViewTags,
+      rctType,
+      bpVersion,
+      dests,
+      subaddrAccount,
+      subaddrIndices
+    };
+  }
+  function readExportedTransfer(ar) {
+    const version = ar.readVarintNumber("an exported transfer version");
+    if (version < 1) {
+      throw new ArchiveError(`exported transfer version ${version} is refused upstream too`, ar.offset);
+    }
+    return {
+      pubkey: ar.readKey(),
+      internalOutputIndex: ar.readVarintU64(),
+      globalOutputIndex: ar.readVarintU64(),
+      txPubkey: ar.readKey(),
+      flags: ar.readU8(),
+      amount: ar.readVarintU64(),
+      additionalTxKeys: ar.readArray("additional tx keys", 32, () => ar.readKey()),
+      subaddrMajor: ar.readVarintNumber("a subaddress major index"),
+      subaddrMinor: ar.readVarintNumber("a subaddress minor index")
+    };
+  }
+  function readUnsignedTxSetArchive(bytes) {
+    const ar = new BinaryArchive(bytes);
+    try {
+      const version = ar.readVarintNumber("an archive version");
+      if (!SUPPORTED_ARCHIVE_VERSIONS.includes(version)) {
+        return {
+          ok: false,
+          problem: `This is an unsigned transaction set at archive version ${version}, and this build reads ${SUPPORTED_ARCHIVE_VERSIONS.join(" and ")}. Versions below 2 are the Boost-era format, which Monero itself will not load without --load-deprecated-formats.`
+        };
+      }
+      const txes = ar.readArray("transactions", 1, () => readConstructionData(ar));
+      ar.expectTuple(3);
+      const first = ar.readVarintU64();
+      const second = ar.readVarintU64();
+      const details = ar.readArray("exported transfers", 1, () => readExportedTransfer(ar));
+      ar.expectEnd();
+      return { ok: true, set: { version, txes, newTransfers: { first, second, details } } };
+    } catch (error) {
+      if (error instanceof ArchiveError) return { ok: false, problem: error.message };
+      return { ok: false, problem: "That is not an unsigned transaction set this build can read." };
+    }
+  }
+  var MAGIC_BYTES2 = (() => {
+    const out = new Uint8Array(UNSIGNED_TX_MAGIC.length + 1);
+    for (let i = 0; i < UNSIGNED_TX_MAGIC.length; i++) out[i] = UNSIGNED_TX_MAGIC.charCodeAt(i);
+    out[UNSIGNED_TX_MAGIC.length] = UNSIGNED_TX_VERSION_BYTE;
+    return out;
+  })();
+  function readUnsignedTxSetFile(file, viewSecret, kdfRounds = 1) {
+    if (file.length <= MAGIC_BYTES2.length) {
+      return { ok: false, problem: "That file is too short to be an unsigned transaction set." };
+    }
+    for (let i = 0; i < MAGIC_BYTES2.length; i++) {
+      if (file[i] !== MAGIC_BYTES2[i]) {
+        const named = i === UNSIGNED_TX_MAGIC.length;
+        return {
+          ok: false,
+          problem: named ? `That is an unsigned transaction set at file version ${file[i]}, and this build reads ${UNSIGNED_TX_VERSION_BYTE}.` : "That is not a Monero unsigned transaction set."
+        };
+      }
+    }
+    const plaintext = decryptWithViewSecretKey(file.subarray(MAGIC_BYTES2.length), viewSecret, kdfRounds);
+    if (!plaintext) {
+      return {
+        ok: false,
+        problem: "That unsigned transaction set could not be decrypted with this vault key. Either it belongs to another wallet, or this build has no CryptoNight."
+      };
+    }
+    const read2 = readUnsignedTxSetArchive(plaintext);
+    if (read2.ok) return read2;
+    return {
+      ok: false,
+      problem: `${read2.problem} This far in, the vault cannot tell that apart from a file belonging to another wallet: the envelope is decrypted with a key derived from the view secret and nothing in it is authenticated, so somebody else's file decrypts to noise that gets read as a damaged one.`
+    };
+  }
+  function outlineTx(tx) {
+    const spending = tx.sources.reduce((total, source) => total + source.amount, 0n);
+    const change = tx.changeDts.amount;
+    const outputs = tx.splittedDsts.reduce((total, dst) => total + dst.amount, 0n);
+    return {
+      spending,
+      paying: outputs - change,
+      change,
+      fee: spending - outputs,
+      ringSize: tx.sources[0]?.outputs.length ?? 0,
+      inputs: tx.sources.length,
+      outputs: tx.splittedDsts.length,
+      unlockTime: tx.unlockTime,
+      destinations: tx.dests.map((d) => ({
+        amount: d.amount,
+        isSubaddress: d.isSubaddress,
+        isIntegrated: d.isIntegrated,
+        original: d.original
+      }))
+    };
   }
 
   // src/keys/finalscriptsig.ts
@@ -18076,6 +18485,49 @@ zoo`.split("\n"));
       randomBytes: signingRandomCount(set.inputs.length, set.ringSize, set.outputs.length) * 32
     };
   }
+  function spendableNoteFor(unlockTime) {
+    if (unlockTime === 0n) return "Immediately";
+    if (unlockTime < 500000000n) return `Not before block ${unlockTime}`;
+    const at = new Date(Number(unlockTime) * 1e3);
+    if (Number.isNaN(at.getTime())) return `Not before unlock time ${unlockTime}`;
+    return `Not before ${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  }
+  function paymentKind(destination) {
+    if (destination.isIntegrated) return "INTEGRATED";
+    return destination.isSubaddress ? "SUBADDRESS" : "STANDARD";
+  }
+  function moneroFileToWire(container, read2) {
+    const set = read2.ok ? read2.set : void 0;
+    const transactions = (set?.txes ?? []).map((tx, i) => {
+      const outline = outlineTx(tx);
+      return {
+        position: i + 1,
+        spendingFormatted: formatXmr(outline.spending),
+        payingFormatted: formatXmr(outline.paying),
+        changeFormatted: formatXmr(outline.change),
+        feeFormatted: formatXmr(outline.fee),
+        ringSize: outline.ringSize,
+        inputCount: outline.inputs,
+        outputCount: outline.outputs,
+        spendableNote: spendableNoteFor(outline.unlockTime),
+        payments: outline.destinations.map((destination, j) => ({
+          position: j + 1,
+          address: destination.original === "" ? null : destination.original,
+          kind: paymentKind(destination),
+          amountFormatted: formatXmr(destination.amount)
+        }))
+      };
+    });
+    const outlines = (set?.txes ?? []).map(outlineTx);
+    return {
+      what: container.what,
+      readable: read2.ok,
+      problem: read2.ok ? null : read2.problem ?? container.refusal,
+      transactions,
+      payingFormatted: formatXmr(outlines.reduce((total, one) => total + one.paying, 0n)),
+      feeFormatted: formatXmr(outlines.reduce((total, one) => total + one.fee, 0n))
+    };
+  }
 
   // src/bridge/host.ts
   function toHex2(bytes) {
@@ -18158,7 +18610,7 @@ zoo`.split("\n"));
     if (!session) throw new Error("The vault is locked.");
     return session;
   }
-  var HOST_VERSION = 5;
+  var HOST_VERSION = 6;
   var api = {
     version: guarded("version", () => done({
       version: HOST_VERSION,
@@ -18437,6 +18889,55 @@ zoo`.split("\n"));
         refused: reply.refused.length,
         frames: encodeParts("XMRKEYIMAGES", encodeKeyImageReply(reply))
       });
+    }),
+    /**
+     * Open one of Monero's own wallet files and say what is in it. Read only.
+     *
+     * ## Why this is not `moneroDescribe`
+     *
+     * `moneroDescribe` reads a set this project's own wallet composed, checks
+     * the claimed change against this vault's address, remembers a digest, and
+     * hands the screen a summary whose next lever produces a signature. Every
+     * one of those steps is missing here and none of them can be added.
+     *
+     * What `wallet2` writes is a `tx_construction_data`: the sending wallet's
+     * account of its own transaction. The ring members, the amounts, the
+     * destinations, the fact that one output is "change" — all of it is that
+     * wallet talking about itself. A watch-only wallet that lies about a
+     * destination produces a file that opens, parses and reads beautifully.
+     * Verifying it means re-deriving every output from the vault's own keys,
+     * which is the job `monerobuild.ts` does on this project's own wire, over a
+     * request shaped so that the derivation is possible.
+     *
+     * So this describes and stops, and the screen it feeds says so in as many
+     * words. That is a real increment over the blanket refusal it replaces — the
+     * vault stops saying "unsupported" to a file it can in fact read — and it is
+     * also the honest ceiling on it.
+     *
+     * ## What it needs
+     *
+     * The view secret key, and therefore an unlocked vault, because the file's
+     * body is ChaCha20 under a key `cn_slow_hash` derives from it. Without the
+     * vendored CryptoNight the derivation refuses first and the answer says so,
+     * rather than mis-parsing garbage.
+     *
+     * A file that will not open is still an answer, not a failure: `readable`
+     * goes false, `problem` carries the reader's own sentence (which names the
+     * byte it gave up at), and the screen tells somebody what they are holding.
+     * Nothing downstream signs, so there is no fail-closed decision resting on
+     * this and nothing is gained by turning a describable situation into a
+     * blank refusal.
+     */
+    moneroFile: guarded("moneroFile", (payloadHex) => {
+      const open = requireSession();
+      const payload = fromHex2(payloadHex);
+      if (!payload) return fail("That is not a Monero wallet file.");
+      const container = readContainer(payload);
+      if (!container) return fail("That is not one of Monero's wallet files.");
+      if (!container.readable) {
+        return done({ ...moneroFileToWire(container, { ok: false, problem: container.refusal }) });
+      }
+      return done({ ...moneroFileToWire(container, readUnsignedTxSetFile(payload, open.xmr.viewSecret)) });
     }),
     /**
      * Read an unsigned Monero set, in the shape the confirmation screen renders.

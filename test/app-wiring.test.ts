@@ -19,6 +19,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+/* The one import of the code under guard, rather than of its text. It earns
+ * its exception: see "is reachable" below, where a text guard passed against
+ * a wire that had genuinely stopped carrying the payload. */
+import { encodeParts, parsePart } from '../src/airgap/envelope';
 
 /** Every Swift source in the shipping app, for the tree-wide guards. */
 function appSources(dir = 'ios/LabyrinthVault'): { path: string; text: string }[] {
@@ -537,7 +541,8 @@ describe('the screen model matches the wire, field for field', () => {
    * has never heard of, so a wire field Swift silently drops would decode
    * cleanly and show nothing. Only comparing the lists catches that. */
   const swift = readFileSync('ios/LabyrinthVault/Model/TxSummary.swift', 'utf8') +
-    readFileSync('ios/LabyrinthVault/Model/MoneroSummary.swift', 'utf8');
+    readFileSync('ios/LabyrinthVault/Model/MoneroSummary.swift', 'utf8') +
+    readFileSync('ios/LabyrinthVault/Model/MoneroFile.swift', 'utf8');
 
   /**
    * TypeScript types, translated into the Swift they must be written as.
@@ -557,6 +562,8 @@ describe('the screen model matches the wire, field for field', () => {
     'WireOutput[]': '[TxOutput]',
     'WireWarning[]': '[TxWarning]',
     'WireMoneroOutput[]': '[MoneroOutput]',
+    'WireMoneroFileTx[]': '[MoneroFileTx]',
+    'WireMoneroFilePayment[]': '[MoneroFilePayment]',
   };
 
   /** `name: SwiftType` for every field of a TypeScript interface. */
@@ -594,6 +601,9 @@ describe('the screen model matches the wire, field for field', () => {
     ['WireWarning', 'TxWarning'],
     ['WireMoneroSummary', 'MoneroSummary'],
     ['WireMoneroOutput', 'MoneroOutput'],
+    ['WireMoneroFile', 'MoneroFile'],
+    ['WireMoneroFileTx', 'MoneroFileTx'],
+    ['WireMoneroFilePayment', 'MoneroFilePayment'],
   ];
 
   it('found both sides, so a pass means something', () => {
@@ -1253,5 +1263,200 @@ describe('the descriptor pairing wire, and the multisig this vault does not do',
       .join('\n');
     expect(descriptor).toContain("`wpkh([${origin}/${accountPath}]${xpub}`");
     expect(descriptor).not.toMatch(/sortedmulti|\bmulti\(/);
+  });
+});
+
+describe('the read-only Monero screen describes and does not sign', () => {
+  /* The screen this guards replaced a blanket refusal, and the risk it carries
+   * is the mirror image of the one the refusal carried.
+   *
+   * The refusal's fault was saying no to a question the vault could answer:
+   * `Monero unsigned tx set` opens now, and telling somebody their perfectly
+   * good file is unsupported sends them off to re-export something that was
+   * never wrong.
+   *
+   * The new screen's fault would be worse. It renders amounts, a fee, a ring
+   * size and a destination, in the same house style as the confirmation
+   * screens, and every one of those figures is the *sending* wallet's account
+   * of its own transaction. Nothing in the file is evidence for anything else
+   * in it. So what is checked here is that the screen cannot be mistaken for
+   * an approval: no lever that signs, no hold, no green, and a route that
+   * touches neither end of the signing path.
+   */
+
+  const host = readFileSync('src/bridge/host.ts', 'utf8');
+  const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+  const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+  const app = readFileSync('ios/LabyrinthVault/App.swift', 'utf8');
+  const screen = readFileSync('ios/LabyrinthVault/Screens/MoneroFile.swift', 'utf8');
+  const model = readFileSync('ios/LabyrinthVault/Model/MoneroFile.swift', 'utf8');
+  const envelope = readFileSync('src/airgap/envelope.ts', 'utf8');
+
+  /** The screen without its prose, for guards about what the code does. */
+  const code = screen
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+
+  it('found the files, so a pass means something', () => {
+    expect(screen.length).toBeGreaterThan(2000);
+    expect(code.length).toBeGreaterThan(1000);
+  });
+
+  it('is reachable: a wire kind, a dispatch, a route and a view', () => {
+    /* The four links, each of which is a string in one language matched by a
+     * string in another. This is the chain that was missing when the reader
+     * existed and nothing could reach it.
+     *
+     * The first link is asserted by running the wire rather than by reading
+     * it, and that is not fastidiousness: the text guard that stood here
+     * passed against a deliberately broken envelope. `PayloadKind` and the
+     * `KINDS` array are two lists in one file and only the array decides what
+     * `parsePart` accepts, so deleting the array entry left `'XMRFILE'` in the
+     * union for a regex to find while every scanned frame of one became "not
+     * a Labyrinth code" and the screen went back to being unreachable. */
+    const frame = encodeParts('XMRFILE', new Uint8Array([1, 2, 3]))[0]!;
+    expect(parsePart(frame)?.kind, 'the wire does not carry a wallet2 file').toBe('XMRFILE');
+    expect(envelope, 'the kind is undocumented').toMatch(/XMRFILE/);
+    expect(vault, 'nothing dispatches on the XMRFILE kind').toMatch(/reply\.kind == "XMRFILE"/);
+    expect(vault, 'the dispatch does not call the engine').toMatch(/engine\.moneroFile\(payloadHex:/);
+    expect(vault, 'there is no route to carry the description').toMatch(/case xmrFile\(MoneroFile\)/);
+    expect(app, 'the router cannot show the screen').toMatch(/case \.xmrFile\(let \w+\): MoneroFileView/);
+    expect(engine, 'Engine.swift has no method for it').toMatch(/func moneroFile\(payloadHex:/);
+    expect(host, 'the engine does not export it').toMatch(/^ {2}moneroFile: guarded\('moneroFile'/m);
+  });
+
+  it('renders every field the engine sends, so nothing arrives and vanishes', () => {
+    /* `Decodable` is happy to decode a field nobody reads, and a screen that
+     * quietly drops one shows a shorter truth than the engine told it. Every
+     * stored property of the three types has to appear somewhere in the view.
+     *
+     * `position` is the exception and it is used rather than shown: it is the
+     * `Identifiable` key these lists are keyed by, which is a use the naive
+     * version of this guard could not see and reported as a dropped field. */
+    const properties = [...model.matchAll(/^ {4}let (\w+):/gm)].map((m) => m[1]!);
+    expect(properties.length).toBeGreaterThan(12);
+    const unshown = [...new Set(properties)]
+      .filter((name) => name !== 'position')
+      .filter((name) => !new RegExp(`\\.${name}\\b`).test(code))
+      .sort();
+    expect(unshown, 'these fields cross the bridge and reach no pixel').toEqual([]);
+  });
+
+  it('offers no way to sign what it is showing', () => {
+    /* The central property. A confirmation screen ends in a lever; this one
+     * ends in a way back to the vault, and the difference has to be structural
+     * rather than a matter of which words are on the button. */
+    expect(code).not.toMatch(/HoldToSign|completeSigning|completeMoneroSigning/);
+    expect(code).not.toMatch(/\.xmrApprove|\.approve\b|\.xmrReview|\.review\b/);
+    expect(code).not.toMatch(/moneroSign|reviewedDigest|\bdigest\b/);
+    // The one control, and where it goes.
+    const levers = [...code.matchAll(/Lever\(title: "([^"]+)"/g)].map((m) => m[1]!);
+    expect(levers, 'the read-only screen grew a second control').toEqual(['DONE']);
+    expect(code).toMatch(/vault\.go\(\.home\)/);
+  });
+
+  it('never paints an unverified figure in the color that means verified', () => {
+    /* `Ink.verified` is the app's one green, and on the confirmation screens
+     * it means "the vault re-derived this and it matched". Nothing here has
+     * been re-derived. A green row on this screen would be a lie told in a
+     * color, which is harder to notice than a lie told in a sentence. */
+    expect(code, 'the read-only screen uses the verified color')
+      .not.toMatch(/Ink\.verified|tone: \.verified/);
+  });
+
+  it('says whose figures these are, before it shows any of them', () => {
+    /* Order matters more than presence. The caveat is the frame the numbers
+     * are read through, and a person who reads the amounts first has already
+     * formed an impression that a footnote has to undo. */
+    const caveat = screen.indexOf("THESE ARE THE SENDER'S OWN FIGURES");
+    const firstAmount = screen.indexOf('payingFormatted');
+    expect(caveat, 'the screen does not say whose figures these are').toBeGreaterThan(-1);
+    expect(caveat, 'the caveat comes after the numbers it qualifies').toBeLessThan(firstAmount);
+    expect(screen).toMatch(/has not checked any of them/);
+    expect(screen).toMatch(/THE VAULT WILL NOT SIGN THIS/);
+  });
+
+  it('tells somebody where to go instead, so the screen is not a dead end', () => {
+    /* A refusal that explains itself and stops is still a person holding a
+     * phone with nothing to do next. There is a route that works, and naming
+     * it is the difference between honest and merely correct. */
+    expect(screen).toMatch(/Labyrinth wallet/);
+  });
+
+  it('pins the engine contract, because the screen needs a function to exist', () => {
+    /* An app that can route here against a bundle with no `moneroFile` would
+     * get "undefined is not a function" at the end of a scan. The version
+     * check turns that into a sentence at launch. */
+    const hostVersion = /export const HOST_VERSION = (\d+)/.exec(host)?.[1];
+    expect(Number(hostVersion)).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe('Package.swift accounts for every Swift file in the app', () => {
+  /* The failure this catches is silent and it happened while the file above
+   * was being written. `MoneroFile.swift` was added under `Model/`, which is
+   * inside the `LabyrinthVaultCore` target's path, and the target names its
+   * sources one by one — so the new file was neither compiled nor excluded.
+   * SwiftPM said "found 1 file(s) which are unhandled" among the build noise
+   * and carried on; Xcode globs the directory and compiled it regardless.
+   *
+   * The result is a file that builds on a Mac and is invisible to
+   * `swift build` on Linux, which is the whole tier-1 check. A type error in
+   * it would surface for the first time in an archive.
+   *
+   * So: every Swift file under the target's path is either a listed source or
+   * a listed exclusion, and adding one is a deliberate claim about which.
+   */
+
+  const manifest = readFileSync('Package.swift', 'utf8');
+
+  const listed = (field: string) => {
+    const at = manifest.indexOf(`${field}: [`);
+    expect(at, `Package.swift has no ${field} list`).toBeGreaterThan(-1);
+    return [...manifest.slice(at, manifest.indexOf(']', at)).matchAll(/"([^"]+)"/g)]
+      .map((m) => m[1]!);
+  };
+
+  const sources = listed('sources');
+  const excluded = listed('exclude');
+
+  /** Every Swift file under the target's path, relative to it. */
+  const present = (() => {
+    const out: string[] = [];
+    const walk = (dir: string, prefix: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) walk(path, relative);
+        else if (entry.name.endsWith('.swift')) out.push(relative);
+      }
+    };
+    walk('ios/LabyrinthVault', '');
+    return out;
+  })();
+
+  it('found both lists, so a pass means something', () => {
+    expect(sources.length).toBeGreaterThan(5);
+    expect(excluded.length).toBeGreaterThan(3);
+    expect(present.length).toBeGreaterThan(20);
+    expect(sources).toContain('Model/Flow.swift');
+  });
+
+  it('has a decision recorded for every one of them', () => {
+    /* An exclusion may name a directory, which covers everything under it.
+     * That is how `Screens` and `Design` are handled and it is right: those
+     * are wholesale Apple-only, and listing forty files would be noise that
+     * nobody reads and therefore nobody maintains. */
+    const covered = (file: string) =>
+      sources.includes(file) || excluded.some((e) => file === e || file.startsWith(`${e}/`));
+    const unhandled = present.filter((file) => !covered(file)).sort();
+    expect(unhandled, 'these are neither compiled nor excluded, so only Xcode sees them')
+      .toEqual([]);
+  });
+
+  it('lists no source that is not there', () => {
+    const missing = sources.filter((file) => !present.includes(file)).sort();
+    expect(missing, 'Package.swift names sources that do not exist').toEqual([]);
   });
 });

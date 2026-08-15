@@ -36,6 +36,8 @@
 import { formatBtc, type BtcWallet } from '../keys/bitcoin';
 import { formatXmr } from '../keys/monero';
 import { signingRandomCount, type VaultUnsignedSet } from '../keys/monerobuild';
+import { outlineTx, type ReadResult } from '../keys/monerounsigned';
+import type { Container } from '../keys/monerotx';
 import { describePsbt, type DescribeOptions, type PsbtSummary, type PsbtWarning } from '../keys/psbt';
 
 /** One previous output being spent. */
@@ -246,6 +248,150 @@ export function moneroToWire(set: VaultUnsignedSet, digest: string): WireMoneroS
     fee: set.fee,
     feeFormatted: formatXmr(BigInt(set.fee)),
     randomBytes: signingRandomCount(set.inputs.length, set.ringSize, set.outputs.length) * 32,
+  };
+}
+
+// ------------------------------------------------------- monero, wallet2's own
+//
+// A different thing from `WireMoneroSummary` above, and the difference is the
+// entire reason it is a different shape.
+//
+// `WireMoneroSummary` describes a set the vault has *checked*: `moneroDescribe`
+// re-derives the claimed change against this wallet's own address and refuses
+// the whole set when they disagree, so a screen rendering it is rendering
+// something the device stands behind, and the next lever on that screen signs.
+//
+// This describes a file `wallet2` wrote. Every number in it is the sending
+// wallet's account of its own transaction. Nothing in the file is evidence for
+// anything else in it, none of it is checked here, and none of it could be:
+// a watch-only wallet that lies about a destination produces a file that reads
+// beautifully. So there is no digest, because nothing downstream signs; there
+// is no `signable`, because the answer is no and it is not a property of the
+// file; and every field is named for the fact that the file *says* it.
+
+/** One payment a wallet2 file says it intends to make. */
+export interface WireMoneroFilePayment {
+  position: number;
+  /**
+   * The address as the sending wallet recorded it, or null when it kept none.
+   *
+   * `tx_destination_entry::original` is only populated when the wallet held on
+   * to what a person typed. When it is empty the file still carries the two
+   * public keys, and an address could be *constructed* from them — but not
+   * honestly, because the network byte is not in the file, so the same keys
+   * would render as a mainnet address in a stagenet transaction. A screen that
+   * says the file did not record it is right; one that shows a confident
+   * address for the wrong network is the failure this project is about.
+   */
+  address: string | null;
+  /** "SUBADDRESS", "INTEGRATED" or "STANDARD", as the file classifies it. */
+  kind: string;
+  amountFormatted: string;
+}
+
+/** One transaction inside the file. A set can hold several. */
+export interface WireMoneroFileTx {
+  position: number;
+  /** What the named inputs are worth in total, per the file. */
+  spendingFormatted: string;
+  /** Spending, less what comes back as change. */
+  payingFormatted: string;
+  changeFormatted: string;
+  /** Inputs minus outputs. The file carries no fee field; that is what a fee
+   *  is, and computing it here is the only way to show one. */
+  feeFormatted: string;
+  ringSize: number;
+  inputCount: number;
+  outputCount: number;
+  /** "Immediately", or the block or time the file says it is locked until. */
+  spendableNote: string;
+  payments: WireMoneroFilePayment[];
+}
+
+/**
+ * A wallet2 file, as the read-only screen renders it.
+ *
+ * `problem` and an empty `transactions` is a complete, valid answer: the file
+ * was recognized and could not be opened, and saying which file it is and why
+ * it did not open is more use than a blank refusal. Nothing here can be signed
+ * either way, so there is no fail-closed decision resting on this shape.
+ */
+export interface WireMoneroFile {
+  /** Plain words for the file, from the container's magic. */
+  what: string;
+  /** Whether the vault opened it. False leaves `transactions` empty. */
+  readable: boolean;
+  /** Why it did not open, or why this build will not try. Null on success. */
+  problem: string | null;
+  transactions: WireMoneroFileTx[];
+  /** Every transaction's payments added up, so the screen can lead with one
+   *  number when the file holds several. */
+  payingFormatted: string;
+  feeFormatted: string;
+}
+
+/**
+ * Monero's unlock time, in words.
+ *
+ * Under `CRYPTONOTE_MAX_BLOCK_NUMBER` (500000000) the value is a block height
+ * and above it a unix timestamp — one field, two meanings, decided by
+ * magnitude. Formatted here rather than on the screen for the same reason
+ * every amount is: one implementation, in the language with the tests.
+ */
+function spendableNoteFor(unlockTime: bigint): string {
+  if (unlockTime === 0n) return 'Immediately';
+  if (unlockTime < 500_000_000n) return `Not before block ${unlockTime}`;
+  const at = new Date(Number(unlockTime) * 1000);
+  if (Number.isNaN(at.getTime())) return `Not before unlock time ${unlockTime}`;
+  return `Not before ${at.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+function paymentKind(destination: { isSubaddress: boolean; isIntegrated: boolean }): string {
+  if (destination.isIntegrated) return 'INTEGRATED';
+  return destination.isSubaddress ? 'SUBADDRESS' : 'STANDARD';
+}
+
+/**
+ * Convert what the reader found into the shape the read-only screen renders.
+ *
+ * Takes the container as well as the read, so that a file this build will not
+ * open is still described by name. Both paths produce the same shape; the
+ * difference is `readable` and an empty list.
+ */
+export function moneroFileToWire(container: Container, read: ReadResult): WireMoneroFile {
+  const set = read.ok ? read.set : undefined;
+  const transactions = (set?.txes ?? []).map((tx, i) => {
+    const outline = outlineTx(tx);
+    return {
+      position: i + 1,
+      spendingFormatted: formatXmr(outline.spending),
+      payingFormatted: formatXmr(outline.paying),
+      changeFormatted: formatXmr(outline.change),
+      feeFormatted: formatXmr(outline.fee),
+      ringSize: outline.ringSize,
+      inputCount: outline.inputs,
+      outputCount: outline.outputs,
+      spendableNote: spendableNoteFor(outline.unlockTime),
+      payments: outline.destinations.map((destination, j) => ({
+        position: j + 1,
+        address: destination.original === '' ? null : destination.original,
+        kind: paymentKind(destination),
+        amountFormatted: formatXmr(destination.amount),
+      })),
+    };
+  });
+
+  /* Summed from the same outlines the rows were built from, rather than
+   * re-derived, so the total on the screen cannot disagree with the numbers
+   * above it. */
+  const outlines = (set?.txes ?? []).map(outlineTx);
+  return {
+    what: container.what,
+    readable: read.ok,
+    problem: read.ok ? null : (read.problem ?? container.refusal),
+    transactions,
+    payingFormatted: formatXmr(outlines.reduce((total, one) => total + one.paying, 0n)),
+    feeFormatted: formatXmr(outlines.reduce((total, one) => total + one.fee, 0n)),
   };
 }
 

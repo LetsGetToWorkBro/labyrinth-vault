@@ -81,6 +81,7 @@ import {
   type Wallet as MoneroWallet,
 } from '../keys/monero';
 import { MONERO_UNSUPPORTED, readContainer, readContainerText } from '../keys/monerotx';
+import { readUnsignedTxSetFile } from '../keys/monerounsigned';
 import { demoUnsignedPsbt, describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
 import {
   calibrateKdf,
@@ -93,7 +94,7 @@ import {
 } from '../keys/seal';
 import { wipe } from '../keys/wipe';
 import { allChecksPass, selfTest } from '../selftest';
-import { moneroToWire, toWire } from './summary';
+import { moneroFileToWire, moneroToWire, toWire } from './summary';
 
 // ---------------------------------------------------------------------------
 // Bytes and hex, the only two things that cross
@@ -172,16 +173,24 @@ function failCoded(code: string, problem: string): string {
 }
 
 /**
- * Is this one of Monero's own wallet files?
+ * Is this one of Monero's own wallet files, on a path that cannot sign it?
  *
  * Asked of the text and of the bytes it decodes to, because either could be
  * how it arrived. Returns the refusal to send back, or null when it is not a
  * Monero file and the caller should carry on.
  *
- * The vault refuses these, and the point of recognizing them is that the
- * refusal is true: "this is a Monero unsigned transaction set and this build
- * cannot open it" sends somebody to the right place, and "that is not a
- * transaction" sends them to re-export a file that was never wrong.
+ * The point of recognizing them is that the refusal is true: "this is a Monero
+ * unsigned transaction set, and the vault will not sign one" sends somebody to
+ * the right place, and "that is not a transaction" sends them to re-export a
+ * file that was never wrong.
+ *
+ * **This stays a refusal even for a container the vault can now open.** The
+ * two callers are the frame scanner and the Bitcoin transaction reader, and
+ * neither is where a wallet2 file gets described: `moneroFile` is, reached by
+ * a payload that arrived on the `XMRFILE` wire kind and therefore arrived
+ * whole. A partial frame that happens to begin with the right words is not a
+ * file, and describing one would mean describing whatever fraction of it the
+ * camera had seen.
  */
 function moneroFileRefusal(text: string, bytes: Uint8Array | null): string | null {
   const found = readContainerText(text) ?? (bytes ? readContainer(bytes) : null);
@@ -310,8 +319,13 @@ function requireSession(): Session {
  * bundle built at 2 does not have, and the failure would be "undefined is not
  * a function" surfacing mid-flow on the key image screen; the version check
  * turns that into a sentence at launch.
+ *
+ * 6: `moneroFile` exists, and the wire carries an `XMRFILE` kind. Same failure
+ * shape as 3 and the same reason for catching it at launch: an app that can
+ * route to the read-only Monero screen against a bundle that cannot fill it
+ * would get "undefined is not a function" at the end of a scan.
  */
-export const HOST_VERSION = 5;
+export const HOST_VERSION = 6;
 
 export const api = {
   version: guarded('version', () =>
@@ -702,6 +716,59 @@ export const api = {
       refused: reply.refused.length,
       frames: encodeParts('XMRKEYIMAGES' satisfies PayloadKind, encodeKeyImageReply(reply)),
     });
+  }),
+
+  /**
+   * Open one of Monero's own wallet files and say what is in it. Read only.
+   *
+   * ## Why this is not `moneroDescribe`
+   *
+   * `moneroDescribe` reads a set this project's own wallet composed, checks
+   * the claimed change against this vault's address, remembers a digest, and
+   * hands the screen a summary whose next lever produces a signature. Every
+   * one of those steps is missing here and none of them can be added.
+   *
+   * What `wallet2` writes is a `tx_construction_data`: the sending wallet's
+   * account of its own transaction. The ring members, the amounts, the
+   * destinations, the fact that one output is "change" — all of it is that
+   * wallet talking about itself. A watch-only wallet that lies about a
+   * destination produces a file that opens, parses and reads beautifully.
+   * Verifying it means re-deriving every output from the vault's own keys,
+   * which is the job `monerobuild.ts` does on this project's own wire, over a
+   * request shaped so that the derivation is possible.
+   *
+   * So this describes and stops, and the screen it feeds says so in as many
+   * words. That is a real increment over the blanket refusal it replaces — the
+   * vault stops saying "unsupported" to a file it can in fact read — and it is
+   * also the honest ceiling on it.
+   *
+   * ## What it needs
+   *
+   * The view secret key, and therefore an unlocked vault, because the file's
+   * body is ChaCha20 under a key `cn_slow_hash` derives from it. Without the
+   * vendored CryptoNight the derivation refuses first and the answer says so,
+   * rather than mis-parsing garbage.
+   *
+   * A file that will not open is still an answer, not a failure: `readable`
+   * goes false, `problem` carries the reader's own sentence (which names the
+   * byte it gave up at), and the screen tells somebody what they are holding.
+   * Nothing downstream signs, so there is no fail-closed decision resting on
+   * this and nothing is gained by turning a describable situation into a
+   * blank refusal.
+   */
+  moneroFile: guarded('moneroFile', (payloadHex: string) => {
+    const open = requireSession();
+    const payload = fromHex(payloadHex);
+    if (!payload) return fail('That is not a Monero wallet file.');
+    const container = readContainer(payload);
+    if (!container) return fail("That is not one of Monero's wallet files.");
+    /* A container this build has no reader for is described by name and
+     * nothing else, through the same shape, so the screen has one code path
+     * rather than two. */
+    if (!container.readable) {
+      return done({ ...moneroFileToWire(container, { ok: false, problem: container.refusal }) });
+    }
+    return done({ ...moneroFileToWire(container, readUnsignedTxSetFile(payload, open.xmr.viewSecret)) });
   }),
 
   /**

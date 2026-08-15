@@ -350,7 +350,40 @@ export function readUnsignedTxSetFile(
         'belongs to another wallet, or this build has no CryptoNight.',
     };
   }
-  return readUnsignedTxSetArchive(plaintext);
+
+  const read = readUnsignedTxSetArchive(plaintext);
+  if (read.ok) return read;
+
+  /* ## Why the archive's own sentence is not enough here
+   *
+   * `encrypt_with_view_secret_key` is ChaCha20 and a signature this reader
+   * does not check, so decryption cannot fail: a wrong key produces the wrong
+   * plaintext, not an error. What comes back is noise, and noise gets read as
+   * an archive.
+   *
+   * That is not hypothetical and the shape of it matters. A file from another
+   * wallet decrypted here read its first varint as 87 and the reader
+   * announced "an unsigned transaction set at archive version 87, and this
+   * build reads 2" — a precise, confident sentence about a format, describing
+   * a file whose format was fine. Somebody reading it goes looking for a
+   * newer Monero, or files a bug about a version that does not exist.
+   *
+   * So every failure past the decryption carries the ambiguity with it. The
+   * reader's sentence is kept, because when the key *is* right it is the
+   * accurate one and it names the byte; what is added is the fact that this
+   * layer cannot distinguish the two cases. Nothing here can: telling a
+   * damaged file from somebody else's file is what the 64-byte signature is
+   * for, and checking it is a separate piece of work (`check_signature`) that
+   * this build has not done. Claiming the distinction without it would be
+   * inventing a fact. */
+  return {
+    ok: false,
+    problem:
+      `${read.problem} This far in, the vault cannot tell that apart from a file belonging ` +
+      'to another wallet: the envelope is decrypted with a key derived from the view secret ' +
+      'and nothing in it is authenticated, so somebody else\'s file decrypts to noise that ' +
+      'gets read as a damaged one.',
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +402,12 @@ export interface TxOutline {
   inputs: number;
   outputs: number;
   unlockTime: bigint;
-  destinations: { amount: bigint; isSubaddress: boolean; original: string }[];
+  destinations: {
+    amount: bigint;
+    isSubaddress: boolean;
+    isIntegrated: boolean;
+    original: string;
+  }[];
 }
 
 /**
@@ -401,6 +439,7 @@ export function outlineTx(tx: ConstructionData): TxOutline {
     destinations: tx.dests.map((d) => ({
       amount: d.amount,
       isSubaddress: d.isSubaddress,
+      isIntegrated: d.isIntegrated,
       original: d.original,
     })),
   };
