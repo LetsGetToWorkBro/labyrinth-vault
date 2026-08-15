@@ -55,7 +55,14 @@ import { setNativeCnSlowHash, nativeCnSlowHashInstalled } from '../keys/moneroex
 import { bip84Descriptors } from '../keys/descriptor';
 import { BBQR_TYPES, bbqrEncode } from '../airgap/bbqr';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
-import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
+import {
+  computeKeyImages,
+  encodeKeyImageReply,
+  keyImageFileFor,
+  keyImageFileRandomBytes,
+  parseKeyImageRequest,
+  type KeyImageRequest,
+} from '../keys/keyimages';
 import {
   encodeSignedTx,
   parseUnsignedSet,
@@ -324,8 +331,13 @@ function requireSession(): Session {
  * shape as 3 and the same reason for catching it at launch: an app that can
  * route to the read-only Monero screen against a bundle that cannot fill it
  * would get "undefined is not a function" at the end of a scan.
+ *
+ * 7: `moneroKeyImageFile` exists, and `moneroKeyImages` reports
+ * `fileRandomBytes`. An app built against 7 offers a second wire on the key
+ * image screen; a bundle built at 6 has neither the function nor the field, so
+ * the button would be there and answer nothing.
  */
-export const HOST_VERSION = 6;
+export const HOST_VERSION = 7;
 
 export const api = {
   version: guarded('version', () =>
@@ -711,10 +723,76 @@ export const api = {
     const parsed = parseKeyImageRequest(payload);
     if (!parsed.ok) return fail(parsed.problem);
     const reply = computeKeyImages(open.xmr, parsed.request);
+    /* Kept so the second wire can be built without the payload crossing the
+     * bridge twice, exactly as `lastDescribed` is kept for signing. Cleared by
+     * `lock`, so a locked vault cannot export a file for a request it was
+     * shown before. */
+    lastKeyImageRequest = parsed.request;
     return done({
       answered: reply.images.length,
       refused: reply.refused.length,
       frames: encodeParts('XMRKEYIMAGES' satisfies PayloadKind, encodeKeyImageReply(reply)),
+      /* What the *other* wire would cost, stated now so the screen can offer
+       * it without a round trip. Null when this build has no CryptoNight and
+       * therefore cannot write the file at all; the screen says which. */
+      fileRandomBytes: nativeCnSlowHashInstalled()
+        ? keyImageFileRandomBytes(parsed.request.outputs.length)
+        : null,
+    });
+  }),
+
+  /**
+   * The same answer again, as the file every other Monero wallet imports.
+   *
+   * ## Why there is a second wire at all
+   *
+   * `moneroKeyImages` answers on this project's own wire, which the Labyrinth
+   * wallet reads and nothing else does. Cake, Feather and
+   * `monero-wallet-cli` all import the same information as a file:
+   * `Monero key image export`, written by `wallet2::export_key_images`. Until
+   * this function existed the vault could *write* that file —
+   * `exportKeyImageBlob` is built and checked against bytes Monero's own
+   * crypto produced — and nothing could ask it to. That is the whole reason
+   * `vendor/cryptonight` is in this repository, and it was reachable from
+   * nowhere.
+   *
+   * ## The randomness, and why the count comes from here
+   *
+   * One scalar per ring signature, eight bytes of IV, one more scalar for the
+   * envelope. `moneroKeyImages` states the total in `fileRandomBytes` and this
+   * refuses any other length, the same contract `moneroSign` has: the engine
+   * owns the formula and the platform CSPRNG owns the bytes.
+   *
+   * ## What it will not do
+   *
+   * Export a request with any refusal in it. `import_key_images` pairs records
+   * with transfers *by position*, so a file one record short pairs everything
+   * after the gap with the wrong output. Those pair with the wrong ring
+   * signature and the far side throws, which is the right failure and still a
+   * failure worth not shipping. See `keyImageFileFor`.
+   */
+  moneroKeyImageFile: guarded('moneroKeyImageFile', (randomHex: string) => {
+    const open = requireSession();
+    if (!lastKeyImageRequest) {
+      return fail('No key image request has been read on this device to answer.');
+    }
+    const request = lastKeyImageRequest;
+    const need = keyImageFileRandomBytes(request.outputs.length);
+    const random = fromHex(randomHex);
+    if (!random || random.length !== need) {
+      return fail(`Exporting these key images needs exactly ${need} bytes of randomness.`);
+    }
+    const result = keyImageFileFor(open.xmr, request, random);
+    wipe(random);
+    if (!result.ok || !result.file) return fail(result.problem ?? 'The key image file was not written.');
+    return done({
+      answered: result.answered,
+      offset: request.offset ?? 0,
+      /* On the `XMRFILE` wire, because that is what it is: one of Monero's own
+       * wallet files, carried verbatim. The kind is not direction-bound — the
+       * vault reads one arriving and writes one leaving, and both are the same
+       * bytes on the same wire. */
+      frames: encodeParts('XMRFILE' satisfies PayloadKind, result.file),
     });
   }),
 
@@ -872,6 +950,11 @@ let lastDescribed: PsbtSummary | null = null;
 /** The Monero set the person is currently looking at. Never crosses. */
 let lastMoneroDescribed: { digest: string; set: VaultUnsignedSet } | null = null;
 
+/** The key image request last read, so its answer can be given on either
+ *  wire without the payload crossing twice. Public data; cleared on lock
+ *  anyway, because a locked vault answers nothing. */
+let lastKeyImageRequest: KeyImageRequest | null = null;
+
 function lockInternal(): void {
   if (session) {
     closeWallet(session.btc);
@@ -881,6 +964,7 @@ function lockInternal(): void {
   session = null;
   lastDescribed = null;
   lastMoneroDescribed = null;
+  lastKeyImageRequest = null;
   scanner.reset();
 }
 

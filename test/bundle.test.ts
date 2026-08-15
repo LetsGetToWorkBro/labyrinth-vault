@@ -140,14 +140,15 @@ describe('the built bundle', () => {
      * The version is a literal on purpose: bumping HOST_VERSION should touch
      * this test, because a bump is a claim that the Swift side moved with it.
      * 4 is the contract with reseal in it, for the two-layer migration; 6
-     * adds `moneroFile`, which the read-only Monero screen calls.
+     * adds `moneroFile`, which the read-only Monero screen calls; 7 adds
+     * `moneroKeyImageFile`, which is the second wire on the key image screen.
      *
      * `kdf` is "engine" here and that is the point of asserting it. This
      * context has no `__labyrinthArgon2id` on its global, so the bundle found
      * no native derivation and said so. On the phone the same call answers
      * "native", and a build where it does not is a build that silently kept
      * the minute-long unlock. */
-    expect(call(api, 'version')).toEqual({ ok: true, version: 6, kdf: 'engine', cryptonight: 'absent' });
+    expect(call(api, 'version')).toEqual({ ok: true, version: 7, kdf: 'engine', cryptonight: 'absent' });
   });
 
   it('passes its own self-test inside the bundle', () => {
@@ -450,7 +451,7 @@ describe('the bundle adopts a host derivation when there is one', () => {
     runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
     const hosted = context.LabyrinthVault as ReturnType<typeof loadBundle>;
 
-    expect(call(hosted, 'version')).toEqual({ ok: true, version: 6, kdf: 'native', cryptonight: 'absent' });
+    expect(call(hosted, 'version')).toEqual({ ok: true, version: 7, kdf: 'native', cryptonight: 'absent' });
 
     const made = call(
       hosted,

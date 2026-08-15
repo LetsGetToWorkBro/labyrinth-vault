@@ -40,7 +40,7 @@ import Security
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 6
+    static let expectedVersion = 7
 
     private let context: JSContext
     private let api: JSValue
@@ -222,6 +222,7 @@ final class Engine {
     typealias CalibrateReply = EngineReply.Calibrate
     typealias CheckReply = EngineReply.Check
     typealias KeyImagesReply = EngineReply.KeyImages
+    typealias KeyImageFileReply = EngineReply.KeyImageFile
 
     // MARK: - The API
     //
@@ -346,6 +347,19 @@ final class Engine {
     /// quietly shrank.
     func moneroKeyImages(payloadHex: String) throws -> KeyImagesReply {
         try call("moneroKeyImages", [payloadHex])
+    }
+
+    /// The same answer as the file every other Monero wallet imports.
+    ///
+    /// No payload argument: the engine kept the request `moneroKeyImages`
+    /// read, so the outputs cannot differ between the two wires and nothing
+    /// crosses the bridge twice. The randomness is drawn here in exactly the
+    /// amount that reply stated, the same contract `moneroSign` has.
+    ///
+    /// Needs the vendored CryptoNight. A build without it reports
+    /// `fileRandomBytes` as nil and no screen should reach this.
+    func moneroKeyImageFile(randomHex: String) throws -> KeyImageFileReply {
+        try call("moneroKeyImageFile", [randomHex])
     }
 
     func checkAddress(_ text: String, chain: String) throws -> CheckReply {

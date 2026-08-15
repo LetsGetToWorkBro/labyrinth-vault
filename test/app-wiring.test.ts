@@ -1460,3 +1460,105 @@ describe('Package.swift accounts for every Swift file in the app', () => {
     expect(missing, 'Package.swift names sources that do not exist').toEqual([]);
   });
 });
+
+describe('the key image answer has two wires and offers the second honestly', () => {
+  /* The defect this closes was the third of its kind in this repository, and
+   * the largest: `exportKeyImageBlob` writes the file Cake, Feather and
+   * `monero-wallet-cli` import, it has been checked against bytes Monero's own
+   * crypto produced since the CryptoNight work, and nothing could ask for one.
+   * Thirty-four files of vendored C were in the archive for a capability no
+   * screen offered. `src/keys/monerotx.ts` said "this vault *writes* this one",
+   * which was true of the code and false of the product.
+   *
+   * So these guards are about reachability first and honesty second.
+   */
+
+  const host = readFileSync('src/bridge/host.ts', 'utf8');
+  const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+  const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
+  const screen = readFileSync('ios/LabyrinthVault/Screens/KeyImages.swift', 'utf8');
+  const replies = readFileSync('ios/LabyrinthVault/Support/EngineReplies.swift', 'utf8');
+
+  const code = screen
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+
+  it('found the files, so a pass means something', () => {
+    expect(screen.length).toBeGreaterThan(2000);
+    expect(code.length).toBeGreaterThan(1000);
+  });
+
+  it('is reachable: a host function, a call, a model method and a control', () => {
+    expect(host, 'the engine does not export it')
+      .toMatch(/^ {2}moneroKeyImageFile: guarded\('moneroKeyImageFile'/m);
+    expect(engine, 'Engine.swift has no method for it')
+      .toMatch(/func moneroKeyImageFile\(randomHex:/);
+    expect(vault, 'nothing in the model calls it').toMatch(/engine\.moneroKeyImageFile\(randomHex:/);
+    expect(code, 'no control on the screen asks for it').toMatch(/writeFile\(\)/);
+    expect(code, 'the picker offers no second wire').toMatch(/case moneroFile = "MONERO FILE"/);
+  });
+
+  it('offers the second wire only when the engine says it can be written', () => {
+    /* The reason `version` reports `cryptonight` and the reason the reply
+     * carries `fileRandomBytes` at all. A build without the vendored C signs
+     * and answers on this project's own wire exactly as before; the one thing
+     * it cannot do is write this file. A button whose only possible answer is
+     * "this build cannot do that" is chrome pretending to be a feature. */
+    expect(host).toMatch(/fileRandomBytes: nativeCnSlowHashInstalled\(\)/);
+    expect(replies, 'the reply cannot express "cannot be written"')
+      .toMatch(/let fileRandomBytes: Int\?/);
+    expect(code, 'the picker is drawn unconditionally')
+      .toMatch(/if fileOffered \{ picker \}/);
+    expect(code).toMatch(/result\.fileRandomBytes != nil/);
+  });
+
+  it('never re-derives how much randomness the file costs', () => {
+    /* The same rule the Monero signing path follows: the engine owns the
+     * formula, the platform CSPRNG owns the bytes, and Swift asks for exactly
+     * the number it was given. A second copy of `(n + 1) * 32 + 8` in Swift
+     * is a second chance to be wrong about a length that decides whether a
+     * file can be written at all. */
+    const swiftTree = readdirSync('ios/LabyrinthVault', { withFileTypes: true });
+    expect(swiftTree.length).toBeGreaterThan(0);
+    expect(vault).toMatch(/answer\.fileRandomBytes \?\? 0/);
+    expect(vault, 'the model computes a byte count of its own')
+      .not.toMatch(/\* 32 \+ 8|\+ 1\) \* 32/);
+    expect(code, 'the screen computes a byte count of its own')
+      .not.toMatch(/\* 32 \+ 8|\+ 1\) \* 32/);
+  });
+
+  it('says the file is matched by position, because that is what breaks it', () => {
+    /* `import_key_images` pairs each record with `m_transfers[i + offset]`. A
+     * screen that showed the codes without saying so would be handing somebody
+     * a file whose correctness depends on an ordering they were never told
+     * about. The engine refuses to write one at all when an output was
+     * refused, for the same reason. */
+    expect(screen).toMatch(/by position/);
+    expect(screen).toMatch(/TRANSFER OFFSET/);
+    expect(host).toMatch(/pairs records\s*\n?\s*\*? ?with transfers \*by position\*/);
+    /* And the module that actually refuses says the same thing, because the
+     * screen's sentence and the engine's rule have to be the same rule. */
+    expect(readFileSync('src/keys/keyimages.ts', 'utf8')).toMatch(/matches \*\*by position\*\*/);
+  });
+
+  it('names the wallets that read each wire, and only wallets that do', () => {
+    /* The same rule the Bitcoin wire picker follows, and the defect it was
+     * written for: a button named after a wallet that cannot read what is on
+     * it. Cake, Feather and monero-wallet-cli all import
+     * `Monero key image export`; none of them reads this project's own wire. */
+    expect(screen).toMatch(/Cake, Feather and monero-wallet-cli import this one/);
+    expect(screen).toMatch(/The Labyrinth wallet reads this one/);
+  });
+
+  it('carries the file on the wire that carries Monero files', () => {
+    expect(host).toMatch(/encodeParts\('XMRFILE' satisfies PayloadKind, result\.file\)/);
+  });
+
+  it('forgets the request when the vault locks', () => {
+    /* A locked vault answers nothing, and that has to include the request it
+     * was halfway through answering. */
+    expect(host).toMatch(/lastKeyImageRequest = null;/);
+    expect(vault).toMatch(/pendingKeyImageRandomBytes = 0/);
+  });
+});

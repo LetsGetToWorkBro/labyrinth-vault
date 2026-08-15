@@ -6,5 +6,5 @@
 //  match. Rebuild with `npm run build:bundle` rather than editing this.
 
 enum BundleDigest {
-    static let sha256 = "784b0f3ccb2e41814c6c262c4d6d584f1afd01af1bbf9dd68ad6a2d9e0917b16"
+    static let sha256 = "ba603e783ea1fa2cf8011042e684bc2732e930c7e237af481f6578a017cd0c40"
 }

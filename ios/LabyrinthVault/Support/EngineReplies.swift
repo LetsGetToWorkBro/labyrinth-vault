@@ -217,6 +217,27 @@ enum EngineReply {
         let answered: Int
         let refused: Int
         let frames: [String]
+        /// How many bytes of platform randomness the *other* wire would need,
+        /// or nil when this build cannot write that file at all.
+        ///
+        /// Optional twice over, and for two different reasons. It is absent
+        /// from a bundle built before the file wire existed, which is what
+        /// keeps an older engine decodable here; and it is `null` from a
+        /// current bundle with no CryptoNight, which is the honest answer to
+        /// "what would it cost" when the answer is that it cannot be done.
+        /// The screen treats both the same way: no second wire offered.
+        let fileRandomBytes: Int?
+    }
+
+    /// The key images again, as the file Cake, Feather and the Monero CLI
+    /// import. See `moneroKeyImageFile` in host.ts.
+    struct KeyImageFile: Decodable, Equatable {
+        let answered: Int
+        /// Where these sit in the requesting wallet's own transfer list.
+        /// `import_key_images` pairs records with transfers by position, so
+        /// this is not decoration.
+        let offset: Int
+        let frames: [String]
     }
 }
 

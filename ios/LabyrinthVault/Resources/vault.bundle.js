@@ -6836,6 +6836,27 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       return false;
     }
   }
+  var signatureBytes = (sig) => {
+    const out = new Uint8Array(64);
+    out.set(sig.c, 0);
+    out.set(sig.r, 32);
+    return out;
+  };
+  function generateSignature(message, publicKey, secret, nonce) {
+    if (message.length !== 32) throw new Error("A message to sign is a 32-byte hash.");
+    if (publicKey.length !== 32) throw new Error("A public key is 32 bytes.");
+    const k = scalarFromBytes(nonce);
+    if (k === 0n) throw new Error("The nonce reduced to zero.");
+    const buf = new Uint8Array(96);
+    buf.set(message, 0);
+    buf.set(publicKey, 32);
+    buf.set(Point3.BASE.multiply(k).toBytes(), 64);
+    const c = scalarFromBytes(hashToScalar(buf));
+    if (c === 0n) throw new Error("This nonce produces a zero challenge; draw another.");
+    const r = scSub(k, scMul(c, scalarFromBytes(secret)));
+    if (r === 0n) throw new Error("This nonce produces a zero response; draw another.");
+    return { c: scalarToBytes(c), r: scalarToBytes(r) };
+  }
   function checkSignature(message, publicKey, signature) {
     if (message.length !== 32 || publicKey.length !== 32 || signature.length !== 64) return false;
     const cBytes = signature.subarray(0, 32);
@@ -6867,6 +6888,19 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     for (let i = 1; i < 32; i++) if (bytes[i] !== 0) return false;
     return true;
   }
+  function generateRingSignatureOfOne(keyImage, oneTimeKey, oneTimeSecret, nonce) {
+    if (keyImage.length !== 32) throw new Error("A key image is 32 bytes.");
+    if (oneTimeKey.length !== 32) throw new Error("A one-time key is 32 bytes.");
+    const k = scalarFromBytes(nonce);
+    if (k === 0n) throw new Error("The nonce reduced to zero.");
+    const buf = new Uint8Array(96);
+    buf.set(keyImage, 0);
+    buf.set(Point3.BASE.multiply(k).toBytes(), 32);
+    buf.set(hashToEc2(oneTimeKey).multiply(k).toBytes(), 64);
+    const c = scalarFromBytes(hashToScalar(buf));
+    const r = scSub(k, scMul(c, scalarFromBytes(oneTimeSecret)));
+    return { c: scalarToBytes(c), r: scalarToBytes(r) };
+  }
 
   // src/keys/moneroexport.ts
   var KEY_IMAGE_MAGIC = "Monero key image export";
@@ -6883,6 +6917,7 @@ globalThis.TextDecoder.prototype.decode = function (input) {
   var KEY_IMAGE_BYTES = 32;
   var RECORD_BYTES = KEY_IMAGE_BYTES + SIGNATURE_BYTES;
   var HEADER_BYTES = 4 + 32 + 32;
+  var MAX_IMAGES = 2e3;
   var nativeCnSlowHash = null;
   function setNativeCnSlowHash(fn) {
     nativeCnSlowHash = fn;
@@ -6907,6 +6942,63 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       if (digest.length !== 32) throw new Error("The native CryptoNight returned the wrong length.");
     }
     return digest;
+  }
+  function keyImagePlaintext(request, viewPublic) {
+    const { offset, outputs, spendPublic } = request;
+    if (!Number.isInteger(offset) || offset < 0 || offset > 4294967295) {
+      throw new Error("The offset is a 32-bit unsigned integer.");
+    }
+    if (spendPublic.length !== 32) throw new Error("A spend public key is 32 bytes.");
+    if (outputs.length > MAX_IMAGES) throw new Error(`Refusing to export more than ${MAX_IMAGES} key images.`);
+    const out = new Uint8Array(HEADER_BYTES + outputs.length * RECORD_BYTES);
+    out[0] = offset & 255;
+    out[1] = offset >>> 8 & 255;
+    out[2] = offset >>> 16 & 255;
+    out[3] = offset >>> 24 & 255;
+    out.set(spendPublic, 4);
+    out.set(viewPublic, 36);
+    let at = HEADER_BYTES;
+    for (const [i, output] of outputs.entries()) {
+      if (output.keyImage.length !== 32) throw new Error(`Key image ${i} is not 32 bytes.`);
+      const nonce = request.nonces[i];
+      if (!nonce) throw new Error(`Signing ${outputs.length} key images needs ${outputs.length + 1} nonces.`);
+      const sig = generateRingSignatureOfOne(
+        output.keyImage,
+        output.oneTimeKey,
+        output.oneTimeSecret,
+        nonce
+      );
+      out.set(output.keyImage, at);
+      out.set(signatureBytes(sig), at + KEY_IMAGE_BYTES);
+      at += RECORD_BYTES;
+    }
+    return out;
+  }
+  function exportKeyImageBlob(request) {
+    const { viewSecret, outputs, nonces, iv } = request;
+    if (viewSecret.length !== 32) throw new Error("A view secret key is 32 bytes.");
+    if (iv.length !== IV_BYTES) throw new Error(`The IV is ${IV_BYTES} bytes.`);
+    if (nonces.length !== outputs.length + 1) {
+      throw new Error(`Exporting ${outputs.length} key images needs ${outputs.length + 1} nonces.`);
+    }
+    const viewPublic = ed25519.Point.BASE.multiply(scalar(viewSecret)).toBytes();
+    const chachaKey = chachaKeyFor(viewSecret, request.kdfRounds ?? 1);
+    const plaintext = keyImagePlaintext(request, viewPublic);
+    const ciphertext = chacha20orig(chachaKey, iv, plaintext);
+    const body = new Uint8Array(IV_BYTES + ciphertext.length);
+    body.set(iv, 0);
+    body.set(ciphertext, IV_BYTES);
+    const outer = generateSignature(
+      keccak_256(body),
+      viewPublic,
+      viewSecret,
+      nonces[outputs.length]
+    );
+    const file = new Uint8Array(MAGIC_BYTES.length + body.length + SIGNATURE_BYTES);
+    file.set(MAGIC_BYTES, 0);
+    file.set(body, MAGIC_BYTES.length);
+    file.set(signatureBytes(outer), MAGIC_BYTES.length + body.length);
+    return file;
   }
   var scalar = (bytes) => {
     const L6 = 2n ** 252n + 27742317777372353535851937790883648493n;
@@ -15573,7 +15665,19 @@ zoo`.split("\n"));
       }
       outputs.push({ tx, index, key });
     }
-    return { ok: true, request: { v: raw["v"], chain: "xmr", outputs } };
+    const rawOffset = raw["offset"];
+    if (rawOffset !== void 0 && (typeof rawOffset !== "number" || !Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 1e6)) {
+      return { ok: false, problem: "That request has a transfer offset that is not one." };
+    }
+    return {
+      ok: true,
+      request: {
+        v: raw["v"],
+        chain: "xmr",
+        outputs,
+        ...rawOffset === void 0 ? {} : { offset: rawOffset }
+      }
+    };
   }
   function computeKeyImages(wallet, request) {
     const images = [];
@@ -15604,6 +15708,68 @@ zoo`.split("\n"));
   }
   function encodeKeyImageReply(reply) {
     return encoder2.encode(JSON.stringify(reply));
+  }
+  function keyImageFileRandomBytes(outputs) {
+    return (outputs + 1) * 32 + 8;
+  }
+  function keyImageFileFor(wallet, request, random) {
+    const need = keyImageFileRandomBytes(request.outputs.length);
+    if (random.length !== need) {
+      return { ok: false, problem: `Exporting ${request.outputs.length} key images needs exactly ${need} bytes of randomness.` };
+    }
+    const outputs = [];
+    const refused = [];
+    try {
+      for (const output of request.outputs) {
+        let oneTimeSecret = null;
+        try {
+          const derivation = generateKeyDerivation(fromHex(output.tx), wallet.viewSecret);
+          const derived = toHex(derivePublicKey(derivation, output.index, fromHex(wallet.spendPublic)));
+          if (derived !== output.key) {
+            refused.push(output.key);
+            continue;
+          }
+          oneTimeSecret = deriveSecretKey(derivation, output.index, wallet.spendSecret);
+          outputs.push({
+            oneTimeKey: fromHex(output.key),
+            oneTimeSecret,
+            /* Passed in rather than recomputed inside the writer, which is how
+             * `ExportRequest` is shaped: one place derives, one place
+             * serializes. It is the same value `computeKeyImages` puts on this
+             * project's own wire, from the same two inputs. */
+            keyImage: generateKeyImage(fromHex(output.key), oneTimeSecret)
+          });
+          oneTimeSecret = null;
+        } catch {
+          refused.push(output.key);
+        } finally {
+          if (oneTimeSecret) wipe(oneTimeSecret);
+        }
+      }
+      if (refused.length > 0) {
+        return {
+          ok: false,
+          refused,
+          problem: `${refused.length} of ${request.outputs.length} outputs did not prove as this wallet's. A key image file is matched by position on the far side, so one missing record moves every record after it. It is refused whole rather than exported short.`
+        };
+      }
+      const nonces = [];
+      for (let i = 0; i <= outputs.length; i++) nonces.push(random.subarray(i * 32, (i + 1) * 32));
+      const iv = random.subarray((outputs.length + 1) * 32);
+      const file = exportKeyImageBlob({
+        viewSecret: wallet.viewSecret,
+        spendPublic: fromHex(wallet.spendPublic),
+        outputs,
+        nonces,
+        iv,
+        offset: request.offset ?? 0
+      });
+      return { ok: true, file, answered: outputs.length, refused: [] };
+    } catch (error) {
+      return { ok: false, problem: String(error?.message ?? error) };
+    } finally {
+      for (const output of outputs) wipe(output.oneTimeSecret);
+    }
   }
 
   // src/keys/monerowire.ts
@@ -18667,7 +18833,7 @@ zoo`.split("\n"));
     if (!session) throw new Error("The vault is locked.");
     return session;
   }
-  var HOST_VERSION = 6;
+  var HOST_VERSION = 7;
   var api = {
     version: guarded("version", () => done({
       version: HOST_VERSION,
@@ -18941,10 +19107,69 @@ zoo`.split("\n"));
       const parsed = parseKeyImageRequest(payload);
       if (!parsed.ok) return fail(parsed.problem);
       const reply = computeKeyImages(open.xmr, parsed.request);
+      lastKeyImageRequest = parsed.request;
       return done({
         answered: reply.images.length,
         refused: reply.refused.length,
-        frames: encodeParts("XMRKEYIMAGES", encodeKeyImageReply(reply))
+        frames: encodeParts("XMRKEYIMAGES", encodeKeyImageReply(reply)),
+        /* What the *other* wire would cost, stated now so the screen can offer
+         * it without a round trip. Null when this build has no CryptoNight and
+         * therefore cannot write the file at all; the screen says which. */
+        fileRandomBytes: nativeCnSlowHashInstalled() ? keyImageFileRandomBytes(parsed.request.outputs.length) : null
+      });
+    }),
+    /**
+     * The same answer again, as the file every other Monero wallet imports.
+     *
+     * ## Why there is a second wire at all
+     *
+     * `moneroKeyImages` answers on this project's own wire, which the Labyrinth
+     * wallet reads and nothing else does. Cake, Feather and
+     * `monero-wallet-cli` all import the same information as a file:
+     * `Monero key image export`, written by `wallet2::export_key_images`. Until
+     * this function existed the vault could *write* that file —
+     * `exportKeyImageBlob` is built and checked against bytes Monero's own
+     * crypto produced — and nothing could ask it to. That is the whole reason
+     * `vendor/cryptonight` is in this repository, and it was reachable from
+     * nowhere.
+     *
+     * ## The randomness, and why the count comes from here
+     *
+     * One scalar per ring signature, eight bytes of IV, one more scalar for the
+     * envelope. `moneroKeyImages` states the total in `fileRandomBytes` and this
+     * refuses any other length, the same contract `moneroSign` has: the engine
+     * owns the formula and the platform CSPRNG owns the bytes.
+     *
+     * ## What it will not do
+     *
+     * Export a request with any refusal in it. `import_key_images` pairs records
+     * with transfers *by position*, so a file one record short pairs everything
+     * after the gap with the wrong output. Those pair with the wrong ring
+     * signature and the far side throws, which is the right failure and still a
+     * failure worth not shipping. See `keyImageFileFor`.
+     */
+    moneroKeyImageFile: guarded("moneroKeyImageFile", (randomHex) => {
+      const open = requireSession();
+      if (!lastKeyImageRequest) {
+        return fail("No key image request has been read on this device to answer.");
+      }
+      const request = lastKeyImageRequest;
+      const need = keyImageFileRandomBytes(request.outputs.length);
+      const random = fromHex2(randomHex);
+      if (!random || random.length !== need) {
+        return fail(`Exporting these key images needs exactly ${need} bytes of randomness.`);
+      }
+      const result = keyImageFileFor(open.xmr, request, random);
+      wipe(random);
+      if (!result.ok || !result.file) return fail(result.problem ?? "The key image file was not written.");
+      return done({
+        answered: result.answered,
+        offset: request.offset ?? 0,
+        /* On the `XMRFILE` wire, because that is what it is: one of Monero's own
+         * wallet files, carried verbatim. The kind is not direction-bound — the
+         * vault reads one arriving and writes one leaving, and both are the same
+         * bytes on the same wire. */
+        frames: encodeParts("XMRFILE", result.file)
       });
     }),
     /**
@@ -19077,6 +19302,7 @@ zoo`.split("\n"));
   };
   var lastDescribed = null;
   var lastMoneroDescribed = null;
+  var lastKeyImageRequest = null;
   function lockInternal() {
     if (session) {
       closeWallet(session.btc);
@@ -19086,6 +19312,7 @@ zoo`.split("\n"));
     session = null;
     lastDescribed = null;
     lastMoneroDescribed = null;
+    lastKeyImageRequest = null;
     scanner.reset();
   }
   function resetHost() {

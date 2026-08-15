@@ -692,6 +692,7 @@ final class Vault: ObservableObject {
     /// Called on lock, on backgrounding and on the app switcher. Wipes keys.
     func lock() {
         engine?.lock()
+        pendingKeyImageRandomBytes = 0
         pendingPsbtHex = nil
         scanProgress = (0, 0)
         vaultID = "•••• •••• ••••"
@@ -796,6 +797,11 @@ final class Vault: ObservableObject {
         if reply.kind == "XMROUTPUTS" {
             do {
                 let answer = try engine.moneroKeyImages(payloadHex: payload)
+                /* Remembered so the second wire can be drawn without the
+                 * screen re-deriving how much randomness a file costs. Zero
+                 * when the engine says it cannot write one, which is what a
+                 * build with no CryptoNight says. */
+                pendingKeyImageRandomBytes = answer.fileRandomBytes ?? 0
                 Haptic.tick()
                 go(.keyImages(answer))
             } catch EngineError.refusedAs(let code, _) {
@@ -984,6 +990,33 @@ final class Vault: ObservableObject {
             go(.refused(.digestMismatch))
         }
     }
+
+    /// The key images again, as the file other Monero wallets import.
+    ///
+    /// Lives here rather than on the screen because it draws randomness and
+    /// talks to the engine, which is this model's job; the screen decides when
+    /// and renders the answer. The byte count comes from the reply the engine
+    /// already gave, so nothing on this side re-derives a formula it could get
+    /// wrong.
+    ///
+    /// A failure is a sentence rather than a refusal screen. Nothing has been
+    /// signed and nothing is at stake: the other wire is still on the glass,
+    /// and the honest outcome is to say why this one is not.
+    func moneroKeyImageFile() -> Result<Engine.KeyImageFileReply, String> {
+        guard let engine else { return .failure("The vault engine is not loaded.") }
+        guard let randomHex = Engine.freshRandomHex(bytes: pendingKeyImageRandomBytes) else {
+            return .failure("This device would not produce randomness, so no file was written.")
+        }
+        do {
+            return .success(try engine.moneroKeyImageFile(randomHex: randomHex))
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    /// How many bytes the file wire needs, from the reply that offered it.
+    /// Set when a key image request is answered; zero means no offer stands.
+    private(set) var pendingKeyImageRandomBytes = 0
 
     /// Sign the Monero set, same double check as the Bitcoin path: the shell
     /// compares the digest it carried against the summary it is about to

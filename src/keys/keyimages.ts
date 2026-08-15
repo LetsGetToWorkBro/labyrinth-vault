@@ -45,6 +45,7 @@
  * numbers somebody else chose without proving what they are first.
  */
 
+import { exportKeyImageBlob, type ExportOutput } from './moneroexport';
 import {
   deriveSecretKey,
   derivePublicKey,
@@ -71,6 +72,24 @@ export interface KeyImageRequest {
   v: number;
   chain: 'xmr';
   outputs: OutputRef[];
+  /**
+   * Where these outputs start in the *requesting* wallet's own transfer list.
+   *
+   * Meaningless to this project's own wire, where the reply is matched to the
+   * request by one-time key, and load-bearing for the wallet2 export file,
+   * where it is not. `import_key_images` walks `m_transfers[i + offset]` and
+   * pairs each entry by position, so a file whose order does not match the
+   * importing wallet's is a file that pairs images with the wrong outputs.
+   *
+   * It fails loudly rather than quietly: each record carries a ring signature
+   * over its own one-time key, so a mispaired entry fails
+   * `check_ring_signature` and the import throws. That is the property that
+   * makes shipping this defensible at all — the failure is "signature check
+   * failed", not a wrong balance.
+   *
+   * Absent means zero, which is what `export_key_images(all=true)` means.
+   */
+  offset?: number;
 }
 
 /** One answer: the output's one-time key and the image that spends it. */
@@ -164,7 +183,31 @@ export function parseKeyImageRequest(
     }
     outputs.push({ tx, index, key });
   }
-  return { ok: true, request: { v: raw['v'], chain: 'xmr', outputs } };
+  /* Optional, because this project's own wire has never needed one and every
+   * request written before this field existed is still valid. A present value
+   * has to be a real index; a junk one is refused rather than floored to zero,
+   * because zero is a *claim* about where these sit in somebody's wallet. */
+  const rawOffset = raw['offset'];
+  if (rawOffset !== undefined
+      && (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 0
+          || rawOffset > 1_000_000)) {
+    return { ok: false, problem: 'That request has a transfer offset that is not one.' };
+  }
+  /* Carried only when it was sent, rather than materialised as a zero. A
+   * request that said nothing about where these sit in somebody's wallet and
+   * one that said "at the beginning" are different statements, and the round
+   * trip has to preserve which was made. `keyImageFileFor` reads an absent
+   * offset as zero at the point of use, which is what
+   * `export_key_images(all=true)` means. */
+  return {
+    ok: true,
+    request: {
+      v: raw['v'],
+      chain: 'xmr',
+      outputs,
+      ...(rawOffset === undefined ? {} : { offset: rawOffset as number }),
+    },
+  };
 }
 
 /**
@@ -272,4 +315,150 @@ export function parseKeyImageReply(
     ? raw['refused'].filter((entry): entry is string => typeof entry === 'string' && HEX64.test(entry))
     : [];
   return { ok: true, reply: { v: raw['v'], chain: 'xmr', images, refused } };
+}
+
+// ---------------------------------------------------------------------------
+// The same answer, as the file every other Monero wallet imports
+
+/**
+ * How many bytes of platform randomness `keyImageFileFor` needs for `n`
+ * outputs.
+ *
+ * One 32-byte scalar per ring signature, then eight bytes of IV, then one more
+ * scalar for the signature over the whole envelope. Stated by the side that
+ * owns the formula, the same arrangement `signingRandomCount` has, so the
+ * Swift that draws the bytes never re-derives the count and cannot drift from
+ * it.
+ */
+export function keyImageFileRandomBytes(outputs: number): number {
+  return (outputs + 1) * 32 + 8;
+}
+
+export interface KeyImageFileResult {
+  ok: boolean;
+  /** `Monero key image export`, exactly as `wallet2::export_key_images` writes it. */
+  file?: Uint8Array;
+  /** How many outputs are in it. */
+  answered?: number;
+  /** One-time keys that did not prove as this wallet's, and got no record. */
+  refused?: string[];
+  problem?: string;
+}
+
+/**
+ * Build the file Cake, Feather and `monero-wallet-cli` import.
+ *
+ * ## Why this is a separate function from `computeKeyImages`
+ *
+ * They answer the same question for two different readers, and the difference
+ * is not cosmetic. `computeKeyImages` produces a list of `(one-time key, key
+ * image)` pairs on this project's own wire, where the far side matches each
+ * image to its output *by key*, so order carries no meaning and the ephemeral
+ * secret can be wiped the moment the image exists.
+ *
+ * `import_key_images` matches **by position**: it walks `m_transfers[i +
+ * offset]` and pairs the i-th record with it. So the file needs the outputs in
+ * the importing wallet's own order, it needs `offset` to say where they start,
+ * and each record carries a ring signature over that output's one-time key —
+ * which means the ephemeral secret has to live a little longer, until the
+ * signature is made.
+ *
+ * Ordering is the requester's responsibility and it fails loudly when it is
+ * wrong: a mispaired record fails `check_ring_signature` on the far side and
+ * the import throws "signature check failed". A wrong balance is not among the
+ * outcomes, which is the property that makes offering this defensible.
+ *
+ * ## What leaves this function
+ *
+ * Bytes. Every ephemeral secret is derived, used, and wiped inside it, on
+ * every path including the throwing one. There is deliberately no version that
+ * returns the secrets for a caller to assemble, because that would be a
+ * function whose return value is spend authority for an output, one `print`
+ * away from a log.
+ *
+ * ## Refusals
+ *
+ * Ownership is re-proved per output exactly as `computeKeyImages` does it, and
+ * an output that does not derive is refused rather than answered. Unlike the
+ * own-wire reply, a refusal here also means the file is **shorter than the
+ * request**, which shifts every later record's position — so a request with
+ * any refusal in it cannot produce a positionally-correct file at all. It is
+ * refused whole rather than shipped short. Losing one output would move all
+ * the ones after it, and the far side would pair them with the wrong
+ * transfers; that is exactly the failure the signatures catch, and there is no
+ * reason to build a file that is known in advance to fail.
+ */
+export function keyImageFileFor(
+  wallet: MoneroWallet,
+  request: KeyImageRequest,
+  random: Uint8Array,
+): KeyImageFileResult {
+  const need = keyImageFileRandomBytes(request.outputs.length);
+  if (random.length !== need) {
+    return { ok: false, problem: `Exporting ${request.outputs.length} key images needs exactly ${need} bytes of randomness.` };
+  }
+
+  const outputs: ExportOutput[] = [];
+  const refused: string[] = [];
+  try {
+    for (const output of request.outputs) {
+      let oneTimeSecret: Uint8Array | null = null;
+      try {
+        const derivation = generateKeyDerivation(fromHex(output.tx), wallet.viewSecret);
+        const derived = toHex(derivePublicKey(derivation, output.index, fromHex(wallet.spendPublic)));
+        if (derived !== output.key) {
+          refused.push(output.key);
+          continue;
+        }
+        oneTimeSecret = deriveSecretKey(derivation, output.index, wallet.spendSecret);
+        outputs.push({
+          oneTimeKey: fromHex(output.key),
+          oneTimeSecret,
+          /* Passed in rather than recomputed inside the writer, which is how
+           * `ExportRequest` is shaped: one place derives, one place
+           * serializes. It is the same value `computeKeyImages` puts on this
+           * project's own wire, from the same two inputs. */
+          keyImage: generateKeyImage(fromHex(output.key), oneTimeSecret),
+        });
+        oneTimeSecret = null; // owned by `outputs` now, and wiped in the finally below
+      } catch {
+        refused.push(output.key);
+      } finally {
+        if (oneTimeSecret) wipe(oneTimeSecret);
+      }
+    }
+
+    if (refused.length > 0) {
+      return {
+        ok: false,
+        refused,
+        problem:
+          `${refused.length} of ${request.outputs.length} outputs did not prove as this wallet's. ` +
+          'A key image file is matched by position on the far side, so one missing record moves ' +
+          'every record after it. It is refused whole rather than exported short.',
+      };
+    }
+
+    const nonces: Uint8Array[] = [];
+    for (let i = 0; i <= outputs.length; i++) nonces.push(random.subarray(i * 32, (i + 1) * 32));
+    const iv = random.subarray((outputs.length + 1) * 32);
+
+    const file = exportKeyImageBlob({
+      viewSecret: wallet.viewSecret,
+      spendPublic: fromHex(wallet.spendPublic),
+      outputs,
+      nonces,
+      iv,
+      offset: request.offset ?? 0,
+    });
+    return { ok: true, file, answered: outputs.length, refused: [] };
+  } catch (error) {
+    /* The one expected throw is `chachaKeyFor` refusing on a build with no
+     * CryptoNight, and its sentence names that. Anything else is unforeseen
+     * and still must not escape: this is reached from a bridge that promises
+     * not to throw. */
+    return { ok: false, problem: String((error as Error)?.message ?? error) };
+  } finally {
+    for (const output of outputs) wipe(output.oneTimeSecret);
+  }
 }
