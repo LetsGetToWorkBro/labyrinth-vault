@@ -67,14 +67,33 @@ answer per wallet.
 
 | Wallet | How it takes the account |
 | --- | --- |
-| Sparrow, BlueWallet, Keystone, Passport | `ur:crypto-account`, scanned |
-| Electrum | the zpub, pasted. **No camera path exists.** |
+| Sparrow, Nunchuk, BlueWallet, Bitcoin Core | **output descriptor**, scanned or pasted |
+| Keystone, Passport, Sparrow, BlueWallet | `ur:crypto-account`, scanned |
+| Electrum | **output descriptor**, or the zpub, pasted |
 | Labyrinth wallet | this project's own `ACCOUNT` frames |
 
-Electrum's new-wallet wizard takes a typed master public key and there is no
-QR route to it, so the export screen shows the zpub as text and says where to
-put it. That is not a workaround; it is how Electrum has always made a
-watch-only wallet.
+The export screen offers three wires now. The third is a BIP-380 output
+descriptor:
+
+    wpkh([73c5da0a/84h/0h/0h]xpub6CatWdiZ.../<0;1>/*)#qf45pmyh
+
+A zpub says which keys and nothing else. It does not say the script type, the
+derivation path, or which seed the keys belong to, so a watch-only wallet has
+to guess all three, and a wrong guess is a wallet full of addresses nobody can
+spend from. The descriptor states all of it, carries a checksum that catches a
+mistyped paste, and needs no registry support and no fountain decoder: it is a
+string, so any wallet that reads a QR at all reads this one, and any wallet
+with a text field takes it typed.
+
+That last property is why it matters most for Electrum, which has no BC-UR of
+any kind. The zpub still shows as text beside it, because pasting a master
+public key is Electrum's oldest route and some people will want it.
+
+`test/descriptor.test.ts` checks every checksum against Electrum's own
+`DescriptorChecksum`, and the finished descriptors were fed back to Electrum's
+`parse_descriptor`, which read them as WPKH with origin `m/84h/0h/0h`. The
+seed in the fixture is BIP-39's test vector, so the account key is BIP-84's
+published one and `73c5da0a` is the fingerprint every wallet reports for it.
 
 ## Monero
 
@@ -86,8 +105,13 @@ habit. `docs/monero-signing.md` has the detail.
 ## What is not claimed
 
 - **Multisig with Coldcard, or with anything.** The vault signs single-sig
-  BIP84. A Coldcard co-signer in a 2-of-3 is a different piece of work and
-  nothing here should be read as offering it.
+  BIP84 and nothing else. This is a standing boundary rather than a gap
+  waiting to be filled: multisig is a different security model, because change
+  has to be verified against a script instead of against a key, and a
+  confirmation screen that cannot do that is worse than no multisig at all.
+  Every descriptor this vault emits is `wpkh(...)`, there is no code path that
+  could produce `wsh(sortedmulti(...))`, and a guard in
+  `test/app-wiring.test.ts` sweeps the whole tree to keep it that way.
 - **Coldcard's microSD and NFC paths.** Camera only.
 - **BBQr's `Z` encoding.** The vault emits `2`, uncompressed base32, which the
   spec explicitly permits a sender to choose. It *reads* `2` and `H` and

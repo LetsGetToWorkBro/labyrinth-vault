@@ -1183,3 +1183,75 @@ describe('the wire picker names only wallets that can read the wire', () => {
     }
   });
 });
+
+describe('the descriptor pairing wire, and the multisig this vault does not do', () => {
+  const host = readFileSync('src/bridge/host.ts', 'utf8');
+  const exportScreen = readFileSync('ios/LabyrinthVault/Screens/Export.swift', 'utf8');
+  const replies = readFileSync('ios/LabyrinthVault/Support/EngineReplies.swift', 'utf8');
+
+  it('emits descriptors from the export, and decodes them on the far side', () => {
+    /* A zpub says which keys and nothing else: not the script type, not the
+     * path, not the seed. A descriptor says all three, and it is the only
+     * pairing form that needs no scanner and no registry support, which is
+     * what makes it the answer for Electrum. */
+    expect(host).toContain('bip84Descriptors(');
+    /* Shorthand property, so there is no `descriptors:` to match. Asserting
+     * the reply carries it rather than the syntax it carries it with. */
+    expect(host).toMatch(/done\(\{[^}]*\bdescriptors\b[^}]*\}\)/);
+    expect(replies).toMatch(/let descriptors: Descriptors\?/);
+    expect(exportScreen).toContain('exported.descriptors?.combined');
+  });
+
+  it('offers the descriptor as its own wire rather than burying it', () => {
+    const labels = [...exportScreen.matchAll(/case\s+\w+\s*=\s*"([^"]+)"/g)].map((m) => m[1]!);
+    expect(labels).toContain('DESCRIPTOR');
+    expect(exportScreen).toMatch(/case \.descriptor: return descriptorFrames/);
+  });
+
+  it('never offers multisig anywhere a person could read it as working', () => {
+    /* The standing boundary. This vault signs single-signature BIP84 and
+     * nothing else, and multisig is not a missing feature so much as a
+     * different security model: change has to be verified against a script
+     * rather than against a key, and a confirmation screen that cannot do that
+     * is worse than no multisig at all.
+     *
+     * So the rule is that no screen, no wire label and no descriptor may imply
+     * otherwise. Monero's own multisig container names are exempt by path:
+     * monerotx.ts recognises them in order to *refuse* them, which is the
+     * opposite of offering, and the refusal has to say the word to be useful. */
+    const guilty: { path: string; line: string }[] = [];
+    const allowed = new Set(['src/keys/monerotx.ts', 'src/keys/descriptor.ts']);
+
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.build') continue;
+          walk(path);
+        } else if (/\.(swift|ts)$/.test(entry.name) && !allowed.has(path)) {
+          const text = readFileSync(path, 'utf8');
+          for (const line of text.split('\n')) {
+            /* Only what a person could act on: a script type this vault could
+             * emit, or a user-facing string. Prose about not doing multisig is
+             * the point and must stay sayable. */
+            if (/\bsortedmulti\b|\bwsh\(|\bsh\(wsh\(/.test(line)) {
+              guilty.push({ path, line: line.trim().slice(0, 80) });
+            }
+          }
+        }
+      }
+    };
+    walk('src');
+    walk('ios/LabyrinthVault');
+    expect(guilty, 'these could emit or claim a multisig script').toEqual([]);
+  });
+
+  it('describes only wpkh, in the one file that builds a descriptor', () => {
+    const descriptor = readFileSync('src/keys/descriptor.ts', 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(descriptor).toContain("`wpkh([${origin}/${accountPath}]${xpub}`");
+    expect(descriptor).not.toMatch(/sortedmulti|\bmulti\(/);
+  });
+});

@@ -26,15 +26,32 @@ struct ExportView: View {
     enum Wire: String, CaseIterable {
         case labyrinth = "LABYRINTH"
         case account = "SPARROW · BLUEWALLET"
+        case descriptor = "DESCRIPTOR"
 
-        var kind: String { self == .labyrinth ? "ACCOUNT · LV1" : "UR:CRYPTO-ACCOUNT" }
+        var kind: String {
+            switch self {
+            case .labyrinth: return "ACCOUNT · LV1"
+            case .account: return "UR:CRYPTO-ACCOUNT"
+            case .descriptor: return "BIP-380 · WPKH"
+            }
+        }
     }
 
     @State private var wire: Wire = .labyrinth
 
+    private func framesFor(_ wire: Wire) -> [String] {
+        switch wire {
+        case .labyrinth: return frames
+        case .account: return urFrames
+        case .descriptor: return descriptorFrames
+        }
+    }
+
     /// The real ACCOUNT frames, from the engine's watch-only export.
     @State private var frames: [String] = []
     @State private var urFrames: [String] = []
+    @State private var descriptorFrames: [String] = []
+    @State private var descriptor = ""
     @State private var zpub = ""
     @State private var problem: String?
 
@@ -43,6 +60,12 @@ struct ExportView: View {
             let exported = try vault.exportAccount(chain: "btc")
             frames = exported.frames
             urFrames = exported.urFrames ?? []
+            /* One static QR of plain text. No registry, no fountain code,
+             * nothing to negotiate: a descriptor is a string, and a wallet
+             * that can read a QR at all can read this one. That is the whole
+             * reason it is offered beside the other two. */
+            descriptor = exported.descriptors?.combined ?? ""
+            descriptorFrames = descriptor.isEmpty ? [] : [descriptor]
             zpub = exported.account.zpub ?? ""
         } catch {
             problem = error.localizedDescription
@@ -93,13 +116,32 @@ struct ExportView: View {
                         .overlay { Rectangle().strokeBorder(Ink.rule, lineWidth: 1) }
                         .padding(.bottom, 14)
 
-                        QRAperture(frames: wire == .labyrinth ? frames : urFrames, interval: 0.9)
+                        QRAperture(frames: framesFor(wire), interval: 0.9)
 
                         FieldRow(label: "FORMAT", value: wire.kind).padding(.top, 18)
                         FieldRow(label: "ASSET", value: "BITCOIN")
                         FieldRow(label: "STANDARD", value: "BIP84")
                         FieldRow(label: "ACCOUNT", value: "0")
                         FieldRow(label: "CONTAINS", value: "PUBLIC KEY ONLY", tone: .verified)
+
+                        if wire == .descriptor && !descriptor.isEmpty {
+                            /* Shown as text as well as scanned, because the
+                             * wallets that most need a descriptor are the ones
+                             * a person is at a keyboard for. */
+                            Text(descriptor)
+                                .font(Type.mono(9))
+                                .lineSpacing(3)
+                                .foregroundStyle(Ink.paperDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 14)
+                            Text("BOTH CHAINS IN ONE LINE. SPARROW, NUNCHUK AND BITCOIN CORE TAKE THIS.")
+                                .font(Type.mono(9))
+                                .kerning(1.1)
+                                .lineSpacing(3)
+                                .foregroundStyle(Ink.paperFaint)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 8)
+                        }
 
                         Text("SCAN WITH COMPANION DEVICE")
                             .font(Type.mono(10))

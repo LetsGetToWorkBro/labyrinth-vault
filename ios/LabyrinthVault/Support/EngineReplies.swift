@@ -128,6 +128,23 @@ enum EngineReply {
         let urFrames: [String]?
         let account: Account
         struct Account: Decodable { let zpub: String? }
+        /// The BIP-380 output descriptors for this account. Nil for Monero,
+        /// which has no such thing, and nil for a watch-only vault, which has
+        /// no master fingerprint and so cannot state a key origin.
+        ///
+        /// The one pairing form that needs no scanner and no registry support:
+        /// a wallet can take it pasted, typed or photographed. That matters
+        /// most for Electrum, which reads no BC-UR at all.
+        let descriptors: Descriptors?
+        struct Descriptors: Decodable {
+            /// `/0/*`, the addresses somebody is given.
+            let receive: String
+            /// `/1/*`, where change comes back.
+            let change: String
+            /// Both chains in one string. Sparrow, Nunchuk and Bitcoin Core 26
+            /// and later take it; older wallets want the pair.
+            let combined: String
+        }
     }
 
     /// The built-in demo transaction's frames.

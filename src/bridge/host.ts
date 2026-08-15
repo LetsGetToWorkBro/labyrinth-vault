@@ -52,6 +52,7 @@ import { bip84Account } from '../airgap/registry';
 import { cborEncode } from '../airgap/cbor';
 import { base43Frame } from '../airgap/base43';
 import { setNativeCnSlowHash, nativeCnSlowHashInstalled } from '../keys/moneroexport';
+import { bip84Descriptors } from '../keys/descriptor';
 import { BBQR_TYPES, bbqrEncode } from '../airgap/bbqr';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
 import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
@@ -69,6 +70,7 @@ import {
   closeWallet,
   mnemonicFromStoredEntropy,
   openFromMnemonic,
+  ZPUB_VERSIONS,
   type BtcWallet,
 } from '../keys/bitcoin';
 import {
@@ -493,7 +495,28 @@ export const api = {
       });
       urFrames = new UrEncoder('crypto-account', payload).firstPass();
     }
-    return done({ account, frames, urFrames });
+
+    /* ## The third way to be paired with, and the one that needs no scanner
+     *
+     * A zpub says which keys and nothing else: not the script type, not the
+     * derivation path, not which seed it belongs to. A watch-only wallet has
+     * to guess all three, and a wrong guess is a wallet full of addresses
+     * nobody can spend from.
+     *
+     * An output descriptor states all of it in one line, and Sparrow, Nunchuk,
+     * BlueWallet, Bitcoin Core and Electrum all import it. It is also the only
+     * one of the three pairing forms that works by being read aloud, typed or
+     * photographed as a plain QR, which matters for Electrum: it has no BC-UR
+     * of any kind, so a descriptor and the zpub are its whole surface.
+     *
+     * Null for a watch-only vault, which has no master to fingerprint. See
+     * bip84Descriptors for why an origin-less descriptor is worse than none. */
+    const descriptors =
+      chain === 'xmr'
+        ? null
+        : bip84Descriptors(btc.zpub, ZPUB_VERSIONS, btc.masterFingerprint);
+
+    return done({ account, frames, urFrames, descriptors });
   }),
 
   /**

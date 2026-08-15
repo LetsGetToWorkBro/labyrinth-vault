@@ -6853,50 +6853,6 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     return nativeCnSlowHash !== null;
   }
 
-  // src/airgap/bbqr.ts
-  var BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  var BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  var BBQR_TYPES = {
-    psbt: "P",
-    transaction: "T",
-    json: "J",
-    text: "U",
-    cbor: "C"
-  };
-  var KNOWN_TYPES = Object.values(BBQR_TYPES);
-  var BBQR_BODY_CHARS = 320;
-  var MAX_PARTS2 = 36 * 36;
-  function base32Encode2(bytes) {
-    let out = "";
-    let buffer = 0;
-    let bits = 0;
-    for (const byte of bytes) {
-      buffer = buffer << 8 | byte;
-      bits += 8;
-      while (bits >= 5) {
-        out += BASE32[buffer >> bits - 5 & 31];
-        bits -= 5;
-      }
-    }
-    if (bits > 0) out += BASE32[buffer << 5 - bits & 31];
-    return out;
-  }
-  function base36Pair(n) {
-    return BASE36[Math.floor(n / 36)] + BASE36[n % 36];
-  }
-  function bbqrEncode(payload, type, bodyChars = BBQR_BODY_CHARS) {
-    if (bodyChars % 8 !== 0 || bodyChars < 8) return null;
-    const encoded = base32Encode2(payload);
-    const parts = Math.max(1, Math.ceil(encoded.length / bodyChars));
-    if (parts > MAX_PARTS2) return null;
-    const frames = [];
-    for (let i = 0; i < parts; i++) {
-      const body = encoded.slice(i * bodyChars, (i + 1) * bodyChars);
-      frames.push(`B$2${type}${base36Pair(parts)}${base36Pair(i)}${body}`);
-    }
-    return frames;
-  }
-
   // node_modules/@noble/hashes/hmac.js
   var _HMAC = class {
     constructor(hash, key) {
@@ -9063,6 +9019,128 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       return concatBytes(toU32(version, "version"), new Uint8Array([this.depth]), toU32(this.parentFingerprint, "parentFingerprint"), toU32(this.index, "index"), this.chainCode, key);
     }
   };
+
+  // src/keys/descriptor.ts
+  var INPUT_CHARSET = "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
+  var CHECKSUM_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  var GENERATOR = [0xf5dee51989n, 0xa9fdca3312n, 0x1bab10e32dn, 0x3706b1677an, 0x644d626ffdn];
+  function polymod(symbols) {
+    let chk = 1n;
+    for (const value of symbols) {
+      const top = chk >> 35n;
+      chk = (chk & 0x7ffffffffn) << 5n ^ BigInt(value);
+      for (let i = 0; i < 5; i++) {
+        if (top >> BigInt(i) & 1n) chk ^= GENERATOR[i];
+      }
+    }
+    return chk;
+  }
+  function expand(descriptor) {
+    const symbols = [];
+    const groups = [];
+    for (const char of descriptor) {
+      const value = INPUT_CHARSET.indexOf(char);
+      if (value < 0) return null;
+      symbols.push(value & 31);
+      groups.push(value >> 5);
+      if (groups.length === 3) {
+        symbols.push(groups[0] * 9 + groups[1] * 3 + groups[2]);
+        groups.length = 0;
+      }
+    }
+    if (groups.length === 1) symbols.push(groups[0]);
+    else if (groups.length === 2) symbols.push(groups[0] * 3 + groups[1]);
+    return symbols;
+  }
+  function descriptorChecksum(descriptor) {
+    const symbols = expand(descriptor);
+    if (!symbols) return null;
+    const checksum2 = polymod([...symbols, 0, 0, 0, 0, 0, 0, 0, 0]) ^ 1n;
+    let out = "";
+    for (let i = 0; i < 8; i++) {
+      out += CHECKSUM_CHARSET[Number(checksum2 >> 5n * BigInt(7 - i) & 31n)];
+    }
+    return out;
+  }
+  function withChecksum2(descriptor) {
+    const checksum2 = descriptorChecksum(descriptor);
+    return checksum2 === null ? null : `${descriptor}#${checksum2}`;
+  }
+  var XPUB_VERSIONS = { private: 76066276, public: 76067358 };
+  function accountXpub(zpub, zpubVersions) {
+    try {
+      const node = HDKey.fromExtendedKey(zpub, zpubVersions);
+      const { chainCode, publicKey } = node;
+      if (!chainCode || !publicKey) return null;
+      const restated = new HDKey({
+        versions: XPUB_VERSIONS,
+        depth: node.depth,
+        parentFingerprint: node.parentFingerprint,
+        index: node.index,
+        chainCode,
+        publicKey
+      });
+      return restated.publicExtendedKey;
+    } catch {
+      return null;
+    }
+  }
+  function bip84Descriptors(zpub, zpubVersions, masterFingerprint, accountPath = "84h/0h/0h") {
+    if (masterFingerprint === void 0) return null;
+    const xpub = accountXpub(zpub, zpubVersions);
+    if (!xpub) return null;
+    const origin = (masterFingerprint >>> 0).toString(16).padStart(8, "0");
+    const prefix2 = `wpkh([${origin}/${accountPath}]${xpub}`;
+    const receive = withChecksum2(`${prefix2}/0/*)`);
+    const change = withChecksum2(`${prefix2}/1/*)`);
+    const combined = withChecksum2(`${prefix2}/<0;1>/*)`);
+    if (!receive || !change || !combined) return null;
+    return { receive, change, combined };
+  }
+
+  // src/airgap/bbqr.ts
+  var BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  var BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  var BBQR_TYPES = {
+    psbt: "P",
+    transaction: "T",
+    json: "J",
+    text: "U",
+    cbor: "C"
+  };
+  var KNOWN_TYPES = Object.values(BBQR_TYPES);
+  var BBQR_BODY_CHARS = 320;
+  var MAX_PARTS2 = 36 * 36;
+  function base32Encode2(bytes) {
+    let out = "";
+    let buffer = 0;
+    let bits = 0;
+    for (const byte of bytes) {
+      buffer = buffer << 8 | byte;
+      bits += 8;
+      while (bits >= 5) {
+        out += BASE32[buffer >> bits - 5 & 31];
+        bits -= 5;
+      }
+    }
+    if (bits > 0) out += BASE32[buffer << 5 - bits & 31];
+    return out;
+  }
+  function base36Pair(n) {
+    return BASE36[Math.floor(n / 36)] + BASE36[n % 36];
+  }
+  function bbqrEncode(payload, type, bodyChars = BBQR_BODY_CHARS) {
+    if (bodyChars % 8 !== 0 || bodyChars < 8) return null;
+    const encoded = base32Encode2(payload);
+    const parts = Math.max(1, Math.ceil(encoded.length / bodyChars));
+    if (parts > MAX_PARTS2) return null;
+    const frames = [];
+    for (let i = 0; i < parts; i++) {
+      const body = encoded.slice(i * bodyChars, (i + 1) * bodyChars);
+      frames.push(`B$2${type}${base36Pair(parts)}${base36Pair(i)}${body}`);
+    }
+    return frames;
+  }
 
   // node_modules/@noble/hashes/pbkdf2.js
   function pbkdf2Init(hash, _password, _salt, _opts) {
@@ -18229,7 +18307,8 @@ zoo`.split("\n"));
         });
         urFrames = new UrEncoder("crypto-account", payload).firstPass();
       }
-      return done({ account, frames, urFrames });
+      const descriptors = chain2 === "xmr" ? null : bip84Descriptors(btc.zpub, ZPUB_VERSIONS, btc.masterFingerprint);
+      return done({ account, frames, urFrames, descriptors });
     }),
     /**
      * A deterministic demo vault and a real transaction for it, as the frames a
