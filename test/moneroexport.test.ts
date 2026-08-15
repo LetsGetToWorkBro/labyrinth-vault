@@ -2,10 +2,19 @@
  * The key-image export blob, against Monero's own crypto.
  *
  * `test/fixtures/monero-keyimages.json` was not produced by this repository.
- * It came out of a C++ program linked against Monero's `crypto.cpp`,
- * `crypto-ops.c`, `chacha.c` and the CryptoNight in vendor/cryptonight, with
- * `generate_random_bytes_thread_safe` replaced by a byte counter so the
- * signatures are reproducible. Every field below — the chacha key, each ring
+ * It came out of `oracle/`, a committed C++ harness linked against Monero's
+ * own `crypto.cpp`, `crypto-ops.c` and `chacha.c` at the tag
+ * `oracle/PINNED.json` names, with `generate_random_bytes_thread_safe`
+ * replaced by a byte counter so the signatures are reproducible.
+ *
+ * Regenerate and diff it with:
+ *
+ *     ./oracle/build.sh --check && node oracle/emit.mjs --check
+ *
+ * which is the difference between a fixture you can check and one you have to
+ * take on trust. `test/oracle.test.ts` holds the rig and the vendored C to the
+ * same Monero, because otherwise the two halves of this contract would be
+ * agreeing about different versions. Every field below — the chacha key, each ring
  * signature, the plaintext, the finished file — is what Monero produced. The
  * TypeScript has to match it byte for byte or it is wrong.
  *

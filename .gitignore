@@ -40,3 +40,8 @@ ios/LabyrinthVault/Info.plist
 # vendor/ is the committed result; this is the working area that produced it,
 # and a shallow clone of Monero is not something to carry in this history.
 scratchpad/
+
+# Where oracle/build.sh puts its Monero checkout and object files. The recipe
+# and the harnesses are committed; the half-gigabyte of upstream C++ they build
+# against is not.
+oracle/.work/

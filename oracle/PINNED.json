@@ -1,0 +1,32 @@
+{
+  "note": "The upstream this oracle builds against. It must be the same Monero that vendor/cryptonight/MANIFEST.json pins, or the fixtures and the shipping code are agreeing about two different versions. test/oracle.test.ts asserts they match.",
+  "upstream": "https://github.com/monero-project/monero",
+  "tag": "v0.18.5.1",
+  "commit": "4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5",
+  "produces": [
+    "test/fixtures/monero-keyimages.json"
+  ],
+  "alsoChecks": [
+    "vendor/cryptonight against tests/hash/tests-slow.txt, via oracle/src/cryptonight.c"
+  ],
+  "hostDependencies": [
+    "a C and C++ toolchain",
+    "boost headers (libboost-dev, libboost-thread-dev): crypto.cpp and epee's mlocker.h include them, and the stubs in src/ remove the need to link any boost library",
+    "git, for the shallow checkout build.sh makes"
+  ],
+  "bitcoin": {
+    "note": "The Bitcoin fixtures come from the wallets themselves, in Python. oracle/btc.sh sets them up and oracle/btc-emit.mjs regenerates.",
+    "electrum": {
+      "repo": "https://github.com/spesmilo/electrum",
+      "commit": "a94e460b50bc5afc334ca0d6feead47d3b50539f"
+    },
+    "bbqr": {
+      "repo": "https://github.com/coinkite/BBQr",
+      "spec": "https://bbqr.info"
+    },
+    "produces": [
+      "test/fixtures/wallet-wires.json",
+      "test/fixtures/descriptors.json"
+    ]
+  }
+}
