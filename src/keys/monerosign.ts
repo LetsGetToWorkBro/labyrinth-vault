@@ -566,4 +566,90 @@ export function generateRingSignatureOfOne(
   return { c: scalarToBytes(c), r: scalarToBytes(r) };
 }
 
+/**
+ * `crypto::check_ring_signature` over a ring of one, which is the gate
+ * `wallet2::import_key_images` puts every record of a key image export
+ * through.
+ *
+ * ## Why the vault verifies its own output
+ *
+ * `generateRingSignatureOfOne` reproduces Monero's bytes given the same nonce,
+ * which proves two *signers* agree. It says nothing about the verifier, and
+ * the verifier is what decides whether an import succeeds or throws "signature
+ * check failed" at somebody standing in front of another wallet. So the file
+ * writer runs this over every record before shipping one: a record that would
+ * be rejected over there is rejected here, where the vault can say which and
+ * why, instead of arriving as a failure in software this project did not
+ * write.
+ *
+ * It is cheap — two scalar multiplications per record — and it closes the one
+ * gap the oracle could not close on its own. `oracle/src/keyimage.cpp` now
+ * runs Monero's `check_ring_signature` over its own output and records the
+ * verdict in the fixture, so both halves of this contract are witnessed by the
+ * other implementation rather than by themselves.
+ *
+ * ## Transcribed from crypto.cpp, ring of one
+ *
+ * The hashed buffer is `rs_comm`: the message, then `a` and `b` for each ring
+ * member. With one member that is 96 bytes, the same shape the signer builds.
+ *
+ *   - `a = c·P + r·G`, which for an honest signature is `k·G`;
+ *   - `b = r·Hp(P) + c·I`, which is `k·Hp(P)`;
+ *   - accept when `Hs(message ‖ a ‖ b)` equals `c`.
+ *
+ * The checks that a from-first-principles verifier leaves out, and that decide
+ * whether this agrees with Monero rather than merely with arithmetic:
+ *
+ *   - **`sc_check` on both halves.** A scalar at or above the group order is
+ *     refused rather than reduced, or one signature becomes many.
+ *   - **The key image must be in the prime-order subgroup.**
+ *     `ge_check_subgroup_precomp_vartime`. Transcribed for agreement rather
+ *     than because a test can tell the difference, and that is said plainly
+ *     because deleting it breaks nothing here: an image outside the subgroup
+ *     changes `b`, so the challenge fails to reproduce and the signature is
+ *     refused one line later anyway. Monero checks first because a key image
+ *     is the network's only defense against spending one output twice, and
+ *     that defense rests on one output having exactly one image. This
+ *     verifier's job is to decide what Monero decides, not to re-derive which
+ *     of its lines are load-bearing. noble spells it `isTorsionFree`.
+ *
+ * @param signature 64 bytes, `c` then `r`, as it appears in the file.
+ */
+export function checkRingSignatureOfOne(
+  keyImage: Uint8Array,
+  oneTimeKey: Uint8Array,
+  signature: Uint8Array,
+): boolean {
+  if (keyImage.length !== 32 || oneTimeKey.length !== 32 || signature.length !== 64) return false;
+
+  const cBytes = signature.subarray(0, 32);
+  const rBytes = signature.subarray(32, 64);
+  if (!isCanonicalScalar(cBytes) || !isCanonicalScalar(rBytes)) return false;
+  const c = scalarFromBytes(cBytes);
+  const r = scalarFromBytes(rBytes);
+
+  let a: Uint8Array;
+  let b: Uint8Array;
+  try {
+    const image = Point.fromBytes(keyImage);
+    /* `ge_check_subgroup_precomp_vartime`. Without it a key image outside the
+     * prime-order subgroup verifies, and the network's double-spend defense
+     * rests on one output having exactly one image. */
+    if (!image.isTorsionFree()) return false;
+
+    const key = Point.fromBytes(oneTimeKey);
+    a = key.multiply(c).add(Point.BASE.multiply(r)).toBytes();
+    b = hashToEc(oneTimeKey).multiply(r).add(image.multiply(c)).toBytes();
+  } catch {
+    /* An undecodable point, or a scalar noble refuses. Nothing to verify. */
+    return false;
+  }
+
+  const buf = new Uint8Array(96);
+  buf.set(keyImage, 0);
+  buf.set(a, 32);
+  buf.set(b, 64);
+  return scalarFromBytes(hashToScalar(buf)) === c;
+}
+
 export { signatureBytes as legacySignatureBytes };

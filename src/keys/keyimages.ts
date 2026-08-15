@@ -45,7 +45,8 @@
  * numbers somebody else chose without proving what they are first.
  */
 
-import { exportKeyImageBlob, type ExportOutput } from './moneroexport';
+import { exportKeyImageBlob, readKeyImageBlob, type ExportOutput } from './moneroexport';
+import { checkRingSignatureOfOne } from './monerosign';
 import {
   deriveSecretKey,
   derivePublicKey,
@@ -451,6 +452,58 @@ export function keyImageFileFor(
       iv,
       offset: request.offset ?? 0,
     });
+
+    /* ## Proving the bytes before they leave
+     *
+     * `import_key_images` reads the file, checks the envelope signature, and
+     * then runs `check_ring_signature` over every record, throwing on the
+     * first that fails. Everything in that sentence can be run here, on the
+     * finished bytes, by the one party holding both halves: the file does not
+     * carry the one-time keys — the importing wallet supplies those from its
+     * own transfers — so the *writer* is the last place the pairing can be
+     * checked at all.
+     *
+     * So it is. The file is read back through `readKeyImageBlob`, which
+     * verifies the envelope signature and the account keys, and each record's
+     * ring signature is checked against the one-time key at the same index,
+     * which is the pairing the far side will make.
+     *
+     * ## No test here distinguishes it, and that is worth stating
+     *
+     * Deleting this block breaks nothing in the suite. Everything it could
+     * catch is already caught earlier and harder: `test/moneroexport.test.ts`
+     * compares the whole plaintext and the whole file against bytes Monero's
+     * own crypto produced, byte for byte, so a layout mistake or a mispaired
+     * record fails there with a better message than this would give.
+     *
+     * It is kept because those are build-time checks on a fixture and this is
+     * a runtime check on the bytes about to leave, and the two fail in
+     * different places. If the writer and the reader ever disagree on a device
+     * — for a reason no fixture stages — the vault says so here, holding both
+     * halves, rather than the file arriving in Cake as "signature check
+     * failed" with nobody able to say why. One CryptoNight pass and two scalar
+     * multiplications a record, against that.
+     *
+     * `checkRingSignatureOfOne` is `crypto::check_ring_signature` transcribed,
+     * and `oracle/src/keyimage.cpp` runs Monero's own over the same fixture
+     * and records the verdict, so neither verifier is the other's only
+     * witness. */
+    const readBack = readKeyImageBlob(file, wallet.viewSecret);
+    if (!readBack || readBack.images.length !== outputs.length) {
+      return { ok: false, problem: 'The key image file this vault wrote did not read back. It was not sent.' };
+    }
+    for (const [i, record] of readBack.images.entries()) {
+      if (!checkRingSignatureOfOne(record.keyImage, outputs[i]!.oneTimeKey, record.signature)) {
+        return {
+          ok: false,
+          problem:
+            `The signature in record ${i + 1} does not verify against the output it belongs to. ` +
+            'The file was not sent, because a wallet importing it would refuse it and say less ' +
+            'about why.',
+        };
+      }
+    }
+
     return { ok: true, file, answered: outputs.length, refused: [] };
   } catch (error) {
     /* The one expected throw is `chachaKeyFor` refusing on a build with no

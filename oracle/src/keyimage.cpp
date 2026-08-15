@@ -56,6 +56,16 @@ int main(int argc, char **argv) {
     std::vector<const crypto::public_key *> ptrs; ptrs.push_back(&pkey);
     crypto::generate_ring_signature((const crypto::hash &)ki, ki, ptrs, eph, 0, &sig);
     hexout("ring_sig", &sig, 64);
+    /* The gate `wallet2::import_key_images` puts every record through, run
+     * here by the implementation that puts it there.
+     *
+     * Generating a signature and reproducing its bytes proves two signers
+     * agree. It does not prove the *verifier* accepts them, and the verifier
+     * is what decides whether an import succeeds or throws "signature check
+     * failed". That check is one line and it costs nothing, and without it the
+     * claim "another wallet will accept this file" rests on reading
+     * wallet2.cpp rather than on running it. */
+    printf("ring_ok %d\n", crypto::check_ring_signature((const crypto::hash &)ki, ki, ptrs, &sig) ? 1 : 0);
     data += std::string((const char *)&ki, 32);
     data += std::string((const char *)&sig, 64);
   }
@@ -71,6 +81,10 @@ int main(int argc, char **argv) {
   crypto::cn_fast_hash(ct.data(), ct.size() - sizeof(crypto::signature), h);
   crypto::signature &osig = *(crypto::signature *)&ct[ct.size() - sizeof(crypto::signature)];
   crypto::generate_signature(h, view_pub, view_sec, osig);
+  /* And the envelope's own signature, through Monero's `check_signature`. The
+   * vault has its own verifier for this one now; this is the other half of
+   * that contract, so neither implementation is the other's only witness. */
+  printf("outer_ok %d\n", crypto::check_signature(h, view_pub, osig) ? 1 : 0);
 
   std::string file = std::string(KEY_IMAGE_EXPORT_FILE_MAGIC, strlen(KEY_IMAGE_EXPORT_FILE_MAGIC)) + ct;
   hexout("iv", &iv, 8);

@@ -6901,6 +6901,30 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     const r = scSub(k, scMul(c, scalarFromBytes(oneTimeSecret)));
     return { c: scalarToBytes(c), r: scalarToBytes(r) };
   }
+  function checkRingSignatureOfOne(keyImage, oneTimeKey, signature) {
+    if (keyImage.length !== 32 || oneTimeKey.length !== 32 || signature.length !== 64) return false;
+    const cBytes = signature.subarray(0, 32);
+    const rBytes = signature.subarray(32, 64);
+    if (!isCanonicalScalar(cBytes) || !isCanonicalScalar(rBytes)) return false;
+    const c = scalarFromBytes(cBytes);
+    const r = scalarFromBytes(rBytes);
+    let a;
+    let b;
+    try {
+      const image = Point3.fromBytes(keyImage);
+      if (!image.isTorsionFree()) return false;
+      const key = Point3.fromBytes(oneTimeKey);
+      a = key.multiply(c).add(Point3.BASE.multiply(r)).toBytes();
+      b = hashToEc2(oneTimeKey).multiply(r).add(image.multiply(c)).toBytes();
+    } catch {
+      return false;
+    }
+    const buf = new Uint8Array(96);
+    buf.set(keyImage, 0);
+    buf.set(a, 32);
+    buf.set(b, 64);
+    return scalarFromBytes(hashToScalar(buf)) === c;
+  }
 
   // src/keys/moneroexport.ts
   var KEY_IMAGE_MAGIC = "Monero key image export";
@@ -7038,6 +7062,39 @@ globalThis.TextDecoder.prototype.decode = function (input) {
         problem: "That file is this wallet's, and this build cannot open it: the key to its contents comes from CryptoNight, which did not load."
       };
     }
+  }
+  function readKeyImageBlob(file, viewSecret, kdfRounds = 1) {
+    if (viewSecret.length !== 32) return null;
+    const least = MAGIC_BYTES.length + IV_BYTES + HEADER_BYTES + SIGNATURE_BYTES;
+    if (file.length < least) return null;
+    for (let i = 0; i < MAGIC_BYTES.length; i++) {
+      if (file[i] !== MAGIC_BYTES[i]) return null;
+    }
+    const ciphertext = file.subarray(MAGIC_BYTES.length + IV_BYTES, file.length - SIGNATURE_BYTES);
+    if (ciphertext.length < HEADER_BYTES) return null;
+    const bodyLength = ciphertext.length - HEADER_BYTES;
+    if (bodyLength % RECORD_BYTES !== 0) return null;
+    const count = bodyLength / RECORD_BYTES;
+    if (count > MAX_IMAGES) return null;
+    const opened = openViewSecretEnvelope(file.subarray(MAGIC_BYTES.length), viewSecret, kdfRounds);
+    if (!opened.ok || !opened.plaintext) return null;
+    const plaintext = opened.plaintext;
+    const offset = plaintext[0] | plaintext[1] << 8 | plaintext[2] << 16 | plaintext[3] * 16777216;
+    const spendPublic = plaintext.slice(4, 36);
+    const viewPublic = plaintext.slice(36, 68);
+    const expected = ed25519.Point.BASE.multiply(scalar(viewSecret)).toBytes();
+    for (let i = 0; i < 32; i++) {
+      if (viewPublic[i] !== expected[i]) return null;
+    }
+    const images = [];
+    for (let i = 0; i < count; i++) {
+      const at = HEADER_BYTES + i * RECORD_BYTES;
+      images.push({
+        keyImage: plaintext.slice(at, at + KEY_IMAGE_BYTES),
+        signature: plaintext.slice(at + KEY_IMAGE_BYTES, at + RECORD_BYTES)
+      });
+    }
+    return { offset, spendPublic, viewPublic, images };
   }
 
   // node_modules/@noble/hashes/hmac.js
@@ -15764,6 +15821,18 @@ zoo`.split("\n"));
         iv,
         offset: request.offset ?? 0
       });
+      const readBack = readKeyImageBlob(file, wallet.viewSecret);
+      if (!readBack || readBack.images.length !== outputs.length) {
+        return { ok: false, problem: "The key image file this vault wrote did not read back. It was not sent." };
+      }
+      for (const [i, record] of readBack.images.entries()) {
+        if (!checkRingSignatureOfOne(record.keyImage, outputs[i].oneTimeKey, record.signature)) {
+          return {
+            ok: false,
+            problem: `The signature in record ${i + 1} does not verify against the output it belongs to. The file was not sent, because a wallet importing it would refuse it and say less about why.`
+          };
+        }
+      }
       return { ok: true, file, answered: outputs.length, refused: [] };
     } catch (error) {
       return { ok: false, problem: String(error?.message ?? error) };

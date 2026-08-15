@@ -19,9 +19,11 @@ import { readFileSync } from 'node:fs';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import {
+  checkRingSignatureOfOne,
   checkSignature,
   clsagSign,
   clsagVerify,
+  generateRingSignatureOfOne,
   generateSignature,
   hashToEc,
   keyImageOf,
@@ -420,5 +422,141 @@ describe('the envelope signature, verified', () => {
     const message = keccak_256(new Uint8Array([1, 2, 3, 4]));
     const sig = legacySignatureBytes(generateSignature(message, publicKey, secret, scalar(44)));
     expect(checkSignature(message, publicKey, sig)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `check_ring_signature`, the gate an importing wallet applies
+
+describe('the ring signature a key image export carries', () => {
+  /* ## What this closes
+   *
+   * `generateRingSignatureOfOne` was checked by reproducing Monero's bytes
+   * given the same nonce. That proves two *signers* agree and says nothing
+   * about the verifier — and the verifier is what decides whether
+   * `wallet2::import_key_images` succeeds or throws "signature check failed"
+   * at somebody standing in front of Cake or Feather.
+   *
+   * The fixture now carries Monero's own verdict. `oracle/src/keyimage.cpp`
+   * runs `crypto::check_ring_signature` and `crypto::check_signature` over its
+   * own output and records the answers, so the claim "another wallet will
+   * accept this" rests on running wallet2's gate rather than on reading
+   * wallet2.cpp. This file holds the TypeScript verifier to the same records.
+   */
+
+  const fixture = JSON.parse(
+    readFileSync('test/fixtures/monero-keyimages.json', 'utf8'),
+  ) as {
+    cases: {
+      name: string;
+      outPubs: string[];
+      keyImages: string[];
+      ringSigs: string[];
+      verified: { ringSignatures: boolean[]; envelope: boolean };
+    }[];
+  };
+
+  const two = fixture.cases.find((c) => c.name === 'two')!;
+
+  it('found the fixture, and Monero itself accepted these', () => {
+    /* The premise, asserted. If the oracle ever records a false here, the
+     * bytes below are not a valid signature and every assertion after this
+     * would be checking agreement about something wrong. */
+    expect(two.ringSigs).toHaveLength(2);
+    expect(two.verified.ringSignatures).toEqual([true, true]);
+    expect(two.verified.envelope).toBe(true);
+    for (const one of fixture.cases) {
+      expect(one.verified.ringSignatures, one.name).toEqual(one.ringSigs.map(() => true));
+    }
+  });
+
+  it('accepts the records Monero accepted', () => {
+    for (const [i, signature] of two.ringSigs.entries()) {
+      expect(
+        checkRingSignatureOfOne(fromHex(two.keyImages[i]!), fromHex(two.outPubs[i]!), fromHex(signature)),
+        `record ${i}`,
+      ).toBe(true);
+    }
+  });
+
+  it('rejects every single-byte change to a signature', () => {
+    const image = fromHex(two.keyImages[0]!);
+    const key = fromHex(two.outPubs[0]!);
+    const signature = fromHex(two.ringSigs[0]!);
+    for (let at = 0; at < 64; at++) {
+      const bent = Uint8Array.from(signature);
+      bent[at] = (bent[at]! + 1) & 0xff;
+      expect(checkRingSignatureOfOne(image, key, bent), `byte ${at}`).toBe(false);
+    }
+  });
+
+  it('rejects a record paired with the wrong output', () => {
+    /* The failure `import_key_images` actually produces in the field. It walks
+     * `m_transfers[i + offset]` and pairs by position, so a file whose order
+     * does not match the importing wallet's presents each signature against
+     * somebody else's key. These two records are both valid and both this
+     * wallet's; swapped, neither verifies. */
+    expect(checkRingSignatureOfOne(fromHex(two.keyImages[0]!), fromHex(two.outPubs[1]!), fromHex(two.ringSigs[0]!)))
+      .toBe(false);
+    expect(checkRingSignatureOfOne(fromHex(two.keyImages[1]!), fromHex(two.outPubs[0]!), fromHex(two.ringSigs[1]!)))
+      .toBe(false);
+    // And swapping the images too, which is what a shifted file really does.
+    expect(checkRingSignatureOfOne(fromHex(two.keyImages[1]!), fromHex(two.outPubs[0]!), fromHex(two.ringSigs[0]!)))
+      .toBe(false);
+  });
+
+  it('rejects a key image outside the prime-order subgroup', () => {
+    /* The behaviour is worth pinning; the *reason* is not what this test
+     * shows, and saying so avoids a comment that reads as more than it is.
+     * Deleting `isTorsionFree` from the verifier breaks nothing, because an
+     * image outside the subgroup changes `b` and the challenge fails to
+     * reproduce a line later. Monero checks first anyway, because a key image
+     * is the network's only defense against spending one output twice and that
+     * rests on one output having exactly one image.
+     *
+     * The point below is a real curve point of order 8, from RFC 8032's
+     * small-order list, so what is being rejected is a genuine small-order
+     * image rather than bytes that fail to decode. */
+    const smallOrder = fromHex('c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa');
+    expect(Point.fromBytes(smallOrder).isTorsionFree(), 'the premise is wrong').toBe(false);
+    expect(checkRingSignatureOfOne(smallOrder, fromHex(two.outPubs[0]!), fromHex(two.ringSigs[0]!)))
+      .toBe(false);
+  });
+
+  it('rejects a signature whose scalars are not canonical', () => {
+    const image = fromHex(two.keyImages[0]!);
+    const key = fromHex(two.outPubs[0]!);
+    const signature = fromHex(two.ringSigs[0]!);
+    const shift = (start: number) => {
+      const bent = Uint8Array.from(signature);
+      let n = 0n;
+      for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(bent[start + i]!);
+      let plus = n + L;
+      for (let i = 0; i < 32; i++) {
+        bent[start + i] = Number(plus & 0xffn);
+        plus >>= 8n;
+      }
+      return bent;
+    };
+    expect(checkRingSignatureOfOne(image, key, shift(0)), 'c + L was accepted').toBe(false);
+    expect(checkRingSignatureOfOne(image, key, shift(32)), 'r + L was accepted').toBe(false);
+  });
+
+  it('rejects the shapes that are not a record at all', () => {
+    const image = fromHex(two.keyImages[0]!);
+    const key = fromHex(two.outPubs[0]!);
+    expect(checkRingSignatureOfOne(image, key, new Uint8Array(63))).toBe(false);
+    expect(checkRingSignatureOfOne(image, new Uint8Array(31), new Uint8Array(64))).toBe(false);
+    expect(checkRingSignatureOfOne(new Uint8Array(32).fill(0xff), key, new Uint8Array(64))).toBe(false);
+  });
+
+  it('agrees with this repository\'s own signer, both ways', () => {
+    const secret = scalar(31);
+    const oneTimeKey = publicFromSecret(secret);
+    const image = fromHex(keyImageOf(oneTimeKey, secret));
+    const signature = legacySignatureBytes(
+      generateRingSignatureOfOne(image, oneTimeKey, secret, scalar(64)),
+    );
+    expect(checkRingSignatureOfOne(image, oneTimeKey, signature)).toBe(true);
   });
 });

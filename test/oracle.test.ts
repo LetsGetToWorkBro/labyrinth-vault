@@ -161,3 +161,47 @@ describe('the oracle rig', () => {
     expect(build).toMatch(/refusing to build against a different Monero/);
   });
 });
+
+describe('the oracle reports Monero verifying its own output', () => {
+  /* The gate an importing wallet applies, recorded by the implementation that
+   * applies it. Without this the fixture proves only that two signers agree
+   * about bytes; with it, the file is known to pass the check
+   * `wallet2::import_key_images` runs before it accepts a record.
+   *
+   * Asserted here rather than only in the harness because `npm test` cannot
+   * build C++. The committed answer is what the TypeScript suite reads, and
+   * `./oracle/build.sh && node oracle/emit.mjs --check` is what proves the
+   * answer is still what Monero gives.
+   */
+  const fixture = JSON.parse(
+    readFileSync('test/fixtures/monero-keyimages.json', 'utf8'),
+  ) as {
+    cases: { name: string; ringSigs: string[]; verified?: { ringSignatures: boolean[]; envelope: boolean } };
+  } & { cases: { name: string; ringSigs: string[]; verified: { ringSignatures: boolean[]; envelope: boolean } }[] };
+
+  it('records a verdict for every record it wrote', () => {
+    for (const one of fixture.cases) {
+      expect(one.verified, `${one.name} has no recorded verdict`).toBeDefined();
+      expect(one.verified.ringSignatures, one.name).toHaveLength(one.ringSigs.length);
+    }
+  });
+
+  it('says Monero accepted all of them', () => {
+    /* A false here would not be a failing test to work around. It would mean
+     * the vault writes files real Monero software rejects, and everything
+     * downstream of that is moot. */
+    for (const one of fixture.cases) {
+      expect(one.verified.ringSignatures.every(Boolean), `${one.name} ring signatures`).toBe(true);
+      expect(one.verified.envelope, `${one.name} envelope`).toBe(true);
+    }
+  });
+
+  it('is produced by the harness rather than written by hand', () => {
+    const harness = readFileSync('oracle/src/keyimage.cpp', 'utf8');
+    expect(harness).toMatch(/crypto::check_ring_signature\(\(const crypto::hash &\)ki, ki, ptrs, &sig\)/);
+    expect(harness).toMatch(/crypto::check_signature\(h, view_pub, osig\)/);
+    const emit = readFileSync('oracle/emit.mjs', 'utf8');
+    expect(emit).toMatch(/ringSignatures: r\.ring_ok/);
+    expect(emit).toMatch(/envelope: r\.outer_ok === '1'/);
+  });
+});

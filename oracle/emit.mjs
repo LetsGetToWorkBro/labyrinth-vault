@@ -63,7 +63,7 @@ function run(offset, ephemerals) {
     encoding: 'utf8',
   });
   const fields = {};
-  const lists = { out_pub: [], key_image: [], ring_sig: [] };
+  const lists = { out_pub: [], key_image: [], ring_sig: [], ring_ok: [] };
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
     const [key, value] = [line.slice(0, line.indexOf(' ')), line.slice(line.indexOf(' ') + 1)];
@@ -94,6 +94,23 @@ const cases = [
     iv: r.iv,
     plaintext: r.plaintext,
     file: r.file,
+    /* Monero's own verifiers, run over Monero's own output.
+     *
+     * Reproducing a signature byte for byte proves two signers agree. It does
+     * not prove the *verifier* accepts them, and the verifier is what decides
+     * whether `wallet2::import_key_images` succeeds or throws "signature check
+     * failed". These two flags are `crypto::check_ring_signature` on every
+     * record and `crypto::check_signature` on the envelope, so the claim that
+     * another wallet will accept this file rests on running wallet2's gate
+     * rather than on reading wallet2.cpp.
+     *
+     * They are in the fixture rather than only in the harness output because
+     * `npm test` cannot build C++; the committed answer is what the TypeScript
+     * suite reads, and `--check` is what proves the answer is still that. */
+    verified: {
+      ringSignatures: r.ring_ok.map((value) => value === '1'),
+      envelope: r.outer_ok === '1',
+    },
   };
 });
 

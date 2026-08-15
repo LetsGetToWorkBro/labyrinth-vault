@@ -18,6 +18,20 @@
  * signature, the plaintext, the finished file — is what Monero produced. The
  * TypeScript has to match it byte for byte or it is wrong.
  *
+ * ## Monero's own verdict is in the fixture too
+ *
+ * Reproducing a signature byte for byte proves two *signers* agree. It says
+ * nothing about the verifier, and the verifier is what decides whether
+ * `wallet2::import_key_images` succeeds or throws "signature check failed" at
+ * somebody standing in front of Cake or Feather. So the harness now runs
+ * `crypto::check_ring_signature` over every record it makes and
+ * `crypto::check_signature` over the envelope, and records the answers under
+ * `verified`. The claim that another wallet will accept one of these files
+ * rests on running wallet2's gate rather than on reading wallet2.cpp.
+ *
+ * `test/monerosign.test.ts` holds this repository's own verifiers to the same
+ * records, so neither implementation is the other's only witness.
+ *
  * ## Why the nonces are in the fixture
  *
  * Monero draws `k` at random inside `generate_signature` and

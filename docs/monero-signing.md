@@ -228,6 +228,41 @@ is in the vault. `wallet/src/core/vaultfile.ts` decides what arrived and what
 to say about it, using the vault's own `readContainer`, so the two halves
 cannot disagree about what a file is.
 
+## Done since: Monero's own verifiers, run over our records
+
+The previous section left one claim resting on a reading rather than a run: an
+importing wallet will accept these files. `wallet2::import_key_images` decides
+that with `crypto::check_ring_signature` on every record and, before it,
+`decrypt_with_view_secret_key` on the envelope. Both are in `crypto.cpp`, which
+the oracle already links.
+
+So `oracle/src/keyimage.cpp` runs them over its own output and prints the
+verdicts, and `oracle/emit.mjs` records them in the fixture under `verified`.
+Two lines of C++, and the difference between "wallet2.cpp says this passes" and
+"wallet2's own verifier passed it". `test/oracle.test.ts` asserts the recorded
+answers and that the harness is what produced them; `--check` reproduces the
+whole fixture, verdicts included.
+
+This repository now has both verifiers as well. `checkSignature` came with the
+envelope work; `checkRingSignatureOfOne` is `crypto::check_ring_signature`
+transcribed for a ring of one, held to the same records Monero accepted and to
+every single-byte mutation of them. Neither implementation is the other's only
+witness.
+
+The verifier earns its place in one specific test: **a record paired with the
+wrong output**. Both records in the fixture are valid and both belong to the
+same wallet; swap which output each is checked against and neither verifies.
+That is exactly what a file in the wrong order presents to an importing wallet,
+and it is the failure the transfer offset exists to avoid.
+
+Two checks in these verifiers are transcribed for agreement rather than because
+a test distinguishes them, and both say so where they are written: the non-zero
+challenge in `checkSignature`, and the prime-order subgroup check on the key
+image in `checkRingSignatureOfOne`. Deleting either changes no observable
+behavior, because the challenge fails to reproduce a line later either way.
+They are kept because this verifier's job is to decide what Monero decides, not
+to re-derive which of its lines are load-bearing.
+
 ## Done since: the envelope signature is checked
 
 `encrypt_with_view_secret_key` puts a 64-byte `crypto::generate_signature`
