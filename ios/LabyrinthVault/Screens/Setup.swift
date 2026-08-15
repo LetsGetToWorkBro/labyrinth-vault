@@ -29,25 +29,103 @@ struct SetupView: View {
 
 // MARK: 01 — the declaration
 
+/// The first screen anybody sees, and the only place the whole idea is
+/// explained in one go.
+///
+/// It used to be three words and a paragraph: true, well written, and it never
+/// said that a second device is required, that everything crosses as a
+/// photograph, or that the backup is paper you write by hand in the next few
+/// minutes. A person could finish setup without ever being told how the thing
+/// is meant to be used.
+///
+/// On the cryptography, the honest line is that there is nothing novel in it.
+/// Argon2id and XChaCha20-Poly1305 at the parameters their own specifications
+/// recommend. Saying so plainly is worth more than a claim of secret sauce,
+/// because anybody who knows the field reads novel cryptography as a warning,
+/// and anybody who does not is owed the truth rather than a boast.
 private struct DeclarationView: View {
     @EnvironmentObject private var vault: Vault
+
+    private let steps: [(String, String, String)] = [
+        ("01", "TWO DEVICES",
+         "This phone keeps the keys and never spends anything by itself. Another device watches your balance and builds the payments."),
+        ("02", "NOTHING RUNS BETWEEN THEM",
+         "They are never connected. Everything crosses as a QR code you point one camera at: no cable, no pairing, no account."),
+        ("03", "YOU READ, THEN IT SIGNS",
+         "A payment arrives as a code. This phone shows you what it actually does, and signs only what you approved, byte for byte."),
+        ("04", "PAPER IS THE ONLY BACKUP",
+         "Two phrases, written by hand, in the next few minutes. Nothing else has a copy and nobody can issue you another."),
+    ]
+
     var body: some View {
         Screen {
             VStack(alignment: .leading, spacing: 0) {
-                Spacer()
-                Statement("THIS PHONE", "IS NOW", "A VAULT.", size: 56)
-                Hairline().padding(.vertical, 30)
-                Text("It will hold keys and give signatures. It will not hold money, watch a " +
-                     "balance, or reach a network. Those belong to the device in your pocket, " +
-                     "and that device is never trusted with a key.")
-                    .font(Type.body())
-                    .lineSpacing(5)
-                    .foregroundStyle(Ink.paperDim)
-                Spacer()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Statement("THIS PHONE", "IS NOW", "A VAULT.", size: 52)
+                            .padding(.top, 24)
+                        Hairline().padding(.vertical, 26)
+                        Text("It will hold keys and give signatures. It will not hold money, watch a " +
+                             "balance, or reach a network. Those belong to the device in your pocket, " +
+                             "and that device is never trusted with a key.")
+                            .font(Type.body())
+                            .lineSpacing(5)
+                            .foregroundStyle(Ink.paperDim)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Eyebrow("HOW IT WORKS", color: Ink.paperDim)
+                            .padding(.top, 34)
+                            .padding(.bottom, 4)
+                        ForEach(steps, id: \.0) { step in
+                            HStack(alignment: .top, spacing: 14) {
+                                Text(step.0)
+                                    .font(Type.mono(11))
+                                    .foregroundStyle(Ink.paperGhost)
+                                    .padding(.top, 2)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(step.1)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .kerning(1.1)
+                                        .foregroundStyle(Ink.paper)
+                                    Text(step.2)
+                                        .font(Type.body(13))
+                                        .lineSpacing(4)
+                                        .foregroundStyle(Ink.paperDim)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(.vertical, 14)
+                            Hairline()
+                        }
+
+                        /* Named, and named as ordinary. The parameters matter
+                         * more than the names and are the reason this app was
+                         * slow enough to need a native port rather than a
+                         * weaker setting. */
+                        VStack(alignment: .leading, spacing: 10) {
+                            Eyebrow("THE CRYPTOGRAPHY IS NOT THE CLEVER PART", color: Ink.paper)
+                            Text("Your passphrase is stretched with Argon2id and the vault is sealed with " +
+                                 "XChaCha20-Poly1305, both at the settings their specifications recommend. " +
+                                 "Nothing here is invented. What is unusual is that this build contains no " +
+                                 "networking code at all, so there is nothing in it that could send your " +
+                                 "keys anywhere, whatever it is asked to do.")
+                                .font(Type.body(13))
+                                .lineSpacing(4)
+                                .foregroundStyle(Ink.paperDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay { Rectangle().strokeBorder(Ink.rule, lineWidth: 1) }
+                        .padding(.top, 30)
+                        .padding(.bottom, 24)
+                    }
+                    .padding(.horizontal, 24)
+                }
                 Lever(title: "BEGIN", hint: "STEP 1 / 6") { vault.go(.setup(.radios)) }
+                    .padding(.horizontal, 24)
                     .padding(.bottom, 12)
             }
-            .padding(.horizontal, 24)
         }
     }
 }

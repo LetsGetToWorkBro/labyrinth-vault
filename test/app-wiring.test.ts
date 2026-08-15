@@ -76,6 +76,58 @@ describe('guards over the app that actually ships', () => {
   });
 });
 
+describe('the first screen explains the thing before asking for commitment', () => {
+  const setup = readFileSync('ios/LabyrinthVault/Screens/Setup.swift', 'utf8');
+  const declaration = setup.slice(
+    setup.indexOf('private struct DeclarationView'),
+    setup.indexOf('MARK: 02'),
+  );
+
+  it('names the parts of the model a person cannot guess', () => {
+    /* The screen used to say what the phone becomes and stop there. Somebody
+     * could finish setup without being told that a second device is required,
+     * that everything crosses as a photograph, or that the backup is paper
+     * they are about to write by hand. Each of those is a surprise that costs
+     * money or time if it arrives late. */
+    const said = declaration.toLowerCase();
+    expect(said, 'never mentions the second device').toContain('another device');
+    expect(said, 'never mentions how data crosses').toContain('qr code');
+    expect(said, 'never mentions the paper backup').toMatch(/written by hand|on paper/);
+    expect(said, 'never names what does the encrypting').toContain('argon2id');
+  });
+
+  it('holds the app to the same honesty rules as the site', () => {
+    /* test/site-claims.test.ts bans these on the marketing site and the app
+     * has never been held to them, which is backwards: the site is read once
+     * and the app is the thing somebody trusts with keys.
+     *
+     * "No networking code in this build" is a claim about a binary and
+     * survives inspection. "Never connects to the internet" is a claim about
+     * a phone on a desk with its wifi on, and the app cannot see a radio. */
+    const offline = /never\s+connects?\s+to\s+the\s+internet|is\s+(always\s+)?offline\b|cannot\s+connect\s+to\s+the\s+internet/i;
+    const verified = /airgap\s+verified|verified\s+(the\s+)?airgap/i;
+    const guilty: string[] = [];
+    for (const { path, text } of appSources()) {
+      const strings = [...text.matchAll(/"([^"\\]{12,})"/g)].map((m) => m[1]!).join(' ');
+      if (offline.test(strings)) guilty.push(`${path}: claims the device is offline`);
+      if (verified.test(strings)) guilty.push(`${path}: claims the airgap was verified`);
+    }
+    expect(guilty).toEqual([]);
+  });
+
+  it('claims nothing special about the cryptography', () => {
+    /* Novel cryptography reads as a warning to anybody who knows the field,
+     * and as a boast to anybody who does not. The interesting claim here is
+     * about the build, not the algorithms. */
+    const boast = /military[- ]grade|bank[- ]grade|unbreakable|proprietary\s+(encryption|cipher|algorithm)|our own (encryption|cipher)/i;
+    const guilty: string[] = [];
+    for (const { path, text } of appSources()) {
+      if (boast.test(text)) guilty.push(path);
+    }
+    expect(guilty).toEqual([]);
+  });
+});
+
 describe('every settings row says what is behind it', () => {
   /* From an audit of that screen. It was titled SECURITY, under a tab called
    * SECURITY, with a first row reading SECURITY DIAGNOSTICS, and its value
