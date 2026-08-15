@@ -24,22 +24,50 @@
  *
  * ## Why it stops here
  *
- * Four layers sit between these bytes and a signature, and they have to be
- * built in order:
+ * Three layers sit between these bytes and a wallet2-compatible answer, and
+ * they have to be built in order. This list was wrong for a while and the way
+ * it was wrong mattered, so it is now written from the source rather than from
+ * recollection: the citations below are to
+ * `monero/src/wallet/wallet2.cpp` on release-v0.18.
  *
  *   1. **CryptoNight.** The container's ChaCha20 key comes from
  *      `crypto::cn_slow_hash`, Monero's old proof-of-work hash, over the view
  *      secret key. Implementing it means a 2 MB scratchpad, an AES round
  *      function, and four more hash functions (Blake, Groestl, JH, Skein) that
  *      pick the final result between them. Until that exists the file cannot
- *      even be decrypted.
- *   2. **Boost's portable binary archive.** The plaintext inside is a C++
- *      object graph serialized by Boost.Serialization, not a documented wire
- *      format. It is defined by the library's implementation.
- *   3. **`unsigned_tx_set`.** The struct graph itself: construction data,
- *      sources, ring members, destinations, subaddress indices.
- *   4. **CLSAG and Bulletproofs+.** The actual signing, which is a ring
- *      signature scheme and a range proof, neither of which is here.
+ *      even be decrypted. This one is as advertised, and it is the reason the
+ *      envelope is not a weekend's work.
+ *   2. **Monero's own `binary_archive`, which is *not* Boost.** This comment
+ *      used to say the plaintext was "a C++ object graph serialized by
+ *      Boost.Serialization, not a documented wire format". That is false for
+ *      every format the current wallet writes. `save_tx` and `sign_tx` build
+ *      the payload with `binary_archive<true>` (wallet2.cpp:7703, :8016), the
+ *      output export likewise (:14905), and all three are Monero's own
+ *      serializer: varints, fixed-width little-endian integers, explicit
+ *      container counts. Boost appears only on the deprecated `\003`/`\004`
+ *      read paths that modern wallets refuse to load by default.
+ *
+ *      The key image export uses no archive at all. It is fixed-width
+ *      concatenation written by hand — a little-endian `uint32` offset, the
+ *      account's two public keys, then 96 bytes per record
+ *      (wallet2.cpp:13933-13946).
+ *
+ *      The correction is worth this much space because the false version sent
+ *      the reader towards writing a Boost portable-archive reader, which
+ *      nothing here needs and which is far harder than the thing that is
+ *      actually required.
+ *   3. **The `unsigned_tx_set` struct graph.** Construction data, sources,
+ *      ring members, destinations, subaddress indices. This is the layer that
+ *      dominates the work, and it is design rather than line count: our
+ *      in-memory shapes and wallet2's are not the same shapes.
+ *
+ * What is no longer on this list: **CLSAG and Bulletproofs+.** They used to be
+ * item four, described there as absent. Both now ship with
+ * provers and verifiers — `clsagSign`/`clsagVerify` in `monerosign.ts`,
+ * `proveBulletproofPlus`/`verifyBulletproofPlus` in `bulletproofplus.ts` —
+ * anchored to real on-chain proofs. The file claimed a gap that had been
+ * closed, which is the same defect as claiming a capability that does not
+ * exist, pointing the other way.
  *
  * The primitives underneath all of that — the derivations, the key image — are
  * in `monerocrypto.ts` and are checked against 720 of the Monero project's own

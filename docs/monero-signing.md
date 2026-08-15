@@ -116,11 +116,26 @@ The signing itself, which is two separate cryptographic constructions:
 - **Bulletproofs+**, the range proof that shows every output amount is in range
   without revealing it.
 
-Both must produce output the network accepts. Neither has an audited JavaScript
-implementation. Both are the kind of code where a subtle error is not a
-rejected transaction but a leak. A range proof that reveals an amount, a ring
-signature that narrows the anonymity set, a key image that links two spends
-that were meant to be unlinkable.
+Both must produce output the network accepts. Both are the kind of code where a
+subtle error is not a rejected transaction but a leak: a range proof that
+reveals an amount, a ring signature that narrows the anonymity set, a key image
+that links two spends that were meant to be unlinkable.
+
+**Both of these now exist here, and this section is kept because the reasoning
+still applies to what is left.** `clsagSign` and `clsagVerify` are in
+`src/keys/monerosign.ts`; `proveBulletproofPlus` and `verifyBulletproofPlus`
+are in `src/keys/bulletproofplus.ts`. The prover is checked against the
+verifier, and the verifier against real proofs taken off the chain, which is
+the arrangement that makes a second implementation of somebody else's
+cryptography defensible at all.
+
+What is *not* done is the wallet2 container around them, and the correction
+worth carrying forward is that its plaintext is **not** Boost.Serialization.
+`save_tx` and `sign_tx` use Monero's own `binary_archive`
+(`wallet2.cpp:7703`, `:8016`), and the key image export uses no archive at all,
+just fixed-width concatenation written by hand (`:13933-13946`). That was
+recorded wrongly here and in `src/keys/monerotx.ts` for some time, and it
+pointed at a Boost reader nobody needs.
 
 ## Why this is where it stops
 

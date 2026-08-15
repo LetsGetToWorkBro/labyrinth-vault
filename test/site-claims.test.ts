@@ -625,3 +625,37 @@ describe('the site still makes the claim that is true', () => {
     expect(all).toMatch(/not\s+(been\s+)?independently\s+audited/i);
   });
 });
+
+describe('the source does not misdescribe its own capability', () => {
+  /* Two failures, opposite directions, both shipped at once in monerotx.ts:
+   * it claimed CLSAG and Bulletproofs+ were absent when both had provers and
+   * verifiers, and it claimed the wallet2 container plaintext was
+   * Boost.Serialization when it is Monero's own binary_archive.
+   *
+   * The second was the expensive one. It pointed a reader at building a Boost
+   * portable-archive reader that nothing needs, instead of the far smaller
+   * thing actually required. A comment that is confidently wrong about a
+   * format costs more than no comment at all, and nothing in a type system
+   * catches it. */
+  const monerotx = readFileSync('src/keys/monerotx.ts', 'utf8');
+
+  it('does not call an implemented primitive missing', () => {
+    const sign = readFileSync('src/keys/monerosign.ts', 'utf8');
+    const bpp = readFileSync('src/keys/bulletproofplus.ts', 'utf8');
+    const shipped =
+      /export function clsagSign/.test(sign) && /export function proveBulletproofPlus/.test(bpp);
+    expect(shipped, 'these tests assume both ship; they no longer do').toBe(true);
+
+    expect(monerotx, 'monerotx.ts still says CLSAG is not here')
+      .not.toMatch(/CLSAG[^.]{0,80}neither of which is here|neither of which is here/i);
+  });
+
+  it('does not describe the container plaintext as Boost', () => {
+    /* Verified against monero release-v0.18: wallet2.cpp:7703 and :8016 both
+     * construct `binary_archive<true>`, and export_key_images builds its
+     * payload with `data[0] = offset & 0xff` and friends. */
+    const claimsBoost = /serialized by Boost\.Serialization|Boost's portable binary archive/i;
+    expect(monerotx, 'the Boost claim is back').not.toMatch(claimsBoost);
+    expect(monerotx, 'the correction lost its citation').toMatch(/binary_archive/);
+  });
+});
