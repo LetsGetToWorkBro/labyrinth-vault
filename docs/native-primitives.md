@@ -304,6 +304,67 @@ of the same kind as agreeing with libsodium: real, and not a statement about
 iOS. The test target is in `project.yml`, so confirming it on a device costs
 one ⌘U.
 
+## The third category: vendoring, which is not porting
+
+The rule at the top of this document sorts work into two piles. Primitives
+with an external oracle may be ported; judgement may not.
+CryptoNight fits neither, and it is now in the build, so the case belongs here
+rather than left to be re-argued.
+
+**What it is for.** Monero's `wallet2` encrypts every exported key-image set
+with ChaCha20 under a key derived from the view secret key, and the derivation
+is `cn_slow_hash`, which is CryptoNight: the retired proof-of-work function,
+standing in as a KDF over a value that was already uniformly random.
+`chacha.h`, and
+`wallet2.cpp:15510`. It is not a good design and it is not open for
+discussion: it is the format. Cake Wallet, Feather and monero-cli read one
+another's exports for exactly one reason, which is that all three link this
+same C.
+
+**Why the rule does not decide it.** Argon2id could be implemented twice
+because RFC 9106 publishes vectors from an implementation neither of ours had
+seen, so both answer to a third. CryptoNight has four vectors in
+`tests/hash/tests-slow.txt` and, past those, only Monero's source as its
+specification. A second implementation would be a thousand lines of scratchpad
+indexing with nothing independent to check it: it either matches four inputs
+or it is wrong on the fifth, and the fifth would be somebody's wallet.
+
+**So it was neither ported nor reimplemented. It was taken.**
+`vendor/cryptonight` is Monero's own C at tag `v0.18.5.1`, byte-pinned in a
+`MANIFEST.json` the same way `vendor/argon2` is, and kept at the upstream
+paths so the diff against a Monero checkout needs no explaining. Thirty-one
+files are theirs; three are ours and the manifest names them, because a shim
+is exactly where code could be added that a reader would charge to upstream.
+
+That is a different kind of trust from the rest of this repository, and it is
+worth being blunt about which. Everything else here is either ours and tested,
+or third-party and checked against an oracle that is neither of us. This is
+third-party, checked against its own author's four test vectors, and believed
+because two other wallets depend on the same bytes. The honest summary is that
+we are trusting Monero about Monero's format, which is the only thing there is
+to trust.
+
+Three narrowings were applied on the way in, and a guard in
+`test/app-wiring.test.ts` holds each:
+
+- **The variant is bound in C.** `cn_slow_hash` takes a variant argument
+  selecting five materially different functions, one of which generates
+  machine code at runtime. `labyrinth_cn_slow_hash_v0` takes no such argument,
+  so Swift has nothing to pass.
+- **The runtime code generator is not vendored at all.** `CryptonightR_JIT.c`
+  mmaps an executable page, which iOS forbids a third-party app outright. Only
+  the header it compiles against is present, and the symbol resolves to a stub
+  that aborts rather than one that returns quietly.
+- **`NO_AES` selects the portable implementation** over the AES-NI and NEON
+  ones in the same file. All three agree on the vectors; taking the portable
+  one means Linux CI runs the code the phone runs. It costs about 50 ms
+  against 27 ms, for a call this app makes once per key-image export.
+
+The elliptic curve stayed in TypeScript. `crypto-ops.c` was right there and
+was not taken, because key-image derivation is precisely what the rule at the
+top of this document is about: two implementations of *that* would be two
+chances to be wrong about the same secret.
+
 ## Not on the list
 
 **The Secure Enclave**, which comes up whenever this subject does. It is worth

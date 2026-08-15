@@ -1,0 +1,61 @@
+{
+  "note": "Monero's CryptoNight, vendored. Upstream paths are preserved exactly — src/crypto/slow-hash.c here is src/crypto/slow-hash.c there — so a reviewer can diff this directory against a checkout of the tag below with no path translation. Regenerate with scripts/pin-vendor.mjs after any deliberate update; test/vendor.test.ts fails if a byte moves without it.",
+  "upstream": "https://github.com/monero-project/monero",
+  "tag": "v0.18.5.1",
+  "commit": "4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5",
+  "commitDate": "2026-06-30",
+  "license": "BSD-3-Clause",
+  "takenFor": "cn_slow_hash at variant 0, which is the hash crypto::generate_chacha_key runs to turn a Monero view secret key into the ChaCha20 key over an exported key-image set. See ios/LabyrinthVaultKDF/README.md.",
+  "ours": [
+    "include/labyrinth_cryptonight.h",
+    "shim/labyrinth_cn.c",
+    "shim/boost/preprocessor/stringize.hpp"
+  ],
+  "buildDefines": {
+    "NO_AES": "Selects the portable C implementation in slow-hash.c over the AES-NI and ARM-NEON ones. Same output — all three are checked against the official vectors — and it is the same reasoning that took ref.c over opt.c for Argon2: one code path, and the one a Linux CI can actually run.",
+    "FORCE_USE_HEAP": "The portable path otherwise declares its 2 MiB scratchpad as a stack array, and an iOS thread has 512 KiB."
+  },
+  "notTaken": [
+    "src/crypto/CryptonightR_JIT.c and CryptonightR_template.{S,h} (runtime code generation, reached only at variant 4, and iOS forbids the mmap it needs)",
+    "src/crypto/rx-slow-hash.c and RandomX (variant 5; tens of thousands of lines for a call this app never makes)",
+    "src/crypto/crypto-ops.c, crypto.cpp, generators.cpp (the elliptic curve; the engine does that in TypeScript)",
+    "src/crypto/chacha.c (the stream cipher itself; src/keys/monerotx.ts has it)",
+    "src/crypto/tree-hash.c, hmac-keccak.c, blake2b.c, random.c (unreached from cn_slow_hash)"
+  ],
+  "files": {
+    "LICENSE": "c2fe351163f4e0cee45d38e9481f2ea60f3cb77b24f818c4a2c740383f2f4cb2",
+    "contrib/epee/include/int-util.h": "6d30dfce132862c59345f099d92c1478a4a0882eb289b57d45345eb0b7d040bd",
+    "contrib/epee/include/memwipe.h": "5321638be01b09dff729ffbe845851be2c9da9cc50bddbbb01016e23d804443d",
+    "contrib/epee/include/warnings.h": "71cdaae185b836c44b05cdd15f9c4266dc600479cda2902c507460fa46405072",
+    "contrib/epee/src/memwipe.c": "3b1bb129e6173b4d5c252420fecbce8a6c98ad2f8518abe60e625f47739f7929",
+    "include/labyrinth_cryptonight.h": "b16b641992ea6a0afecda8cc01f55c289ae184c4297d648861f9e94f1064637e",
+    "shim/boost/preprocessor/stringize.hpp": "459f43b907a15bc1df4f6b5b0478230e34dd522716810495e0a1042a0d86ed32",
+    "shim/labyrinth_cn.c": "be612e5add89efdedde165f70ea6407eb0ca3729290ef10b660b74e50b43ee95",
+    "src/crypto/CryptonightR_JIT.h": "06263f4370838de2749cf4d77ab8795db3febcc09efbb434cb9548bc4beaad5e",
+    "src/crypto/aesb.c": "73d2f721b4e85f89f014e6f8f6dabfea770ad344410a66561a6505e32e54dff4",
+    "src/crypto/blake256.c": "e10d689c7eab86996e173ff6a7d4697507243f872a88b24396a1093123bcf4b2",
+    "src/crypto/blake256.h": "59c932764ff980667b0264643da9a4c4c9c0614b49290d9ff2a4b0d8d9a19143",
+    "src/crypto/groestl.c": "e2f60a93f7469766ea5c4a98ba80c8c7a0ac6e0c362a1cb48a39f2968a099f8f",
+    "src/crypto/groestl.h": "16194caa279d35b6d9dbec49e6853d00d53b069ddfa3d965666e74ef49d36361",
+    "src/crypto/groestl_tables.h": "b7a9ddde86a7ae9dec801e258ae859c01069df63104a9fe99255b0dd2ab97f6a",
+    "src/crypto/hash-extra-blake.c": "680116c1cdc38a0fce77792684802a3a2fa2ef6468f8bd2df6931d2f6181e5ed",
+    "src/crypto/hash-extra-groestl.c": "9912e623884b139d532cb8e18cf182ba9ef997124869de5e61615d57f184af71",
+    "src/crypto/hash-extra-jh.c": "239751a2a7987a84a669bd19835cd47692991d63d53a7a88440c569606f2b850",
+    "src/crypto/hash-extra-skein.c": "5317916bf7084c8f33b1a7edfe292e6c5d09af3b4b28b73abc5544cafba17802",
+    "src/crypto/hash-ops.h": "2a78720488efa9529f64c30a21ad259f986bb33c2caf5bf620297e433f9b92ab",
+    "src/crypto/hash.c": "955cd6bc5f83ed6e6d5a2a657afb673d3de5bad3aa54f3db3c2a30097af7381a",
+    "src/crypto/jh.c": "df9ff5fa646179e984baf03fbf4be9914893e6900b9f7223d7a115c952df72d3",
+    "src/crypto/jh.h": "ca4f3570ce36a46bdc24e749ad1d60f9216ee708076d61fd9f1a1ed336626178",
+    "src/crypto/keccak.c": "1fbfb9d4c857dab9f80ad2b6019e146ae64e8d1856ffdc5d03f66275c47ae5ca",
+    "src/crypto/keccak.h": "dde2bdb591a893b8ca5890b7e3d5be906812d4b3977e9006b5434e1cf35d3be7",
+    "src/crypto/oaes_config.h": "6d0f0120e9a72b6e06e4a65d1ea17b04755e2a63924304fa0c6e9a15f9762f7d",
+    "src/crypto/oaes_lib.c": "9ac9c723b2d3e27df5496115118be107caf7b8eecdeb58e587423fe52376b479",
+    "src/crypto/oaes_lib.h": "0a272a6f91391fdf367e5569f2222e93a70ec5cafdb847ec703aa7ebb3d7c6e9",
+    "src/crypto/skein.c": "96bdda389bcb9b87811f52c33b74840bd38f4900f8dc163ed358704e32a805c2",
+    "src/crypto/skein.h": "9f1d7fd31d8d9776974af1e33441da6caa33a3e08c0ad5b86e5f1215af7a2fec",
+    "src/crypto/skein_port.h": "e1dddc03c9a5864864334b0dd2c27c735a8ff36c9b92357835cbe18c260969b1",
+    "src/crypto/slow-hash.c": "6dc2f447a82c69145e3869503e26ede8da9cf9ded86f398c8bedb8e6f1f69d75",
+    "src/crypto/variant2_int_sqrt.h": "5c3a2c4a679da79e093c6d2dff44cab2fb1ffc464043854c1c6ff7f5f62fbfd4",
+    "src/crypto/variant4_random_math.h": "422cd8bcaee444e4b3740b05c0a22816663e23b7df467f00a72e6d19b74a0d03"
+  }
+}

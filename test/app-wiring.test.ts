@@ -987,3 +987,118 @@ describe('Swift calls only functions the engine actually has', () => {
     expect(engine).toMatch(/func revealBackup\(\)/);
   });
 });
+
+describe('the vendored CryptoNight is wired the way it is documented', () => {
+  /* Everything here is a text guard over Package.swift, and each one exists
+   * because the failure it catches is invisible on this machine.
+   *
+   * `swift build` runs on x86 Linux in CI. `slow-hash.c` contains three
+   * complete implementations of `cn_slow_hash` selected by the preprocessor,
+   * and all three pass the official vectors — so dropping `NO_AES` would leave
+   * CI perfectly green while changing which code derives a wallet key on the
+   * phone, and dropping `FORCE_USE_HEAP` would leave CI green while putting a
+   * 2 MiB array on a 512 KiB iOS thread stack. Neither is a thing a test on
+   * this machine can observe by running anything.
+   */
+  const manifest = readFileSync('Package.swift', 'utf8');
+  const target = (name: string) => {
+    /* Anchored on the `.target(` that opens the declaration, not on the name
+     * alone. The first version of this cut at `name: "LabyrinthVaultKDF"` and
+     * found the *product* of that name up in `products:`, so the slice it
+     * returned held none of the settings it was asserting about — and said so
+     * by failing, which is the only reason this comment exists rather than a
+     * guard that passed on the wrong text. */
+    const open = new RegExp(String.raw`\.target\(\s*\n\s*name: "${name}",`);
+    const at = manifest.search(open);
+    expect(at, `Package.swift has no target named ${name}`).toBeGreaterThan(-1);
+    /* To the start of the next target, or the end. This is a cut and not a
+     * parse — enough to keep one target's settings from being read as
+     * another's, which is the only ambiguity that matters here. */
+    const rest = manifest.slice(at + 1);
+    const next = rest.search(/\n\s*\.(test)?[Tt]arget\(/);
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+
+  const cryptonight = target('CCryptoNight');
+
+  it('sets the two defines that choose which implementation computes a key', () => {
+    /* Cross-checked against the manifest rather than hardcoded twice. If the
+     * two ever disagree, one of them is describing a build that does not
+     * happen, and MANIFEST.json is the one a reviewer reads. */
+    const pinned: { buildDefines: Record<string, string> } = JSON.parse(
+      readFileSync('vendor/cryptonight/MANIFEST.json', 'utf8'),
+    );
+    for (const define of Object.keys(pinned.buildDefines)) {
+      expect(cryptonight, `Package.swift does not define ${define}, which MANIFEST.json says it does`)
+        .toContain(`.define("${define}")`);
+    }
+    expect(Object.keys(pinned.buildDefines).length).toBe(2);
+  });
+
+  it('points at the vendored tree and not at somebody’s checkout', () => {
+    expect(cryptonight).toContain('path: "vendor/cryptonight"');
+    expect(cryptonight).toContain('.headerSearchPath("src/crypto")');
+    expect(cryptonight).toContain('.headerSearchPath("contrib/epee/include")');
+    expect(cryptonight).toContain('.headerSearchPath("shim")');
+  });
+
+  it('reaches the app through the one product Xcode names', () => {
+    /* ios/project.yml names LabyrinthVaultKDF and nothing else, so the C only
+     * gets into an archive if the Swift target depends on it. A CryptoNight.swift
+     * that compiles on Linux and is absent from the app is exactly the shape of
+     * the missing-import bug that already cost one archive. */
+    const kdf = target('LabyrinthVaultKDF');
+    expect(kdf).toContain('"CCryptoNight"');
+    expect(kdf).toContain('"CryptoNight.swift"');
+    expect(kdf).toContain('"Argon2id.swift"');
+
+    const project = readFileSync('ios/project.yml', 'utf8');
+    expect(project).toMatch(/product:\s*LabyrinthVaultKDF/);
+  });
+
+  it('keeps the variant bound in C, where Swift cannot pass another one', () => {
+    /* `cn_slow_hash` takes a variant, and four of the five are proof-of-work
+     * history that never appears in a wallet file. The C entry point takes no
+     * variant argument at all, so the binding cannot be undone by a caller —
+     * only by editing this file, which is what the assertion is for. */
+    const header = readFileSync('vendor/cryptonight/include/labyrinth_cryptonight.h', 'utf8');
+    expect(header).toMatch(/void labyrinth_cn_slow_hash_v0\(const uint8_t \*data, size_t length, uint8_t out\[32\]\)/);
+
+    const shim = readFileSync('vendor/cryptonight/shim/labyrinth_cn.c', 'utf8');
+    expect(shim).toMatch(/cn_slow_hash\(data, length, \(char \*\)out, 0 \/\*variant\*\/, 0 \/\*prehashed\*\/, 0 \/\*height\*\/\)/);
+
+    /* Comments stripped first. That file's header quotes the upstream call it
+     * is standing in front of, which is exactly the sentence a reader needs
+     * and exactly the sentence a naive grep mistakes for the call itself. */
+    const swift = readFileSync('ios/LabyrinthVaultKDF/CryptoNight.swift', 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(swift, 'Swift calls cn_slow_hash directly, going around the bound variant')
+      .not.toMatch(/\bcn_slow_hash\b/);
+  });
+
+  it('no Apple-only file calls CryptoNight without importing the module', () => {
+    /* The same pairing Argon2id needs, for the same reason: everything under
+     * ios/LabyrinthVault is parsed and never type checked off a Mac. */
+    const guilty: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith('.swift')) {
+          const text = readFileSync(path, 'utf8');
+          const code = text
+            .split('\n')
+            .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+            .join('\n');
+          if (/\bCryptoNight\s*\./.test(code) && !/^import LabyrinthVaultKDF$/m.test(text)) {
+            guilty.push(path);
+          }
+        }
+      }
+    };
+    walk('ios/LabyrinthVault');
+    expect(guilty, 'these call CryptoNight without importing LabyrinthVaultKDF').toEqual([]);
+  });
+});

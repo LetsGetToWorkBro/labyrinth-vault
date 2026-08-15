@@ -76,9 +76,10 @@ let package = Package(
                 "Screens",
                 "Resources",
                 "Model/Vault.swift",         // SwiftUI, Combine, @MainActor
-                "Support/Engine.swift",      // JavaScriptCore, CryptoKit
-                "Support/QRCode.swift",      // CoreImage
-                "Support/SealedStore.swift", // Security (the keychain)
+                "Support/Engine.swift",         // JavaScriptCore, CryptoKit
+                "Support/QRCode.swift",         // CoreImage
+                "Support/SealedStore.swift",    // Security (the keychain)
+                "Support/BiometricUnlock.swift" // LocalAuthentication, Security
             ],
             /* Named one by one rather than by directory. A glob would silently
              * pull in the next file somebody adds — and the next file will
@@ -128,12 +129,56 @@ let package = Package(
                 .headerSearchPath("src"),
             ]
         ),
+        /* Monero's CryptoNight, vendored under vendor/cryptonight and pinned
+         * the same way. Thirty-one upstream files and three of ours, and the
+         * manifest says which are which.
+         *
+         * It is here for one reason: `crypto::generate_chacha_key` runs
+         * `cn_slow_hash` over a view secret key to get the ChaCha20 key that
+         * every wallet2 puts over an exported key-image set. There is no
+         * substitute. It is not a standard KDF with a specification, it is a
+         * proof-of-work hash used as one, and Cake, Feather and the CLI agree
+         * on it only because all three link this same C.
+         *
+         * Reimplementing it in TypeScript was the alternative and was
+         * rejected. The Argon2 argument for a second implementation does not
+         * carry over: RFC 9106 has an oracle that has never seen this
+         * repository, so two implementations cross-check each other against a
+         * third. CryptoNight has four test vectors and Monero's own code, and
+         * 2 MiB of pseudo-random reads with AES in the loop has no shape a
+         * reviewer could check by reading it.
+         *
+         * NO_AES selects the portable C over the AES-NI and NEON
+         * implementations in the same file. All three are checked against
+         * those four vectors and agree; taking the portable one means Linux CI
+         * runs the code the phone runs, and it costs about 50 ms against 27 ms
+         * for a call this app makes once per key-image export. Same reasoning
+         * that took ref.c over opt.c above.
+         *
+         * FORCE_USE_HEAP is not a preference: the portable path otherwise
+         * declares its 2 MiB scratchpad as a stack array, and an iOS thread
+         * gets 512 KiB. */
+        .target(
+            name: "CCryptoNight",
+            path: "vendor/cryptonight",
+            exclude: ["MANIFEST.json", "LICENSE"],
+            sources: ["src", "contrib", "shim"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("NO_AES"),
+                .define("FORCE_USE_HEAP"),
+                .headerSearchPath("include"),
+                .headerSearchPath("src/crypto"),
+                .headerSearchPath("contrib/epee/include"),
+                .headerSearchPath("shim"),
+            ]
+        ),
         .target(
             name: "LabyrinthVaultKDF",
-            dependencies: ["CArgon2"],
+            dependencies: ["CArgon2", "CCryptoNight"],
             path: "ios/LabyrinthVaultKDF",
             exclude: ["README.md"],
-            sources: ["Argon2id.swift"]
+            sources: ["Argon2id.swift", "CryptoNight.swift"]
         ),
         .testTarget(
             name: "LabyrinthVaultKDFTests",

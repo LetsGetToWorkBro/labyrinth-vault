@@ -35,3 +35,8 @@ ios/LabyrinthVault/Info.plist
 # Rendered by test/shipping.test.ts to compare against the committed icons
 # without writing over them. See the comment in that test.
 .icons-check/
+
+# Upstream checkouts and throwaway build harnesses used while vendoring C.
+# vendor/ is the committed result; this is the working area that produced it,
+# and a shallow clone of Monero is not something to carry in this history.
+scratchpad/

@@ -44,13 +44,18 @@ targets:
     sources:
       - path: LabyrinthVault
     dependencies:
-      # The native Argon2id, and the vendored C under it. Taken as a local
-      # Swift package rather than as loose files so that Package.swift stays
-      # the single description of how that code is built: one set of compiler
-      # flags, one ARGON2_NO_THREADS, one set of header search paths, checked
-      # by `swift build` on every `npm test` rather than only by Xcode on a
-      # Mac. Loose C files in the app target would have needed a bridging
-      # header and a second copy of all of it.
+      # The native primitives — Argon2id and CryptoNight — and the vendored C
+      # under both. Taken as a local Swift package rather than as loose files
+      # so that Package.swift stays the single description of how that code is
+      # built: one set of compiler flags per tree, one ARGON2_NO_THREADS, one
+      # NO_AES, one set of header search paths, checked by `swift build` on
+      # every `npm test` rather than only by Xcode on a Mac. Loose C files in
+      # the app target would have needed a bridging header and a second copy
+      # of all of it — and those defines are not cosmetic: NO_AES picks which
+      # of three implementations inside slow-hash.c computes a wallet key.
+      #
+      # Only LabyrinthVaultKDF is named here. CArgon2 and CCryptoNight arrive
+      # through it, which is why there is no second entry to keep in step.
       - package: LabyrinthVaultCore
         product: LabyrinthVaultKDF
     info:
