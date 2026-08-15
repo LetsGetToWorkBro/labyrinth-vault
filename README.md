@@ -135,10 +135,15 @@ Early. What exists and is tested:
   assemble anything that does not match its own digest. 18 tests, most of them
   about the refusing.
 
-- **BC-UR** (`src/airgap/ur.ts`). The format Sparrow, Electrum, Keystone and
-  Cupcake already animate, so the vault can be pointed at the wallet somebody
-  already uses instead of only at ours. Bytewords, a CBOR subset, and the
+- **BC-UR** (`src/airgap/ur.ts`). The format Sparrow, Keystone, Passport,
+  BlueWallet and Cupcake already animate. Bytewords, a CBOR subset, and the
   fountain code that lets a scan finish even when the camera missed a frame.
+
+- **base43 and BBQr** (`src/airgap/base43.ts`, `src/airgap/bbqr.ts`). The two
+  other formats, because BC-UR is not universal and the wallets that skip it
+  are not obscure ones: Electrum reads only base43, in one static code, and
+  Coldcard reads only BBQr. `docs/wallet-compatibility.md` is the matrix, read
+  out of each wallet's source.
 
   Interop cannot be tested by round-tripping our own encoder through our own
   decoder, because a wrong word table or a swapped pair of random draws passes

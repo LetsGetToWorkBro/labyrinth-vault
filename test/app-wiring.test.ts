@@ -83,7 +83,14 @@ describe('a signature can leave the vault in a format somebody else reads', () =
   const signed = readFileSync('ios/LabyrinthVault/Screens/Signed.swift', 'utf8');
 
   it('offers the PSBT wires beside its own', () => {
-    expect(signed).toMatch(/case psbt = "SPARROW · ELECTRUM"/);
+    /* This used to assert `case psbt = "SPARROW · ELECTRUM"` — it pinned the
+     * false claim rather than catching it, which is worth leaving a note
+     * about. A guard written from the code it is guarding inherits that code's
+     * mistakes; the only thing that found this one was reading Electrum. The
+     * replacement below is in "the wire picker names only wallets that can
+     * read the wire", and it checks the claim against the format instead of
+     * against the string that was there yesterday. */
+    expect(signed).toMatch(/case psbt = "SPARROW · BLUEWALLET"/);
     expect(signed).toMatch(/case cake = "CAKE"/);
     expect(signed).toMatch(/result\.urFrames/);
     expect(signed).toMatch(/result\.urPsbtFrames/);
@@ -1100,5 +1107,79 @@ describe('the vendored CryptoNight is wired the way it is documented', () => {
     };
     walk('ios/LabyrinthVault');
     expect(guilty, 'these call CryptoNight without importing LabyrinthVaultKDF').toEqual([]);
+  });
+});
+
+describe('the wire picker names only wallets that can read the wire', () => {
+  /* This is the guard for a defect that shipped: the signed screen offered one
+   * BC-UR button labelled "SPARROW · ELECTRUM", and Electrum reads no BC-UR at
+   * all — no `crypto-psbt`, no fountain decoder, nothing in the source. So the
+   * app named a wallet on a button that could never have worked with it, and
+   * nothing here noticed, because every test asked whether the frames were
+   * well-formed and none asked who could read them.
+   *
+   * The rule these encode: a wallet's name may appear on a wire only if this
+   * repository emits the format that wallet actually reads. Adding a name is
+   * therefore adding a format, which is the point.
+   */
+  const signed = readFileSync('ios/LabyrinthVault/Screens/Signed.swift', 'utf8');
+  const exportScreen = readFileSync('ios/LabyrinthVault/Screens/Export.swift', 'utf8');
+  const host = readFileSync('src/bridge/host.ts', 'utf8');
+
+  /* Only the wire labels: the string literals a person reads off a button.
+   * Prose about a wallet is fine and is most of why these files are readable;
+   * a label is a promise. */
+  const labels = (source: string) =>
+    [...source.matchAll(/case\s+\w+\s*=\s*"([^"]+)"/g)].map((m) => m[1]!);
+
+  it('does not put Electrum on a BC-UR button, because Electrum has no BC-UR', () => {
+    for (const [name, source] of [['Signed', signed], ['Export', exportScreen]] as const) {
+      const urLabels = labels(source).filter((l) => /SPARROW|BLUEWALLET|CAKE/.test(l));
+      for (const label of urLabels) {
+        expect(label, `${name}.swift offers Electrum a UR wire`).not.toMatch(/ELECTRUM/);
+      }
+    }
+  });
+
+  it('gives Electrum its own wire, carrying base43', () => {
+    /* Named separately and wired to the base43 frames. If somebody deletes the
+     * case, this fails rather than quietly going back to a vault Electrum
+     * cannot receive from. */
+    expect(labels(signed)).toContain('ELECTRUM');
+    expect(signed).toMatch(/case\s+\.electrum:\s*return result\.electrumFrames/);
+    expect(host).toContain('electrumFrames: base43Frame(');
+  });
+
+  it('gives Coldcard a wire, carrying BBQr', () => {
+    expect(labels(signed).some((l) => /COLDCARD/.test(l)), 'no Coldcard wire').toBe(true);
+    expect(signed).toMatch(/case\s+\.bbqr:\s*return result\.bbqrFrames/);
+    expect(host).toContain('bbqrFrames: bbqrEncode(');
+  });
+
+  it('decodes every wire it offers back out of the engine reply', () => {
+    /* A case in the picker with no field behind it renders an empty QR and no
+     * explanation. The Swift side is parsed and never type-checked off a Mac,
+     * so the two halves can only be held together here. */
+    const replies = readFileSync('ios/LabyrinthVault/Support/EngineReplies.swift', 'utf8');
+    for (const field of ['urFrames', 'urPsbtFrames', 'electrumFrames', 'bbqrFrames']) {
+      expect(replies, `Sign reply has no ${field}`).toMatch(
+        new RegExp(String.raw`let ${field}: \[String\]\?`),
+      );
+      expect(host, `host.ts never emits ${field}`).toContain(`${field}:`);
+    }
+  });
+
+  it('no longer tells anyone to switch to a wire that does not exist', () => {
+    /* The empty-frames message named "SPARROW · ELECTRUM" as the wire to
+     * switch to. Renaming the case left the instruction pointing at nothing,
+     * which is the kind of thing only a reader notices. */
+    const quoted = [...signed.matchAll(/"([^"]{20,})"/g)].map((m) => m[1]!);
+    const names = new Set(labels(signed));
+    for (const line of quoted) {
+      const claim = /SWITCH TO ([A-Z0-9 ·]+?) FOR/.exec(line)?.[1];
+      if (!claim) continue;
+      expect(names.has(claim) || claim === 'ANY PSBT WIRE',
+        `the screen says "switch to ${claim}" and there is no such wire`).toBe(true);
+    }
   });
 });

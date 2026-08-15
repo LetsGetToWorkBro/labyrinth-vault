@@ -30,10 +30,21 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+/**
+ * On disk, but not this product.
+ *
+ * `scratchpad/` is where upstream projects get cloned while their formats are
+ * being read: Monero, Electrum, Coldcard's firmware, the BBQr reference,
+ * BlueWallet. It is git-ignored, but this walk is over the filesystem and not
+ * over the index, so without this line it starts holding BlueWallet's README
+ * to our house style — which is meaningless, and was briefly confusing.
+ */
+const NOT_OURS = new Set(['node_modules', '.git', '.build', 'scratchpad']);
+
 /** Every markdown file that is part of the product, wherever it lives. */
 function markdown(dir = '.', found: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === '.build') continue;
+    if (NOT_OURS.has(entry.name)) continue;
     const path = join(dir, entry.name);
     if (entry.isDirectory()) markdown(path, found);
     else if (entry.name.endsWith('.md')) found.push(path);

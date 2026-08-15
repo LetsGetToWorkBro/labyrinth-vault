@@ -114,8 +114,12 @@ wrong bytes, and each has a test:
 ## Interoperating with other wallets
 
 Bitcoin has a standard for exactly this, **BC-UR**, spoken by Sparrow,
-Electrum, Keystone, Passport and the rest, and it is implemented here in
-`src/airgap/ur.ts`. A scanner can tell it apart from our own format at the
+Keystone, Passport and BlueWallet, and it is implemented here in
+`src/airgap/ur.ts`. It is not universal, which is the part that cost this
+project a shipped false claim: Electrum reads no BC-UR at all and Coldcard
+reads none either, so `src/airgap/base43.ts` and `src/airgap/bbqr.ts` carry
+those two. `docs/wallet-compatibility.md` has the matrix and where each row
+came from. A scanner can tell it apart from our own format at the
 first character, so both are readable at once and a person never has to say
 which one they are about to show it. `src/airgap/scanner.ts` is that scanner,
 and it keeps a collector for each wire running at the same time: giving up on

@@ -209,7 +209,7 @@ The wire and the address rules are **imported**, not copied:
 | Imported from `../src` | Why it is not a copy |
 |---|---|
 | `airgap/envelope` | Two implementations of a frame format drift, and the drift is found with a hundred frames already animating |
-| `airgap/ur` | BC-UR is what Sparrow, Electrum, Keystone and Cupcake read; one encoder, spoken by both halves |
+| `airgap/ur` | BC-UR is what Sparrow, Keystone, Passport and Cupcake read; one encoder, spoken by both halves |
 | `airgap/scanner` | Reads both wires off one camera loop without being told which |
 | `keys/bitcoin` | `checkBtcAddress`, and the BIP84 derivation this app's addresses come from |
 | `keys/monero` | `parseAddress`, and the checksum rules behind it |

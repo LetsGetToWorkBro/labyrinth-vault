@@ -16,9 +16,16 @@ struct ExportView: View {
     /// holding a phone up to a wallet that will never respond. Before this
     /// existed, pairing with anything but the Labyrinth wallet meant reading
     /// the zpub off the glass and typing it.
+    ///
+    /// Electrum used to be named on the second button and has been taken off
+    /// it. Electrum reads no BC-UR of any kind, so it could never have scanned
+    /// that code. Pairing it is the zpub below, which is not a workaround —
+    /// pasting a master public key is how Electrum has always made a
+    /// watch-only wallet — but a button that promised a scan it could not
+    /// deliver was worse than no button.
     enum Wire: String, CaseIterable {
         case labyrinth = "LABYRINTH"
-        case account = "SPARROW · ELECTRUM"
+        case account = "SPARROW · BLUEWALLET"
 
         var kind: String { self == .labyrinth ? "ACCOUNT · LV1" : "UR:CRYPTO-ACCOUNT" }
     }
@@ -104,13 +111,29 @@ struct ExportView: View {
                             Haptic.tick()
                             withAnimation(.easeOut(duration: 0.3)) { revealed.toggle() }
                         } label: {
-                            Text(revealed ? "CONCEAL KEY TEXT" : "SHOW KEY AS TEXT")
+                            Text(revealed ? "CONCEAL KEY TEXT" : "SHOW KEY AS TEXT — FOR ELECTRUM")
                                 .font(Type.mono(10))
                                 .kerning(1.6)
                                 .foregroundStyle(Ink.paperFaint)
                                 .padding(.vertical, 12)
                         }
                         .buttonStyle(.plain)
+
+                        if revealed {
+                            /* Electrum has no camera path to a watch-only
+                             * wallet at all: it reads no BC-UR, and its new
+                             * wallet wizard takes a typed master public key.
+                             * So this is not the fallback, it is the route,
+                             * and saying where to put it saves somebody
+                             * hunting through a menu with a zpub on screen. */
+                            Text("ELECTRUM: FILE ▸ NEW ▸ STANDARD WALLET ▸ USE A MASTER KEY, THEN PASTE THIS.")
+                                .font(Type.mono(9))
+                                .kerning(1.1)
+                                .lineSpacing(3)
+                                .foregroundStyle(Ink.paperFaint)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.bottom, 10)
+                        }
 
                         Text(zpub)
                             .font(Type.mono(11))

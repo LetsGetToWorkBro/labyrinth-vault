@@ -68,6 +68,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
+import { withEmptyFinalScriptSig } from './finalscriptsig';
 import * as btc from '@scure/btc-signer';
 import {
   ACCOUNT_PATH_NUMBERS,
@@ -685,7 +686,12 @@ export function signPsbt(psbt: Uint8Array, wallet: BtcWallet, approval: PsbtSumm
     txid = undefined;
   }
 
-  const result: SignResult = { ok: true, signed, psbt: tx.toPSBT() };
+  /* One empty field, added after serialization because @scure drops it.
+   * Electrum treats an input with no PSBT_IN_FINAL_SCRIPTSIG as unsigned even
+   * when the witness is right there, so without this a finalized transaction
+   * from this vault has no Broadcast button in Electrum. It changes no
+   * signature and no transaction id; see src/keys/finalscriptsig.ts. */
+  const result: SignResult = { ok: true, signed, psbt: withEmptyFinalScriptSig(tx.toPSBT()) };
   if (hex !== undefined) result.hex = hex;
   if (txid !== undefined) result.txid = txid;
   return result;

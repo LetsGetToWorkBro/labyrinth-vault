@@ -1,0 +1,115 @@
+# Which wallets this works with, and how that was established
+
+Every row here was read out of the wallet's own source at the commit named at
+the bottom. None of it is from documentation, a support page or a forum post,
+and that is not pedantry: this project shipped a button labeled
+"SPARROW · ELECTRUM" on a BC-UR wire for several builds, and Electrum has never
+read BC-UR. The documentation would not have caught it. The source did, in
+about a minute.
+
+## The signing round trip, Bitcoin
+
+A wallet builds an unsigned PSBT, the vault signs it, the wallet takes it back
+and broadcasts. Both directions have to work or the pairing is decorative.
+
+| Wallet | Vault reads its PSBT | Vault hands the signature back as | Animated |
+| --- | --- | --- | --- |
+| Sparrow | BC-UR, BBQr | `ur:crypto-psbt`, `ur:psbt`, BBQr | yes |
+| Electrum | base43, base64, hex | **base43, one static code** | **no** |
+| Coldcard Q | BBQr | **BBQr** | yes |
+| BlueWallet | BC-UR, BBQr | `ur:crypto-psbt`, BBQr | yes |
+| Nunchuk | BC-UR, BBQr | `ur:crypto-psbt`, BBQr | yes |
+| Keystone, Passport | BC-UR | `ur:crypto-psbt` | yes |
+| Cake | `ur:psbt` only | `ur:psbt` | yes |
+
+Three formats, no overlap between them, and the bolded cells are the ones that
+were missing until the change that added this file.
+
+**Electrum has no BC-UR of any kind.** Not a missing registry type: there is no
+`crypto-psbt`, no fountain decoder, no bytewords anywhere in the tree. Its
+whole camera surface is `Transaction.to_qr_data`, which base43-encodes the PSBT
+into a single QR, and `convert_raw_tx_to_hex`, which on the way in tries hex,
+then base64 if it starts `cHNidP`, then base43. Because there is no animated
+form, a PSBT larger than one QR cannot reach Electrum by camera at all. The
+vault shows a refusal on that screen rather than a code nothing will scan.
+
+**Coldcard has no BC-UR either.** It reads BBQr, which is Coinkite's own
+format: an eight-character header and a base32 body, animated, and readable
+also by Sparrow, Nunchuk and BlueWallet. Of the three formats it reaches the
+most wallets; UR is offered first only because those wallets' own documentation
+points people at UR.
+
+## The other half: the empty field Electrum needs
+
+Getting the bytes across is not the same as getting them accepted. Electrum
+would parse the vault's finalized PSBT, show the transaction, and refuse to
+call it complete, so no Broadcast button appeared.
+
+    def is_complete(self) -> bool:
+        if self.script_sig is not None and self.witness is not None:
+            return True
+
+`PartialTxInput.is_complete`. For a native segwit input there is no scriptSig,
+so `@scure/btc-signer` omits `PSBT_IN_FINAL_SCRIPTSIG` entirely, and Electrum
+reads an absent key as "not signed yet" no matter what the witness holds.
+Electrum's own finalizer sets that field to empty and writes it, so an empty
+0x07 is what every Electrum-signed PSBT already carries.
+
+`src/keys/finalscriptsig.ts` adds it. It changes no signature and no
+transaction id, and `test/finalscriptsig.test.ts` asserts exactly that. This
+was a defect on the file and hex paths too, so it was never really about QR
+codes.
+
+## Pairing, Bitcoin
+
+Setting up the watch-only side, which is a different problem with a different
+answer per wallet.
+
+| Wallet | How it takes the account |
+| --- | --- |
+| Sparrow, BlueWallet, Keystone, Passport | `ur:crypto-account`, scanned |
+| Electrum | the zpub, pasted. **No camera path exists.** |
+| Labyrinth wallet | this project's own `ACCOUNT` frames |
+
+Electrum's new-wallet wizard takes a typed master public key and there is no
+QR route to it, so the export screen shows the zpub as text and says where to
+put it. That is not a workaround; it is how Electrum has always made a
+watch-only wallet.
+
+## Monero
+
+Unchanged by this work, and recorded here so the two chains are in one place.
+Cake and Feather both read the same four `xmr-*` UR types over the same
+`wallet2` payload, which is what makes them a standard rather than one app's
+habit. `docs/monero-signing.md` has the detail.
+
+## What is not claimed
+
+- **Multisig with Coldcard, or with anything.** The vault signs single-sig
+  BIP84. A Coldcard co-signer in a 2-of-3 is a different piece of work and
+  nothing here should be read as offering it.
+- **Coldcard's microSD and NFC paths.** Camera only.
+- **BBQr's `Z` encoding.** The vault emits `2`, uncompressed base32, which the
+  spec explicitly permits a sender to choose. It *reads* `2` and `H` and
+  refuses `Z`, because implementing DEFLATE here would mean a new dependency
+  or several hundred lines whose bugs would look exactly like a camera
+  misread.
+- **That any of this has been run against the physical devices.** It has been
+  run against their code: Electrum's own `convert_raw_tx_to_hex` and
+  `tx_from_any` accept the vault's frames and reconstruct the same txid, and
+  Coinkite's own BBQr `join_qrs` reassembles them. `test/wallet-wires.test.ts`
+  pins the vectors that came out of that. A real Coldcard Q and a real phone
+  camera are still the last mile, and `docs/testflight.md` is where that gets
+  written down once somebody has done it.
+
+## Sources
+
+Read at these commits. Re-check them before trusting a row that matters.
+
+| Project | Commit |
+| --- | --- |
+| Electrum | `a94e460b50bc5afc334ca0d6feead47d3b50539f` |
+| Coldcard firmware | `4e7755b5057d2d45fbc16ba5f7fc63107f0c7e2b` |
+| BlueWallet | `e242791752cb79f8372305472abf3623523e2465` |
+| BBQr reference and spec | `github.com/coinkite/BBQr`, `bbqr.info` |
+| Monero | `v0.18.5.1` |

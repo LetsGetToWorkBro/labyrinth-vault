@@ -2102,6 +2102,71 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     return cryptoAccount(args.masterFingerprint, [witnessPublicKeyHashOutput(key)]);
   }
 
+  // src/airgap/base43.ts
+  var ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$*+-./:";
+  var MAX_ALPHANUMERIC_QR_CHARS = 4296;
+  function base43Encode(bytes) {
+    let leadingZeros = 0;
+    while (leadingZeros < bytes.length && bytes[leadingZeros] === 0) leadingZeros++;
+    let num2 = 0n;
+    for (let i = leadingZeros; i < bytes.length; i++) num2 = num2 * 256n + BigInt(bytes[i]);
+    let out = "";
+    while (num2 > 0n) {
+      const digit = Number(num2 % 43n);
+      num2 /= 43n;
+      out = ALPHABET[digit] + out;
+    }
+    return ALPHABET[0].repeat(leadingZeros) + out;
+  }
+  function base43Frame(psbt) {
+    const encoded = base43Encode(psbt);
+    return encoded.length <= MAX_ALPHANUMERIC_QR_CHARS ? [encoded] : null;
+  }
+
+  // src/airgap/bbqr.ts
+  var BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  var BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  var BBQR_TYPES = {
+    psbt: "P",
+    transaction: "T",
+    json: "J",
+    text: "U",
+    cbor: "C"
+  };
+  var KNOWN_TYPES = Object.values(BBQR_TYPES);
+  var BBQR_BODY_CHARS = 320;
+  var MAX_PARTS2 = 36 * 36;
+  function base32Encode2(bytes) {
+    let out = "";
+    let buffer = 0;
+    let bits = 0;
+    for (const byte of bytes) {
+      buffer = buffer << 8 | byte;
+      bits += 8;
+      while (bits >= 5) {
+        out += BASE32[buffer >> bits - 5 & 31];
+        bits -= 5;
+      }
+    }
+    if (bits > 0) out += BASE32[buffer << 5 - bits & 31];
+    return out;
+  }
+  function base36Pair(n) {
+    return BASE36[Math.floor(n / 36)] + BASE36[n % 36];
+  }
+  function bbqrEncode(payload, type, bodyChars = BBQR_BODY_CHARS) {
+    if (bodyChars % 8 !== 0 || bodyChars < 8) return null;
+    const encoded = base32Encode2(payload);
+    const parts = Math.max(1, Math.ceil(encoded.length / bodyChars));
+    if (parts > MAX_PARTS2) return null;
+    const frames = [];
+    for (let i = 0; i < parts; i++) {
+      const body = encoded.slice(i * bodyChars, (i + 1) * bodyChars);
+      frames.push(`B$2${type}${base36Pair(parts)}${base36Pair(i)}${body}`);
+    }
+    return frames;
+  }
+
   // node_modules/@noble/curves/utils.js
   /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
   function aarray(item, title, inner = () => {
@@ -13800,7 +13865,7 @@ zoo`.split("\n"));
       viewPublic: publicFromSecret(viewSecret)
     };
   }
-  var ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  var ALPHABET2 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   var FULL_BLOCK_BYTES = 8;
   var FULL_BLOCK_CHARS = 11;
   var BLOCK_CHARS = [0, 2, 3, 5, 6, 7, 9, 10, 11];
@@ -13811,17 +13876,17 @@ zoo`.split("\n"));
     for (const byte of bytes) n = n << 8n | BigInt(byte);
     let out = "";
     while (n > 0n) {
-      out = ALPHABET[Number(n % 58n)] + out;
+      out = ALPHABET2[Number(n % 58n)] + out;
       n /= 58n;
     }
-    return out.padStart(chars, ALPHABET[0]);
+    return out.padStart(chars, ALPHABET2[0]);
   }
   function decodeBlock(text) {
     const length = BLOCK_CHARS.indexOf(text.length);
     if (length < 0) throw new Error("That is not a valid address: a block is the wrong length.");
     let n = 0n;
     for (const ch of text) {
-      const index = ALPHABET.indexOf(ch);
+      const index = ALPHABET2.indexOf(ch);
       if (index < 0) throw new Error(`That is not a valid address: "${ch}" is not a base58 character.`);
       n = n * 58n + BigInt(index);
     }
@@ -15644,6 +15709,67 @@ zoo`.split("\n"));
     return readContainer(bytes);
   }
 
+  // src/keys/finalscriptsig.ts
+  var MAGIC = [112, 115, 98, 116, 255];
+  var KEY_FINAL_SCRIPTSIG = 7;
+  var KEY_FINAL_SCRIPTWITNESS = 8;
+  function readCompactSize(bytes, cursor) {
+    if (cursor.at >= bytes.length) return null;
+    const first = bytes[cursor.at++];
+    if (first < 253) return first;
+    return null;
+  }
+  function scanMap(bytes, cursor) {
+    let hasFinalScriptSig = false;
+    let hasFinalWitness = false;
+    for (; ; ) {
+      if (cursor.at >= bytes.length) return null;
+      if (bytes[cursor.at] === 0) {
+        const end = cursor.at;
+        cursor.at++;
+        return { end, hasFinalScriptSig, hasFinalWitness };
+      }
+      const keyLength = readCompactSize(bytes, cursor);
+      if (keyLength === null || keyLength < 1) return null;
+      if (cursor.at + keyLength > bytes.length) return null;
+      const keyType = bytes[cursor.at];
+      if (keyType === KEY_FINAL_SCRIPTSIG) hasFinalScriptSig = true;
+      if (keyType === KEY_FINAL_SCRIPTWITNESS) hasFinalWitness = true;
+      cursor.at += keyLength;
+      const valueLength = readCompactSize(bytes, cursor);
+      if (valueLength === null) return null;
+      if (cursor.at + valueLength > bytes.length) return null;
+      cursor.at += valueLength;
+    }
+  }
+  function withEmptyFinalScriptSig(psbt) {
+    for (let i = 0; i < MAGIC.length; i++) {
+      if (psbt[i] !== MAGIC[i]) return psbt;
+    }
+    const cursor = { at: MAGIC.length };
+    if (!scanMap(psbt, cursor)) return psbt;
+    const insertAt = [];
+    while (cursor.at < psbt.length) {
+      const map = scanMap(psbt, cursor);
+      if (!map) return psbt;
+      if (map.hasFinalWitness && !map.hasFinalScriptSig) insertAt.push(map.end);
+    }
+    if (insertAt.length === 0) return psbt;
+    const RECORD = [1, KEY_FINAL_SCRIPTSIG, 0];
+    const out = new Uint8Array(psbt.length + insertAt.length * RECORD.length);
+    let read2 = 0;
+    let write2 = 0;
+    for (const at of insertAt) {
+      out.set(psbt.subarray(read2, at), write2);
+      write2 += at - read2;
+      out.set(RECORD, write2);
+      write2 += RECORD.length;
+      read2 = at;
+    }
+    out.set(psbt.subarray(read2), write2);
+    return out;
+  }
+
   // src/keys/psbt.ts
   var DEFAULT_SCAN_DEPTH = 200;
   var HIGH_FEE_RATIO = 0.1;
@@ -15971,7 +16097,7 @@ zoo`.split("\n"));
       hex4 = void 0;
       txid = void 0;
     }
-    const result = { ok: true, signed, psbt: tx.toPSBT() };
+    const result = { ok: true, signed, psbt: withEmptyFinalScriptSig(tx.toPSBT()) };
     if (hex4 !== void 0) result.hex = hex4;
     if (txid !== void 0) result.txid = txid;
     return result;
@@ -17607,7 +17733,7 @@ zoo`.split("\n"));
 
   // src/keys/seal.ts
   var SEAL_VERSION = 1;
-  var MAGIC = [76, 86, 83];
+  var MAGIC2 = [76, 86, 83];
   var SALT_BYTES = 16;
   var NONCE_BYTES = 24;
   var KEY_BYTES = 32;
@@ -17656,9 +17782,9 @@ zoo`.split("\n"));
       return { ok: false, problem: "Those KDF parameters are outside what this build will run." };
     }
     const header = new Uint8Array(HEADER_BYTES);
-    header[0] = MAGIC[0];
-    header[1] = MAGIC[1];
-    header[2] = MAGIC[2];
+    header[0] = MAGIC2[0];
+    header[1] = MAGIC2[1];
+    header[2] = MAGIC2[2];
     header[3] = SEAL_VERSION;
     header[4] = params.t;
     new DataView(header.buffer).setUint32(5, params.m, false);
@@ -17679,7 +17805,7 @@ zoo`.split("\n"));
     }
   }
   function looksSealed(blob) {
-    return blob.length >= HEADER_BYTES + TAG_BYTES && blob[0] === MAGIC[0] && blob[1] === MAGIC[1] && blob[2] === MAGIC[2];
+    return blob.length >= HEADER_BYTES + TAG_BYTES && blob[0] === MAGIC2[0] && blob[1] === MAGIC2[1] && blob[2] === MAGIC2[2];
   }
   function unseal(blob, passphrase) {
     if (!looksSealed(blob)) return { ok: false, problem: "That is not a sealed vault." };
@@ -18166,14 +18292,16 @@ zoo`.split("\n"));
         /* The same bytes under the registry's newer name.
          *
          * BC-UR renamed its types in 2023, dropping the `crypto-` prefix, and
-         * wallets did not move together. Sparrow and Electrum subscribe to
-         * `crypto-psbt`; Cake matches on `ur:psbt/` and nothing else, which was
-         * read out of cw_bitcoin/lib/bitcoin_wallet.dart rather than guessed.
+         * wallets did not move together. Sparrow subscribes to `crypto-psbt`;
+         * Cake matches on `ur:psbt/` and nothing else, which was read out of
+         * cw_bitcoin/lib/bitcoin_wallet.dart rather than guessed.
          *
          * So both go out. The payload is byte-identical and the label is the
          * whole of the difference, which makes emitting one and not the other a
          * needless way to be incompatible with half the ecosystem. */
-        urPsbtFrames: new UrEncoder(UR_PSBT_MODERN, cborEncode(result.psbt)).firstPass()
+        urPsbtFrames: new UrEncoder(UR_PSBT_MODERN, cborEncode(result.psbt)).firstPass(),
+        electrumFrames: base43Frame(result.psbt),
+        bbqrFrames: bbqrEncode(result.psbt, BBQR_TYPES.psbt)
       });
     }),
     /**

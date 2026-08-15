@@ -163,8 +163,8 @@ enum EngineReply {
         /// This project's own wire, carrying the finished transaction. What
         /// the Labyrinth wallet broadcasts.
         let frames: [String]?
-        /// `ur:crypto-psbt`, carrying the signed PSBT. What Sparrow, Electrum
-        /// and the hardware-signer companions read.
+        /// `ur:crypto-psbt`, carrying the signed PSBT. What Sparrow, Keystone,
+        /// Passport and BlueWallet read.
         ///
         /// Optional so a bundle built before this existed still decodes rather
         /// than failing the launch gate over a field nobody had heard of.
@@ -172,6 +172,16 @@ enum EngineReply {
         /// The same bytes labelled `ur:psbt`, the registry's newer name for
         /// the type. Cake matches on that prefix and rejects the older one.
         let urPsbtFrames: [String]?
+        /// The same PSBT as base43 in one static code, which is the whole of
+        /// what Electrum can read from a camera.
+        ///
+        /// Null, rather than empty, when the PSBT will not fit a single QR.
+        /// Electrum has no animated format, so there is no larger version of
+        /// this to fall back to and the screen has to say so.
+        let electrumFrames: [String]?
+        /// The same PSBT as BBQr, which is the only animated format Coldcard
+        /// reads. Sparrow, Nunchuk and BlueWallet read it too.
+        let bbqrFrames: [String]?
     }
 
     struct Calibrate: Decodable {

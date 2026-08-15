@@ -63,34 +63,54 @@ struct SignedQRView: View {
 
     /// Which wallet is going to read this off the glass.
     ///
-    /// Until this existed the vault could accept a PSBT from Sparrow or
-    /// Electrum and had no way to give one back: signing produced this
-    /// project's own frames, which nobody else reads. A round trip with
-    /// anybody else's wallet was import-only.
+    /// Until this existed the vault could accept a PSBT from another wallet
+    /// and had no way to give one back: signing produced this project's own
+    /// frames, which nobody else reads. A round trip was import-only.
     ///
     /// A picker rather than a guess, because the vault has no way to know what
     /// scanned the code that came in, and picking wrong is a person holding
     /// their phone up to a wallet that will never recognise it.
+    ///
+    /// ## Why five and not one
+    ///
+    /// There is no common QR format. There are three, they share no bytes, and
+    /// a wallet that reads one generally reads none of the others:
+    ///
+    ///   - **BC-UR** — Sparrow, Keystone, Passport, BlueWallet. Two spellings,
+    ///     because the registry renamed its types in 2023 and the wallets did
+    ///     not move together.
+    ///   - **base43** — Electrum, and only Electrum. One static code.
+    ///   - **BBQr** — Coldcard, and also read by Sparrow, Nunchuk, BlueWallet.
+    ///
+    /// This list was built by reading those wallets' source. Electrum was on
+    /// the BC-UR button here and reads no BC-UR at all; Coldcard was missing
+    /// entirely. Both of those were claims the app made and could not keep.
     enum Wire: String, CaseIterable {
         case labyrinth = "LABYRINTH"
-        case psbt = "SPARROW · ELECTRUM"
+        case psbt = "SPARROW · BLUEWALLET"
         case cake = "CAKE"
+        case electrum = "ELECTRUM"
+        case bbqr = "COLDCARD · NUNCHUK"
 
         var kind: String {
             switch self {
             case .labyrinth: return "TXSIGNED · LV1"
             case .psbt: return "UR:CRYPTO-PSBT"
             case .cake: return "UR:PSBT"
+            case .electrum: return "BASE43 · ONE CODE"
+            case .bbqr: return "BBQR · B$2P"
             }
         }
         var carries: String {
             switch self {
             case .labyrinth: return "The finished transaction, ready to broadcast."
             case .psbt: return "The signed PSBT, under the name those wallets subscribe to."
-            /* Same bytes as the middle option. BC-UR renamed its types in 2023
+            /* Same bytes as the option above. BC-UR renamed its types in 2023
              * and the wallets did not move together, so the label is the whole
              * of the difference. */
             case .cake: return "The same PSBT, under the registry's newer name."
+            case .electrum: return "The same PSBT, in the one static code Electrum reads."
+            case .bbqr: return "The same PSBT, in the only animated format Coldcard reads."
             }
         }
     }
@@ -102,11 +122,18 @@ struct SignedQRView: View {
          * finalized, because somebody else still has to sign it, has no
          * Labyrinth frames at all: that wire carries a finished transaction
          * and there is not one yet. It always has PSBT frames, which is the
-         * point of a PSBT. */
+         * point of a PSBT.
+         *
+         * Electrum is the one that can legitimately be empty on a perfectly
+         * good transaction: it has no animated format, so a PSBT past what one
+         * QR holds cannot reach it by camera at all. The empty state below
+         * says so instead of showing a code no scanner will resolve. */
         switch wire {
         case .labyrinth: return result.frames ?? []
         case .psbt: return result.urFrames ?? []
         case .cake: return result.urPsbtFrames ?? []
+        case .electrum: return result.electrumFrames ?? []
+        case .bbqr: return result.bbqrFrames ?? []
         }
     }
 
@@ -146,10 +173,18 @@ struct SignedQRView: View {
                         .padding(.bottom, 14)
 
                         if frames.isEmpty {
-                            /* Only reachable for the Labyrinth wire, and only
-                             * when another party still has to sign. Saying
-                             * which wire has it is more use than an apology. */
-                            Text("NOT FINAL, SO THERE IS NO FINISHED TRANSACTION TO SHOW. SWITCH TO SPARROW · ELECTRUM FOR THE SIGNED PSBT.")
+                            /* Two different reasons, and they need different
+                             * sentences. The Labyrinth wire is empty when
+                             * another party still has to sign, and the fix is
+                             * to pick a wire that carries a PSBT. Electrum is
+                             * empty when the PSBT is too big for one QR, and
+                             * there is no fix on this screen at all, because
+                             * Electrum has no animated format to fall back to.
+                             * Telling somebody to switch wires in that case
+                             * would send them round a loop. */
+                            Text(wire == .electrum
+                                 ? "THIS PSBT IS TOO LARGE FOR ONE QR CODE, AND ELECTRUM READS NO ANIMATED FORMAT. USE THE FILE EXPORT, OR SEND IT TO A WALLET THAT READS BBQR."
+                                 : "NOT FINAL, SO THERE IS NO FINISHED TRANSACTION TO SHOW. SWITCH TO ANY PSBT WIRE FOR THE SIGNED PSBT.")
                                 .font(Type.mono(10))
                                 .kerning(1.2)
                                 .lineSpacing(4)

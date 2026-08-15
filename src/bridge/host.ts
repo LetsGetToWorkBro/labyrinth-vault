@@ -50,6 +50,8 @@ import { Scanner } from '../airgap/scanner';
 import { UR_PSBT, UR_PSBT_MODERN, UrEncoder } from '../airgap/ur';
 import { bip84Account } from '../airgap/registry';
 import { cborEncode } from '../airgap/cbor';
+import { base43Frame } from '../airgap/base43';
+import { BBQR_TYPES, bbqrEncode } from '../airgap/bbqr';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
 import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
 import {
@@ -452,9 +454,15 @@ export const api = {
     /* ## The other way to be paired with
      *
      * `frames` is this project's own wire. `urFrames` is `ur:crypto-account`,
-     * which is what Sparrow, Electrum and the hardware-signer companions scan
-     * to set up a watch-only wallet. Without it, pairing with anything but the
-     * Labyrinth wallet meant reading a zpub off the glass and typing it.
+     * which is what Sparrow, Keystone, Passport and BlueWallet scan to set up
+     * a watch-only wallet. Without it, pairing with anything but the Labyrinth
+     * wallet meant reading a zpub off the glass and typing it.
+     *
+     * Electrum is not on that list, and used to be. It reads no BC-UR at all,
+     * so pairing it is still the zpub off the glass — which the export screen
+     * does show, under SHOW KEY AS TEXT, and which is not a workaround but the
+     * documented way to make an Electrum watch-only wallet. Naming Electrum
+     * next to a QR it cannot scan was the actual defect.
      *
      * Bitcoin only, and that is not a gap to be filled later: `crypto-account`
      * describes Bitcoin output descriptors, and Monero has no equivalent in
@@ -576,18 +584,35 @@ export const api = {
     }
     const result = signPsbt(psbt, open.btc, lastDescribed);
     if (!result.ok) return fail(result.problem ?? 'It was not signed.');
-    /* ## Two ways home, because the far side is not always ours
+    /* ## Four ways home, because the far side is not always ours
+     *
+     * There is no single QR format for Bitcoin signers. There are three, they
+     * do not overlap, and a wallet that reads one usually reads no other. That
+     * was established by reading the wallets rather than their documentation,
+     * and two of the three were missing here while the app named them on a
+     * button.
      *
      * `frames` is this project's own wire and carries the finished
      * transaction, which is what the Labyrinth wallet broadcasts.
      *
-     * `urFrames` is `ur:crypto-psbt`, which is what Sparrow, Electrum and the
-     * hardware-signer companions read. Until this existed the vault could
+     * `urFrames` is `ur:crypto-psbt`, which is what Sparrow, Keystone,
+     * Passport and BlueWallet read. Until this existed the vault could
      * *accept* a PSBT from any of them and had no way to hand one back: the
      * encoder in src/airgap/ur.ts was written, tested against the BC-UR
      * vectors, and called by nothing. A round trip with anybody else's wallet
      * was import-only, and would have failed at the last step of the first
      * real test.
+     *
+     * `electrumFrames` is base43 in one static QR. Electrum reads no BC-UR of
+     * any kind — no `crypto-psbt`, no fountain decoder, nothing — and has no
+     * animated format at all, so this is null when the PSBT will not fit a
+     * single code and the screen has to say so rather than show one nothing
+     * can scan. src/airgap/base43.ts.
+     *
+     * `bbqrFrames` is BBQr, which is what Coldcard animates. Coldcard reads no
+     * BC-UR either. Sparrow, Nunchuk and BlueWallet decode BBQr as well, so of
+     * the three this one reaches furthest; it is not offered first only
+     * because those wallets document UR as the way in. src/airgap/bbqr.ts.
      *
      * It carries `result.psbt`, never `result.hex`. A PSBT is what the type
      * means, and it is also the only one of the two that always exists:
@@ -608,14 +633,16 @@ export const api = {
       /* The same bytes under the registry's newer name.
        *
        * BC-UR renamed its types in 2023, dropping the `crypto-` prefix, and
-       * wallets did not move together. Sparrow and Electrum subscribe to
-       * `crypto-psbt`; Cake matches on `ur:psbt/` and nothing else, which was
-       * read out of cw_bitcoin/lib/bitcoin_wallet.dart rather than guessed.
+       * wallets did not move together. Sparrow subscribes to `crypto-psbt`;
+       * Cake matches on `ur:psbt/` and nothing else, which was read out of
+       * cw_bitcoin/lib/bitcoin_wallet.dart rather than guessed.
        *
        * So both go out. The payload is byte-identical and the label is the
        * whole of the difference, which makes emitting one and not the other a
        * needless way to be incompatible with half the ecosystem. */
       urPsbtFrames: new UrEncoder(UR_PSBT_MODERN, cborEncode(result.psbt!)).firstPass(),
+      electrumFrames: base43Frame(result.psbt!),
+      bbqrFrames: bbqrEncode(result.psbt!, BBQR_TYPES.psbt),
     });
   }),
 
