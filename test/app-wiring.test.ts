@@ -76,6 +76,32 @@ describe('guards over the app that actually ships', () => {
   });
 });
 
+describe('a signature can leave the vault in a format somebody else reads', () => {
+  /* The engine emits both wires; this is the half no compiler checks, which
+   * is that the screen offers the second one. Frames nothing can display are
+   * the same as no frames at all. */
+  const signed = readFileSync('ios/LabyrinthVault/Screens/Signed.swift', 'utf8');
+
+  it('offers the PSBT wire beside its own', () => {
+    expect(signed).toMatch(/case psbt = "SPARROW · ELECTRUM"/);
+    expect(signed).toMatch(/result\.urFrames/);
+    expect(signed, 'the Labyrinth wire was dropped').toMatch(/result\.frames/);
+  });
+
+  it('decodes the field the engine actually sends', () => {
+    const replies = readFileSync('ios/LabyrinthVault/Support/EngineReplies.swift', 'utf8');
+    expect(replies).toMatch(/let urFrames: \[String\]\?/);
+    expect(readFileSync('src/bridge/host.ts', 'utf8')).toMatch(/urFrames: new UrEncoder\(UR_PSBT/);
+  });
+
+  it('says which wallet each wire is for, rather than naming a format', () => {
+    /* TXSIGNED and UR:CRYPTO-PSBT mean nothing to somebody holding two
+     * phones. The names of the wallets do. */
+    expect(signed).toMatch(/case labyrinth = "LABYRINTH"/);
+    expect(signed.toLowerCase()).toContain('desktop wallets read');
+  });
+});
+
 describe('the first screen explains the thing before asking for commitment', () => {
   const setup = readFileSync('ios/LabyrinthVault/Screens/Setup.swift', 'utf8');
   const declaration = setup.slice(

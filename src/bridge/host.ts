@@ -47,6 +47,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { encodeParts, type PayloadKind } from '../airgap/envelope';
 import { Scanner } from '../airgap/scanner';
+import { UR_PSBT, UrEncoder } from '../airgap/ur';
+import { cborEncode } from '../airgap/cbor';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
 import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
 import {
@@ -545,12 +547,35 @@ export const api = {
     }
     const result = signPsbt(psbt, open.btc, lastDescribed);
     if (!result.ok) return fail(result.problem ?? 'It was not signed.');
+    /* ## Two ways home, because the far side is not always ours
+     *
+     * `frames` is this project's own wire and carries the finished
+     * transaction, which is what the Labyrinth wallet broadcasts.
+     *
+     * `urFrames` is `ur:crypto-psbt`, which is what Sparrow, Electrum and the
+     * hardware-signer companions read. Until this existed the vault could
+     * *accept* a PSBT from any of them and had no way to hand one back: the
+     * encoder in src/airgap/ur.ts was written, tested against the BC-UR
+     * vectors, and called by nothing. A round trip with anybody else's wallet
+     * was import-only, and would have failed at the last step of the first
+     * real test.
+     *
+     * It carries `result.psbt`, never `result.hex`. A PSBT is what the type
+     * means, and it is also the only one of the two that always exists:
+     * finalizing is attempted rather than required, so a transaction with
+     * another party's inputs still needs signatures after ours. The old code
+     * emitted no frames at all in that case, which made a legitimate
+     * part-signed result look like a failure.
+     *
+     * The CBOR wrapper is part of the type. Leaving it off produces frames
+     * that look right and that Sparrow will not read. */
     return done({
       signed: result.signed,
       psbt: toHex(result.psbt!),
       hex: result.hex ?? null,
       txid: result.txid ?? null,
       frames: result.hex ? encodeParts('TXSIGNED' satisfies PayloadKind, fromHex(result.hex)!) : null,
+      urFrames: new UrEncoder(UR_PSBT, cborEncode(result.psbt!)).firstPass(),
     });
   }),
 

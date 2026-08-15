@@ -156,7 +156,15 @@ enum EngineReply {
     struct Sign: Decodable, Equatable {
         let signed: Int
         let txid: String?
+        /// This project's own wire, carrying the finished transaction. What
+        /// the Labyrinth wallet broadcasts.
         let frames: [String]?
+        /// `ur:crypto-psbt`, carrying the signed PSBT. What Sparrow, Electrum
+        /// and the hardware-signer companions read.
+        ///
+        /// Optional so a bundle built before this existed still decodes rather
+        /// than failing the launch gate over a field nobody had heard of.
+        let urFrames: [String]?
     }
 
     struct Calibrate: Decodable {

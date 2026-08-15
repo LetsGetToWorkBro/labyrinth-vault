@@ -1420,6 +1420,49 @@ globalThis.TextDecoder.prototype.decode = function (input) {
   }
 
   // src/airgap/cbor.ts
+  function head(major, length, out) {
+    const type = major << 5;
+    if (length < 24) {
+      out.push(type | length);
+    } else if (length < 256) {
+      out.push(type | 24, length);
+    } else if (length < 65536) {
+      out.push(type | 25, length >>> 8 & 255, length & 255);
+    } else {
+      out.push(
+        type | 26,
+        length >>> 24 & 255,
+        length >>> 16 & 255,
+        length >>> 8 & 255,
+        length & 255
+      );
+    }
+  }
+  function write(value, out) {
+    if (typeof value === "number") {
+      if (!Number.isInteger(value) || value < 0 || value > 4294967295) {
+        throw new Error(`cbor: cannot write ${value}`);
+      }
+      head(0, value, out);
+      return;
+    }
+    if (value instanceof Uint8Array) {
+      head(2, value.length, out);
+      for (const byte of value) out.push(byte);
+      return;
+    }
+    if (Array.isArray(value)) {
+      head(4, value.length, out);
+      for (const item of value) write(item, out);
+      return;
+    }
+    throw new Error("cbor: cannot write that");
+  }
+  function cborEncode(value) {
+    const out = [];
+    write(value, out);
+    return new Uint8Array(out);
+  }
   function readHead(bytes, cursor) {
     if (cursor.at >= bytes.length) return null;
     const initial = bytes[cursor.at++];
@@ -1697,11 +1740,70 @@ globalThis.TextDecoder.prototype.decode = function (input) {
   }
 
   // src/airgap/ur.ts
+  var UR_PSBT = "crypto-psbt";
   var MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
   var MAX_FRAGMENTS = 2048;
   function isUrType(type) {
     return /^[a-z0-9-]+$/.test(type);
   }
+  function nominalFragmentLength(messageLength, maxFragmentLength, minFragmentLength = 10) {
+    const maxCount = Math.ceil(messageLength / minFragmentLength);
+    let fragmentLength = messageLength;
+    for (let count = 1; count <= maxCount; count++) {
+      fragmentLength = Math.ceil(messageLength / count);
+      if (fragmentLength <= maxFragmentLength) break;
+    }
+    return Math.max(1, fragmentLength);
+  }
+  function partition(message, fragmentLength) {
+    const fragments = [];
+    for (let at = 0; at < message.length; at += fragmentLength) {
+      const fragment = new Uint8Array(fragmentLength);
+      fragment.set(message.subarray(at, at + fragmentLength), 0);
+      fragments.push(fragment);
+    }
+    return fragments.length ? fragments : [new Uint8Array(fragmentLength)];
+  }
+  var UrEncoder = class {
+    /**
+     * @param cbor The CBOR-encoded payload. For a PSBT that is
+     *   `cborEncode(psbtBytes)`, not the PSBT itself: the CBOR wrapper is part
+     *   of what `ur:crypto-psbt` means, and leaving it off produces frames that
+     *   look right and that Sparrow will not read.
+     */
+    constructor(type, cbor, maxFragmentLength = 200) {
+      __publicField(this, "type");
+      __publicField(this, "seqLength");
+      __publicField(this, "fragments");
+      __publicField(this, "messageLength");
+      __publicField(this, "checksum");
+      __publicField(this, "seqNum", 0);
+      if (!isUrType(type)) throw new Error(`not a UR type: ${type}`);
+      this.type = type;
+      this.messageLength = cbor.length;
+      this.checksum = crc32(cbor);
+      this.fragments = partition(cbor, nominalFragmentLength(cbor.length, maxFragmentLength));
+      this.seqLength = this.fragments.length;
+    }
+    /** Every frame of a message that fits in one, or the next of an animation. */
+    nextPart() {
+      this.seqNum = this.seqNum + 1 >>> 0;
+      if (this.seqLength === 1) {
+        return `ur:${this.type}/${bytewordsEncode(this.fragments[0].subarray(0, this.messageLength))}`;
+      }
+      const indexes2 = chooseFragments(this.seqNum, this.seqLength, this.checksum);
+      let mixed = new Uint8Array(this.fragments[0].length);
+      for (const index of indexes2) mixed = xorInto(mixed, this.fragments[index]);
+      const body = cborEncode([this.seqNum, this.seqLength, this.messageLength, this.checksum, mixed]);
+      return `ur:${this.type}/${this.seqNum}-${this.seqLength}/${bytewordsEncode(body)}`;
+    }
+    /** The frames of one clean pass, which is all a patient receiver needs. */
+    firstPass() {
+      const out = [];
+      for (let i = 0; i < this.seqLength; i++) out.push(this.nextPart());
+      return out;
+    }
+  };
   function parseUr(text) {
     const raw = String(text ?? "").trim().toLowerCase();
     if (!raw.startsWith("ur:")) return null;
@@ -3255,11 +3357,11 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       abytes2(bytes, void 0, "Point");
       const { publicKey: comp, publicKeyUncompressed: uncomp } = lengths;
       const length = bytes.length;
-      const head = bytes[0];
+      const head2 = bytes[0];
       const tail = bytes.subarray(1);
-      if (allowInfinityPoint && length === 1 && head === 0)
+      if (allowInfinityPoint && length === 1 && head2 === 0)
         return { x: Fp2.ZERO, y: Fp2.ZERO };
-      if (length === comp && (head === 2 || head === 3)) {
+      if (length === comp && (head2 === 2 || head2 === 3)) {
         const x = Fp2.fromBytes(tail);
         if (!Fp2.isValid(x))
           throw new Error("bad point: is not on curve, wrong x");
@@ -3273,11 +3375,11 @@ globalThis.TextDecoder.prototype.decode = function (input) {
         }
         assertCompressionIsSupported();
         const evenY = Fp2.isOdd(y);
-        const evenH = (head & 1) === 1;
+        const evenH = (head2 & 1) === 1;
         if (evenH !== evenY)
           y = Fp2.neg(y);
         return { x, y };
-      } else if (length === uncomp && head === 4) {
+      } else if (length === uncomp && head2 === 4) {
         const L6 = Fp2.BYTES;
         const x = Fp2.fromBytes(tail.subarray(0, L6));
         const y = Fp2.fromBytes(tail.subarray(L6, L6 * 2));
@@ -11736,16 +11838,16 @@ zoo`.split("\n"));
       const len = lengths.secretKey;
       abytes2(key, lengths.secretKey, "secretKey");
       const hashed = abytes2(hash(key), 2 * len, "hashedSecretKey");
-      const head = adjustScalarBytes2(hashed.slice(0, len));
+      const head2 = adjustScalarBytes2(hashed.slice(0, len));
       const prefix2 = hashed.slice(len, 2 * len);
-      const scalar = modN_LE(head);
-      return { head, prefix: prefix2, scalar };
+      const scalar = modN_LE(head2);
+      return { head: head2, prefix: prefix2, scalar };
     }
     function getExtendedPublicKey(secretKey) {
-      const { head, prefix: prefix2, scalar } = getPrivateScalar(secretKey);
+      const { head: head2, prefix: prefix2, scalar } = getPrivateScalar(secretKey);
       const point = BASE.multiply(scalar);
       const pointBytes = point.toBytes();
-      return { head, prefix: prefix2, scalar, point, pointBytes };
+      return { head: head2, prefix: prefix2, scalar, point, pointBytes };
     }
     function getPublicKey(secretKey) {
       return getExtendedPublicKey(secretKey).pointBytes;
@@ -17964,7 +18066,8 @@ zoo`.split("\n"));
         psbt: toHex2(result.psbt),
         hex: result.hex ?? null,
         txid: result.txid ?? null,
-        frames: result.hex ? encodeParts("TXSIGNED", fromHex2(result.hex)) : null
+        frames: result.hex ? encodeParts("TXSIGNED", fromHex2(result.hex)) : null,
+        urFrames: new UrEncoder(UR_PSBT, cborEncode(result.psbt)).firstPass()
       });
     }),
     /**
