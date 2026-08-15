@@ -31,7 +31,10 @@ if [ ! -d "$XMR/src/crypto" ]; then
   rm -rf "$XMR"
   git clone --depth 1 --branch "$TAG" --filter=blob:none --sparse \
     https://github.com/monero-project/monero.git "$XMR"
-  git -C "$XMR" sparse-checkout set src/crypto src/common src/wallet contrib/epee tests/hash
+  # wallet2.h drags in most of the tree. The unsignedtxset harness includes it
+  # so that it uses Monero's actual unsigned_tx_set rather than a transcription
+  # of the struct, which is the whole reason that harness is worth having.
+  git -C "$XMR" sparse-checkout set src contrib/epee tests/hash external/easylogging++ external/boost
 fi
 
 GOT=$(git -C "$XMR" rev-parse HEAD)
@@ -43,6 +46,8 @@ fi
 say "monero $TAG at $COMMIT"
 
 INC="-I$XMR/src -I$XMR/src/crypto -I$XMR/contrib/epee/include -Ioracle/src/shim"
+# The unsignedtxset harness needs more of the tree than the crypto harnesses do.
+WIDE="-I$XMR/src -I$XMR/contrib/epee/include -I$XMR/external/easylogging++ -I$XMR/external -Ioracle/src/shim"
 OBJ="$WORK/obj"
 mkdir -p "$OBJ"
 
@@ -79,7 +84,14 @@ gcc -O2 -DNO_AES -DFORCE_USE_HEAP $INC -o "$WORK/cryptonight" oracle/src/crypton
 g++ -O2 -std=c++17 $INC -o "$WORK/keyimage" oracle/src/keyimage.cpp \
   "$OBJ"/*.o -lm -lpthread
 
-say "built $WORK/cryptonight and $WORK/keyimage"
+# This one includes wallet/wallet2.h, so it uses Monero's real unsigned_tx_set,
+# tx_construction_data, tx_source_entry and tx_destination_entry. Nothing about
+# the layout is transcribed. It needs boost_serialization and openssl because
+# wallet2.h reaches them transitively, not because this harness uses either.
+g++ -O1 -std=c++17 $WIDE -o "$WORK/unsignedtxset" oracle/src/unsignedtxset.cpp \
+  "$OBJ"/*.o -lm -lpthread -lboost_serialization -lssl -lcrypto
+
+say "built $WORK/cryptonight, $WORK/keyimage and $WORK/unsignedtxset"
 
 # --- the check ---------------------------------------------------------------
 if [ "${1:-}" = "--check" ]; then

@@ -280,6 +280,39 @@ const scalar = (bytes: Uint8Array): bigint => {
   return n % L;
 };
 
+/**
+ * Undo `wallet2::encrypt_with_view_secret_key`.
+ *
+ * The same envelope wraps the key-image export and the unsigned transaction
+ * set, which is why this is a function rather than two copies: an 8-byte IV, a
+ * ChaCha20 body under the CryptoNight-derived key, and a 64-byte signature.
+ *
+ * The signature is **not** verified, and that is worth stating rather than
+ * leaving to be discovered. Checking it needs `check_signature`, which this
+ * repository does not have and which would be a second implementation of a
+ * verifier with nothing to check it against. What callers get instead is that
+ * the plaintext has to make sense: the key-image blob has to contain the view
+ * public key this secret implies, and the transaction set has to parse as an
+ * archive and consume every byte. A blob that fails those was not made under
+ * this key. That is a weaker claim than authentication and it is the true one.
+ *
+ * Returns null on anything malformed, never throws.
+ */
+export function decryptWithViewSecretKey(
+  body: Uint8Array,
+  viewSecret: Uint8Array,
+  kdfRounds = 1,
+): Uint8Array | null {
+  if (body.length < IV_BYTES + SIGNATURE_BYTES) return null;
+  const iv = body.subarray(0, IV_BYTES);
+  const ciphertext = body.subarray(IV_BYTES, body.length - SIGNATURE_BYTES);
+  try {
+    return chacha20orig(chachaKeyFor(viewSecret, kdfRounds), iv, ciphertext);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 

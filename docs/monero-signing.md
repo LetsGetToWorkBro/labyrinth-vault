@@ -115,6 +115,34 @@ believed. Meanwhile
 `ios/LabyrinthVaultKDFTests/CryptoNightVectorTests.swift` holds the vendored C
 to the same fixture's chacha key. Neither language is the other's oracle.
 
+## Done since: the archive and the unsigned set
+
+`src/keys/binaryarchive.ts` reads Monero's own serialization format, and
+`src/keys/monerounsigned.ts` reads an `unsigned_tx_set` out of it, envelope
+included. `oracle/src/unsignedtxset.cpp` includes `wallet/wallet2.h` and
+serializes the real `wallet2::unsigned_tx_set`, so no struct layout is
+transcribed anywhere; the fixture carries both the bytes Monero wrote and a
+description of what went in, and the test turns the first into the second.
+
+Two encodings in that format are invisible from the header and both were wrong
+in the first draft:
+
+- a `std::tuple` writes a leading count, exactly as a pair writes its `2`;
+- an unsigned integer wider than a byte is a **varint** inside a container,
+  pair or tuple, and **fixed-width** as a struct field. `tx_source_entry::amount`
+  and `tx_destination_entry::amount` are the same type with different
+  encodings, eleven lines apart in the same header.
+
+The oracle caught both. A reader checked only against itself would not have.
+
+**It reads and does not sign, and that is not a staging post.** Reading a
+construction plan and building a transaction from one are different jobs. The
+second needs a confirmation screen that re-derives every destination from the
+vault's own keys before anybody is asked to approve anything, because the file
+is the *sender's* description of their own transaction and a watch-only wallet
+that lied about a destination produces a file that outlines beautifully.
+`outlineTx` is arithmetic over a claim and its own source says so.
+
 ## What is not built
 
 Two layers, in the order they have to be built.
@@ -225,11 +253,13 @@ half-built.
    second implementation. Checked against `tests/hash/tests-slow.txt`.
 2. ~~The key-image export blob~~. Done, and it turned out to need no archive
    reader at all: the format is fixed-width concatenation.
-3. A reader for Monero's own `binary_archive`, which is what the current
-   `\005` format actually uses. Not Boost; see the correction above. Tested
-   against archives produced by a real wallet.
-4. `unsigned_tx_set` parsing on top of it, tested by round-tripping a real
-   file and reproducing the summary the Monero CLI prints for it.
+3. ~~A reader for Monero's own `binary_archive`~~. Done, in
+   `src/keys/binaryarchive.ts`, against archives that Monero's own
+   `binary_archive<true>` wrote.
+4. ~~`unsigned_tx_set` parsing on top of it~~. Done, in
+   `src/keys/monerounsigned.ts`, including the
+   `encrypt_with_view_secret_key` envelope around it, so a whole file reads
+   end to end. It does **not** sign one; see below.
 5. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
    then end to end against a daemon on testnet, then stagenet, before anything
    touches mainnet.
