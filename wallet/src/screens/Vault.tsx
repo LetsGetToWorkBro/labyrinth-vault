@@ -116,6 +116,14 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
                 <>
                   <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
                   <Gap size={space.snug} />
+                  {/* Read only, and labelled so. This hands the vault a file
+                      another Monero wallet wrote so it can say what is in it;
+                      no signature comes back, because a wallet2 file is the
+                      sending wallet describing itself and a signature has to
+                      be over what the vault re-derived. The screen says the
+                      same thing at more length. */}
+                  <Action label="SHOW A MONERO FILE (READ ONLY)" quiet onPress={() => navigation.navigate('MoneroFile')} />
+                  <Gap size={space.snug} />
                   {/* The stand-in's lever renders only where the stand-in can
                       act. In a release build the signer behind this is
                       compiled out, and a control whose only possible answer

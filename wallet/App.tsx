@@ -31,6 +31,7 @@ import { SwapScreen } from './src/screens/Swap';
 import { SwapStatusScreen } from './src/screens/SwapStatus';
 import { NodesScreen } from './src/screens/Nodes';
 import { KeyImagesScreen } from './src/screens/KeyImages';
+import { MoneroFileScreen } from './src/screens/MoneroFile';
 import { SendScreen } from './src/screens/Send';
 import { ScanScreen } from './src/screens/Scan';
 import { PairScreen, SecurityScreen, VaultScreen } from './src/screens/Vault';
@@ -90,6 +91,7 @@ export default function App() {
               <Stack.Screen name="SwapStatus" component={SwapStatusScreen} />
               <Stack.Screen name="Nodes" component={NodesScreen} />
               <Stack.Screen name="KeyImages" component={KeyImagesScreen} />
+              <Stack.Screen name="MoneroFile" component={MoneroFileScreen} />
                 <Stack.Screen name="Scan" component={ScanScreen} />
                 <Stack.Screen name="Pair" component={PairScreen} />
               </Stack.Group>

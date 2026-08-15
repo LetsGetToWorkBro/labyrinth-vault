@@ -55,7 +55,8 @@ import { assetColor, color, radius, space } from '../design/tokens';
 import { elide, fiatCents, formatFeeRate, formatFiat, hasPrice, parseAmount } from '../core/units';
 import { maxSendable } from '../core/build';
 import { checkAddress, readPaymentUri } from '../core/addresses';
-import { frameEstimate, FRAME_MS } from '../core/wire';
+import { frameEstimate } from '../core/wire';
+import { useFrames } from '../qr/useFrames';
 import { standInVault, PUBLISHED_TEST_WORDS, DEMO } from '../demo/standin';
 import { tap } from '../design/haptics';
 import { useStore } from '../state/store';
@@ -470,17 +471,7 @@ function Review({ onBack }: { onBack: () => void }) {
 function Transmit({ onBack }: { onBack: () => void }) {
   const store = useStore();
   const transmission = store.session.transmission;
-  const [frame, setFrame] = useState(() => transmission?.current() ?? '');
-  const [status, setStatus] = useState(() => transmission?.status() ?? { frame: 1, total: 1, laps: 0 });
-
-  useEffect(() => {
-    if (!transmission) return;
-    const timer = setInterval(() => {
-      setFrame(transmission.advance());
-      setStatus(transmission.status());
-    }, FRAME_MS);
-    return () => clearInterval(timer);
-  }, [transmission]);
+  const { frame, status } = useFrames(transmission);
 
   if (!transmission) return null;
   const draft = store.session.draft;

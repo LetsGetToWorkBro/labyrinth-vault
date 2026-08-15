@@ -76,6 +76,17 @@ export type Routes = {
    * part of any payment: it is bookkeeping about payments already received.
    */
   KeyImages: undefined;
+  /**
+   * Showing the vault one of Monero's own wallet files, to be read.
+   *
+   * Its own route rather than a face of Send, and the reason is the one thing
+   * about it that could be misread. Send ends in a signature; this ends in
+   * somebody reading a screen on the other device. A wallet2 file is the
+   * sending wallet's account of its own transaction, so the vault will not
+   * sign one, and a step inside the send flow would put a read-only detour on
+   * the path that leads to a signature.
+   */
+  MoneroFile: undefined;
   Vault: undefined;
   Pair: undefined;
   Security: undefined;

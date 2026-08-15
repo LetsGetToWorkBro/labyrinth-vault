@@ -602,7 +602,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return { ok: true, note: 'Signature received. It goes through the same verification as everything else.' };
       }
 
-      if (kind === 'PSBT' || kind === 'XMRUNSIGNED' || kind === 'XMROUTPUTS') {
+      if (kind === 'PSBT' || kind === 'XMRUNSIGNED' || kind === 'XMROUTPUTS' || kind === 'XMRFILE') {
         return {
           ok: false,
           note: 'That is a payload this wallet sends, not one it reads. Point the vault at this phone, not the other way around.',

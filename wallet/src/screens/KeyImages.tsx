@@ -13,7 +13,7 @@
  * know that is what the codes say.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { ScrollView, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Action, Gap, Notice, Screen } from '../design/atoms';
@@ -22,24 +22,14 @@ import { Header } from '../components/chrome';
 import { QrCanvas } from '../qr/QrCanvas';
 import { Link } from '../labyrinth/glyphs';
 import { color, space } from '../design/tokens';
-import { FRAME_MS } from '../core/wire';
+import { useFrames } from '../qr/useFrames';
 import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 
 export function KeyImagesScreen({ navigation }: Nav<'KeyImages'>) {
   const store = useStore();
   const transmission = useMemo(() => store.keyImageFrames(), [store]);
-  const [frame, setFrame] = useState(() => transmission?.current() ?? '');
-  const [status, setStatus] = useState(() => transmission?.status() ?? { frame: 1, total: 1, laps: 0 });
-
-  useEffect(() => {
-    if (!transmission) return;
-    const timer = setInterval(() => {
-      setFrame(transmission.advance());
-      setStatus(transmission.status());
-    }, FRAME_MS);
-    return () => clearInterval(timer);
-  }, [transmission]);
+  const { frame, status } = useFrames(transmission);
 
   return (
     <Screen>
