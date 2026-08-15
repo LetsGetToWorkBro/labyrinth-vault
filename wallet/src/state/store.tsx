@@ -19,6 +19,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+/* The system share sheet, which is how a file leaves this app for another.
+ * React Native's own, not a dependency: on iOS a `url` pointing at a file
+ * opens the sheet with the file attached, which is the one thing needed. */
+import { Share } from 'react-native';
 import { prepare, verifySigned } from '../core/build';
 import { prepareMoneroDraft, verifySignedMonero } from '../core/monerodraft';
 import { readStatus, type SwapOrder, type SwapStatus } from '../core/swap';
@@ -37,6 +41,8 @@ import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../co
 import { proxyTransport, swapConfigured } from '../net/swapproxy';
 import { DEMO, standInAccountExport, standInKeyImages } from '../demo/standin';
 import { restoreHeight, revealSecretHex } from '@vault/keys/monero';
+import { receiveMoneroFile } from '../core/vaultfile';
+import { saveVaultFile } from './vaultFileStore';
 import { digestOf } from '@vault/airgap/envelope';
 import { EMPTY, load, save, type Persisted } from './persist';
 import { fileStore } from './fileStore';
@@ -167,6 +173,17 @@ export interface Store {
   /** The demo round trip: outputs to the stand-in, images back. DEMO only. */
   syncStandInKeyImages(): { ok: boolean; note: string };
 
+  /**
+   * A wallet2 file the vault sent, caught and waiting to be written.
+   *
+   * Held rather than saved on arrival, because a scan that drops files into a
+   * directory on its own is a scan with a side effect nobody asked for. Null
+   * until a `key-image-export` arrives over the camera.
+   */
+  moneroFileWaiting: { what: string; filename: string; bytes: number } | null;
+  /** Write the waiting file and hand it to the share sheet. */
+  saveMoneroFile(): Promise<{ ok: boolean; note: string }>;
+
   /** Pair with the stand-in vault. DEMO only; the real path is the camera. */
   pairVault(label: string): void;
   unpairVault(): void;
@@ -222,6 +239,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
   const [swapCheck, setSwapCheck] = useState<{ status: SwapStatus; at: number } | null>(null);
   const [moneroStatus, setMoneroStatus] = useState<MoneroStatus | null>(null);
+  /* A wallet2 file caught over the camera, and the bytes behind it.
+   *
+   * Two holders on purpose. The state is what a screen renders and is
+   * deliberately only a description — what it is, what it will be called, how
+   * big; the ref holds the bytes, which no view has any business re-rendering
+   * over. A key image export names every output this account owns, so it is
+   * kept in exactly one place and dropped as soon as it is written. */
+  const [moneroFileWaiting, setMoneroFileWaiting] =
+    useState<{ what: string; filename: string; bytes: number } | null>(null);
+  const pendingFile = useRef<{ filename: string; bytes: Uint8Array } | null>(null);
   /* Bumped after every refresh so the snapshot below is recomputed. The
    * watcher holds the data and hands back the same object until something
    * fetches; a counter is what tells React that something did. */
@@ -602,7 +629,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return { ok: true, note: 'Signature received. It goes through the same verification as everything else.' };
       }
 
-      if (kind === 'PSBT' || kind === 'XMRUNSIGNED' || kind === 'XMROUTPUTS' || kind === 'XMRFILE') {
+      if (kind === 'XMRFILE') {
+        /* One of Monero's own wallet files, coming back. The vault writes
+         * exactly one of these — the key image export — and this phone is the
+         * only device in the room holding both a camera and a filesystem, so
+         * it is the courier. `receiveMoneroFile` decides what it is and what
+         * to say; nothing is written until somebody taps. */
+        const incoming = receiveMoneroFile(payload);
+        if (!incoming.ok || !incoming.filename) {
+          setMoneroFileWaiting(null);
+          pendingFile.current = null;
+          return { ok: false, note: incoming.note };
+        }
+        pendingFile.current = { filename: incoming.filename, bytes: payload };
+        setMoneroFileWaiting({
+          what: incoming.what ?? 'a Monero wallet file',
+          filename: incoming.filename,
+          bytes: payload.length,
+        });
+        return { ok: true, note: incoming.note };
+      }
+
+      if (kind === 'PSBT' || kind === 'XMRUNSIGNED' || kind === 'XMROUTPUTS') {
         return {
           ok: false,
           note: 'That is a payload this wallet sends, not one it reads. Point the vault at this phone, not the other way around.',
@@ -613,6 +661,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [acceptPairing, watcher, refresh],
   );
+
+  /**
+   * Write the waiting file and offer it onwards.
+   *
+   * The share sheet rather than a path a person has to go and find: the file
+   * exists to be imported by another wallet, and every step between "the vault
+   * answered" and "the other wallet has it" is a step somebody gives up on.
+   */
+  const saveMoneroFile = useCallback(async (): Promise<{ ok: boolean; note: string }> => {
+    const waiting = pendingFile.current;
+    if (!waiting) return { ok: false, note: 'There is no file waiting to be saved.' };
+    try {
+      const saved = saveVaultFile(waiting.filename, waiting.bytes);
+      await Share.share({ url: saved.uri, title: saved.name });
+      /* Dropped once it has been handed on. The file is still in the cache
+       * for the share sheet to have taken, and this wallet stops holding a
+       * list of every output the account owns in memory. */
+      pendingFile.current = null;
+      setMoneroFileWaiting(null);
+      return {
+        ok: true,
+        note: `Saved as ${saved.name}. Import it in the wallet that scanned these outputs.`,
+      };
+    } catch {
+      /* A share sheet somebody dismissed is not a failure worth a red line,
+       * but a write that did not happen is. Both land here and neither is
+       * distinguishable from the other without guessing, so the sentence
+       * claims only what is certain. */
+      return { ok: false, note: 'That file was not saved. There may be no room on this device.' };
+    }
+  }, []);
 
   const keyImageFrames = useCallback((): Transmission | null => {
     if (!(watcher instanceof NodeWatcher)) return null;
@@ -718,6 +797,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     acceptWirePayload,
     keyImageFrames,
     syncStandInKeyImages,
+    moneroFileWaiting,
+    saveMoneroFile,
     /* The demo pairing runs the stand-in's export through the same
      * acceptance path a scanned one takes, so the button exercises the real
      * checks rather than flipping a flag. */

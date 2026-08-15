@@ -50,6 +50,7 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
   const [problem, setProblem] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{ ok: boolean; note: string } | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const onFrame = useCallback(
     ({ data }: { data: string }) => {
@@ -153,6 +154,25 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
                 'Every frame arrived and the payload matches its own digest. Nothing was assembled from parts of two different scans.'}
             </Body>
             <Gap size={space.section} />
+            {/* A file the vault handed over is not finished arriving until it
+                is somewhere another wallet can open it. Offered before
+                CONTINUE, because CONTINUE is how somebody leaves without it
+                and the bytes are not kept after that. */}
+            {store.moneroFileWaiting ? (
+              <>
+                <Action
+                  label={saving ? 'SAVING…' : `SAVE ${store.moneroFileWaiting.filename.toUpperCase()}`}
+                  onPress={() => {
+                    setSaving(true);
+                    void store.saveMoneroFile().then((result) => {
+                      setSaving(false);
+                      setOutcome(result);
+                    });
+                  }}
+                />
+                <Gap size={space.snug} />
+              </>
+            ) : null}
             <Action label="CONTINUE" onPress={() => navigation.goBack()} />
             {outcome?.ok === false ? (
               <>

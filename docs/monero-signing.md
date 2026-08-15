@@ -185,6 +185,49 @@ The last point on that screen is the one that keeps it from being a dead end:
 it names the route that does work, which is to start the payment in the
 Labyrinth wallet and let the vault check it before anybody approves anything.
 
+## Done since: the key image export leaves the device
+
+`exportKeyImageBlob` writes `Monero key image export`, the file Cake, Feather
+and `monero-wallet-cli` import, and for several commits nothing could ask it
+to. That is the third instance of the same defect in this repository and the
+largest: thirty-four files of Monero's C are vendored and shipped for exactly
+this file, and it was reachable from no screen.
+
+The key image screen has two wires now.
+
+- **LABYRINTH** is this project's own `XMRKEYIMAGES` payload, which the
+  companion reads and nothing else does. It matches each image to its output by
+  one-time key, so order carries no meaning.
+- **MONERO FILE** is the wallet2 export, on the `XMRFILE` wire. It is offered
+  only when the engine reports `fileRandomBytes`, which is null on a build with
+  no CryptoNight; that field is the reason `version` reports `cryptonight` at
+  all.
+
+Two properties of `import_key_images` shape the whole thing.
+
+It **matches by position**, walking `m_transfers[i + offset]`. So the request
+carries an optional transfer offset, the screen shows it, and the copy says
+plainly that the list has to be in the importing wallet's order. When it is
+not, the import throws: every record carries a ring signature over its own
+one-time key, so a mispaired record fails `check_ring_signature` rather than
+producing a wrong balance. That loud failure is what makes offering this
+defensible.
+
+And because it matches by position, **a file with a gap in it is refused
+whole**. An output that does not prove as this wallet's gets no record, and a
+missing record shifts every record after it. The own-wire answer still answers
+what it can; the file does not, because a file known in advance to fail is not
+worth animating across a room.
+
+The companion carries it the rest of the way. None of the wallets that import
+this file can read a QR code, so the phone that has both a camera and a
+filesystem catches the frames, writes `key_images` into its cache, and hands it
+to the share sheet. It does not open the file and does not need to: it already
+has those images on its own wire, and opening one would need CryptoNight, which
+is in the vault. `wallet/src/core/vaultfile.ts` decides what arrived and what
+to say about it, using the vault's own `readContainer`, so the two halves
+cannot disagree about what a file is.
+
 ## Done since: the envelope signature is checked
 
 `encrypt_with_view_secret_key` puts a 64-byte `crypto::generate_signature`
