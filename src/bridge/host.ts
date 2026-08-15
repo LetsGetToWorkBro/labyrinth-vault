@@ -47,7 +47,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { encodeParts, type PayloadKind } from '../airgap/envelope';
 import { Scanner } from '../airgap/scanner';
-import { UR_PSBT, UrEncoder } from '../airgap/ur';
+import { UR_PSBT, UR_PSBT_MODERN, UrEncoder } from '../airgap/ur';
 import { bip84Account } from '../airgap/registry';
 import { cborEncode } from '../airgap/cbor';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
@@ -605,6 +605,17 @@ export const api = {
       txid: result.txid ?? null,
       frames: result.hex ? encodeParts('TXSIGNED' satisfies PayloadKind, fromHex(result.hex)!) : null,
       urFrames: new UrEncoder(UR_PSBT, cborEncode(result.psbt!)).firstPass(),
+      /* The same bytes under the registry's newer name.
+       *
+       * BC-UR renamed its types in 2023, dropping the `crypto-` prefix, and
+       * wallets did not move together. Sparrow and Electrum subscribe to
+       * `crypto-psbt`; Cake matches on `ur:psbt/` and nothing else, which was
+       * read out of cw_bitcoin/lib/bitcoin_wallet.dart rather than guessed.
+       *
+       * So both go out. The payload is byte-identical and the label is the
+       * whole of the difference, which makes emitting one and not the other a
+       * needless way to be incompatible with half the ecosystem. */
+      urPsbtFrames: new UrEncoder(UR_PSBT_MODERN, cborEncode(result.psbt!)).firstPass(),
     });
   }),
 

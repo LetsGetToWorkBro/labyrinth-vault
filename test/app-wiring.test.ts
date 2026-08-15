@@ -82,10 +82,22 @@ describe('a signature can leave the vault in a format somebody else reads', () =
    * the same as no frames at all. */
   const signed = readFileSync('ios/LabyrinthVault/Screens/Signed.swift', 'utf8');
 
-  it('offers the PSBT wire beside its own', () => {
+  it('offers the PSBT wires beside its own', () => {
     expect(signed).toMatch(/case psbt = "SPARROW · ELECTRUM"/);
+    expect(signed).toMatch(/case cake = "CAKE"/);
     expect(signed).toMatch(/result\.urFrames/);
+    expect(signed).toMatch(/result\.urPsbtFrames/);
     expect(signed, 'the Labyrinth wire was dropped').toMatch(/result\.frames/);
+  });
+
+  it('emits both registry names for the same payload', () => {
+    /* BC-UR renamed its types in 2023 and the wallets did not move together.
+     * Sparrow subscribes to crypto-psbt; Cake tests startsWith("ur:psbt/")
+     * and takes nothing else. Emitting one name is being incompatible with
+     * half the ecosystem for the length of a string. */
+    const host = readFileSync('src/bridge/host.ts', 'utf8');
+    expect(host).toMatch(/UrEncoder\(UR_PSBT,/);
+    expect(host).toMatch(/UrEncoder\(UR_PSBT_MODERN,/);
   });
 
   it('decodes the field the engine actually sends', () => {
@@ -94,11 +106,21 @@ describe('a signature can leave the vault in a format somebody else reads', () =
     expect(readFileSync('src/bridge/host.ts', 'utf8')).toMatch(/urFrames: new UrEncoder\(UR_PSBT/);
   });
 
-  it('says which wallet each wire is for, rather than naming a format', () => {
+  it('labels the wires by wallet, never by format', () => {
     /* TXSIGNED and UR:CRYPTO-PSBT mean nothing to somebody holding two
-     * phones. The names of the wallets do. */
-    expect(signed).toMatch(/case labyrinth = "LABYRINTH"/);
-    expect(signed.toLowerCase()).toContain('desktop wallets read');
+     * phones. The names of the wallets do.
+     *
+     * Checked structurally rather than by matching a sentence: the first
+     * version of this test asserted a phrase from the copy and broke the
+     * moment the copy was improved, which is a guard that punishes the thing
+     * it exists to encourage. */
+    const labels = [...signed.matchAll(/case \w+ = "([^"]+)"/g)].map((m) => m[1]!);
+    expect(labels.length, 'no wires found').toBeGreaterThanOrEqual(3);
+    for (const label of labels) {
+      expect(label, `"${label}" names a format, not a wallet`)
+        .not.toMatch(/\bUR\b|PSBT|LV1|CBOR|TXSIGNED/i);
+    }
+    expect(labels).toContain('LABYRINTH');
   });
 });
 

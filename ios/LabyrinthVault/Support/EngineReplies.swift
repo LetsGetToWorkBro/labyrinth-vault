@@ -169,6 +169,9 @@ enum EngineReply {
         /// Optional so a bundle built before this existed still decodes rather
         /// than failing the launch gate over a field nobody had heard of.
         let urFrames: [String]?
+        /// The same bytes labelled `ur:psbt`, the registry's newer name for
+        /// the type. Cake matches on that prefix and rejects the older one.
+        let urPsbtFrames: [String]?
     }
 
     struct Calibrate: Decodable {

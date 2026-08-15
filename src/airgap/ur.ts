@@ -36,6 +36,16 @@ import { chooseFragments, xorInto } from './fountain';
 
 /** The registry type for an unsigned or partially signed Bitcoin transaction. */
 export const UR_PSBT = 'crypto-psbt';
+/**
+ * The same type under the name the 2023 revision of the registry gave it.
+ *
+ * BC-UR dropped the `crypto-` prefix and the ecosystem did not move together:
+ * Sparrow and Electrum still subscribe to `crypto-psbt`, while Cake matches on
+ * `ur:psbt/` and rejects anything else. The payload is identical, so a signer
+ * that emits only one of the two is incompatible with half the wallets for the
+ * length of a string.
+ */
+export const UR_PSBT_MODERN = 'psbt';
 /** Undifferentiated bytes, which is what a wallet uses when nothing fits. */
 export const UR_BYTES = 'bytes';
 

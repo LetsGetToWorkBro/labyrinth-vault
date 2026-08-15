@@ -104,6 +104,27 @@ describe('a signed transaction can go back to a wallet that is not ours', () => 
     expect(last!.payload).not.toBeNull();
   });
 
+  it('also labels the same bytes ur:psbt, which is all Cake will accept', () => {
+    /* Read out of cw_bitcoin/lib/bitcoin_wallet.dart, which tests
+     * `str.startsWith("ur:psbt/")` and takes no other prefix. The registry
+     * renamed the type in 2023 and the wallets did not move together, so a
+     * signer that emits one name is incompatible with half of them. */
+    const modern = signed.urPsbtFrames as string[];
+    expect(Array.isArray(modern)).toBe(true);
+    for (const frame of modern) {
+      expect(frame.toLowerCase().startsWith('ur:psbt/')).toBe(true);
+    }
+
+    // Byte-identical payload: only the label differs.
+    const collect = (frames: string[]) => {
+      const c = new UrCollector();
+      let p;
+      for (const f of frames) p = c.offer(f);
+      return urPayloadBytes(p!.cbor!);
+    };
+    expect(collect(modern)).toEqual(collect(signed.urFrames as string[]));
+  });
+
   it('still speaks its own wire for the Labyrinth wallet', () => {
     /* The LV1 frames carry the finished transaction, which is what our own
      * wallet broadcasts. Adding a second format must not remove the first. */

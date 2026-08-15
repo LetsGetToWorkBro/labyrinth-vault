@@ -74,12 +74,24 @@ struct SignedQRView: View {
     enum Wire: String, CaseIterable {
         case labyrinth = "LABYRINTH"
         case psbt = "SPARROW · ELECTRUM"
+        case cake = "CAKE"
 
-        var kind: String { self == .labyrinth ? "TXSIGNED · LV1" : "UR:CRYPTO-PSBT" }
+        var kind: String {
+            switch self {
+            case .labyrinth: return "TXSIGNED · LV1"
+            case .psbt: return "UR:CRYPTO-PSBT"
+            case .cake: return "UR:PSBT"
+            }
+        }
         var carries: String {
-            self == .labyrinth
-                ? "The finished transaction, ready to broadcast."
-                : "The signed PSBT, in the format the desktop wallets read."
+            switch self {
+            case .labyrinth: return "The finished transaction, ready to broadcast."
+            case .psbt: return "The signed PSBT, under the name those wallets subscribe to."
+            /* Same bytes as the middle option. BC-UR renamed its types in 2023
+             * and the wallets did not move together, so the label is the whole
+             * of the difference. */
+            case .cake: return "The same PSBT, under the registry's newer name."
+            }
         }
     }
 
@@ -94,6 +106,7 @@ struct SignedQRView: View {
         switch wire {
         case .labyrinth: return result.frames ?? []
         case .psbt: return result.urFrames ?? []
+        case .cake: return result.urPsbtFrames ?? []
         }
     }
 
@@ -119,8 +132,8 @@ struct SignedQRView: View {
                                     wire = option
                                 } label: {
                                     Text(option.rawValue)
-                                        .font(Type.mono(10))
-                                        .kerning(1.4)
+                                        .font(Type.mono(9))
+                                        .kerning(1.0)
                                         .foregroundStyle(wire == option ? Ink.void : Ink.paperDim)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 9)
