@@ -51,6 +51,7 @@ import { UR_PSBT, UR_PSBT_MODERN, UrEncoder } from '../airgap/ur';
 import { bip84Account } from '../airgap/registry';
 import { cborEncode } from '../airgap/cbor';
 import { base43Frame } from '../airgap/base43';
+import { setNativeCnSlowHash, nativeCnSlowHashInstalled } from '../keys/moneroexport';
 import { BBQR_TYPES, bbqrEncode } from '../airgap/bbqr';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
 import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
@@ -308,11 +309,19 @@ function requireSession(): Session {
  * a function" surfacing mid-flow on the key image screen; the version check
  * turns that into a sentence at launch.
  */
-export const HOST_VERSION = 4;
+export const HOST_VERSION = 5;
 
 export const api = {
   version: guarded('version', () =>
-    done({ version: HOST_VERSION, kdf: nativeArgon2idInstalled() ? 'native' : 'engine' })),
+    done({
+      version: HOST_VERSION,
+      kdf: nativeArgon2idInstalled() ? 'native' : 'engine',
+      /* Reported rather than assumed. Without CryptoNight the vault still
+       * signs and still computes key images on its own wire; the one thing
+       * it cannot do is write the export file other Monero wallets read, and
+       * a screen that offers that button needs to know. */
+      cryptonight: nativeCnSlowHashInstalled() ? 'native' : 'absent',
+    })),
 
   /** The launch gate. Nothing else should be called until this passes. */
   selfTest: guarded('selfTest', () => {
@@ -789,7 +798,9 @@ function lockInternal(): void {
 export function resetHost(): void {
   lockInternal();
   setNativeArgon2id(null);
+  setNativeCnSlowHash(null);
   adoptNativeArgon2id();
+  adoptNativeCnSlowHash();
 }
 
 /**
@@ -834,7 +845,44 @@ function adoptNativeArgon2id(): void {
   });
 }
 
+/**
+ * Take the host's CryptoNight, if it left one on the global.
+ *
+ * Same seam as `adoptNativeArgon2id` and the same reasoning about reading it
+ * once at boot, with one difference that changes the consequences: Argon2id
+ * has a JavaScript implementation behind it, so a missing native function
+ * costs time. This has none. `chachaKeyFor` refuses outright when nothing was
+ * installed, because the alternative is a key-image export encrypted under
+ * something that is not the key Monero would have used — a file that looks
+ * right, imports into no wallet, and reports a wrong balance to whoever
+ * trusted it.
+ */
+function adoptNativeCnSlowHash(): void {
+  const host = (globalThis as unknown as { __labyrinthCnSlowHash?: unknown }).__labyrinthCnSlowHash;
+  if (typeof host !== 'function') return;
+  const call = host as (data: number[]) => number[] | null | undefined;
+
+  setNativeCnSlowHash((data) => {
+    /* Arrays of numbers, for the same reason the KDF uses them: it is what
+     * crosses the JavaScriptCore boundary without a conversion either side
+     * could get wrong. */
+    const answer = call(Array.from(data));
+    if (!answer || answer.length !== 32) {
+      throw new Error('The native CryptoNight did not answer.');
+    }
+    return Uint8Array.from(answer);
+  });
+}
+
+/* Boot. Both seams are read here, once, before anything can call in.
+ *
+ * `resetHost` above re-runs the same pair for tests. Two call sites is one
+ * more than ideal and the reason they both exist is that a test needs a clean
+ * slate between cases; the cost is that adding a third seam means remembering
+ * both, which is what test/bundle.test.ts now checks by asking a freshly
+ * loaded bundle whether it adopted anything. */
 adoptNativeArgon2id();
+adoptNativeCnSlowHash();
 
 export type HostApi = typeof api;
 

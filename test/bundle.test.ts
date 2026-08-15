@@ -144,7 +144,7 @@ describe('the built bundle', () => {
      * no native derivation and said so. On the phone the same call answers
      * "native", and a build where it does not is a build that silently kept
      * the minute-long unlock. */
-    expect(call(api, 'version')).toEqual({ ok: true, version: 4, kdf: 'engine' });
+    expect(call(api, 'version')).toEqual({ ok: true, version: 5, kdf: 'engine', cryptonight: 'absent' });
   });
 
   it('passes its own self-test inside the bundle', () => {
@@ -432,7 +432,7 @@ describe('the bundle adopts a host derivation when there is one', () => {
     runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
     const hosted = context.LabyrinthVault as ReturnType<typeof loadBundle>;
 
-    expect(call(hosted, 'version')).toEqual({ ok: true, version: 4, kdf: 'native' });
+    expect(call(hosted, 'version')).toEqual({ ok: true, version: 5, kdf: 'native', cryptonight: 'absent' });
 
     const made = call(
       hosted,
@@ -445,4 +445,64 @@ describe('the bundle adopts a host derivation when there is one', () => {
     const [first] = seen;
     expect(first!.slice(1)).toEqual([16, 3, 65536, 1, 32]);
   }, 600000);
+});
+
+describe('the bundle adopts a host CryptoNight when there is one', () => {
+  /* The same seam as the KDF above, with a different consequence. Argon2id has
+   * a JavaScript implementation behind it, so a host function that never
+   * arrives costs an unlock a minute. CryptoNight has none: it is 2 MiB of
+   * pseudo-random reads with four test vectors and no specification outside
+   * Monero's own source, and docs/native-primitives.md argues at length that a
+   * second implementation would be checked by nothing.
+   *
+   * So the failure mode this guards is not slowness. It is a key-image export
+   * encrypted under a key Monero would never have derived: a file that looks
+   * correct, imports into no wallet, and reports a wrong balance to whoever
+   * trusted it. */
+  const NAME = '__labyrinthCnSlowHash';
+
+  it('reports itself as absent when the host installs nothing', () => {
+    const bare = loadBundle();
+    expect((call(bare, 'version') as { cryptonight?: string }).cryptonight).toBe('absent');
+  });
+
+  it('finds the host function, calls it with bytes, and reports itself native', () => {
+    const seen: number[][] = [];
+    const context: Record<string, unknown> = {
+      [NAME]: (data: number[]) => {
+        seen.push(data);
+        /* Counter bytes rather than anything meaningful. What is under test
+         * here is the seam, not the hash: whether the name is found, whether
+         * an array of bytes crosses intact, and whether the answer comes
+         * back the right length. */
+        return Array.from({ length: 32 }, (_, i) => (i + data.length) & 0xff);
+      },
+    };
+    runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
+    const hosted = context.LabyrinthVault as ReturnType<typeof loadBundle>;
+
+    expect((call(hosted, 'version') as { cryptonight?: string }).cryptonight).toBe('native');
+  });
+
+  it('spells the name the same way Engine.swift does', () => {
+    /* The whole contract between the two languages is this string, and neither
+     * side fails loudly when it is wrong: Swift sets a property nothing reads,
+     * the engine finds no function and carries on reporting "absent". */
+    expect(readFileSync(BUNDLE, 'utf8')).toContain(NAME);
+    expect(readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8')).toContain(NAME);
+  });
+
+  it('installs it before the bundle is evaluated, or it is never adopted', () => {
+    /* Same ordering trap the KDF has. The engine reads the global once at
+     * boot, deliberately, so that a function appearing later cannot change how
+     * a running session derives anything. A host that sets the property after
+     * `evaluateScript` installs nothing at all. */
+    const swift = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
+    const installedAt = swift.indexOf(NAME);
+    const evaluatedAt = swift.indexOf('evaluateScript(source)');
+    expect(installedAt).toBeGreaterThan(-1);
+    expect(evaluatedAt).toBeGreaterThan(-1);
+    expect(installedAt, 'CryptoNight is installed after the bundle is evaluated, so it is never adopted')
+      .toBeLessThan(evaluatedAt);
+  });
 });

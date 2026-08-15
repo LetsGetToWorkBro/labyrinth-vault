@@ -88,6 +88,10 @@ enum EngineReply {
     struct Version: Decodable {
         let version: Int
         let kdf: String?
+        /// "native" or "absent". Optional so a bundle built before the
+        /// CryptoNight seam existed still decodes rather than failing the
+        /// launch gate over a field nobody had heard of.
+        let cryptonight: String?
     }
 
     struct SelfTest: Decodable {

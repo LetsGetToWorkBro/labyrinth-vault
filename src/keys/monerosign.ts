@@ -345,3 +345,115 @@ export function clsagVerify(
 export function keyImageOf(oneTimeKey: Uint8Array, oneTimeSecret: Uint8Array): string {
   return toHex(hashToEc(oneTimeKey).multiply(scalarFromBytes(oneTimeSecret)).toBytes());
 }
+
+// ---------------------------------------------------------------------------
+// The pre-RingCT signature scheme, which the key-image export still uses
+//
+// CLSAG above is what signs a transaction today. These two are older and are
+// not going away: `wallet2` signs every exported key image with a one-member
+// ring signature, and authenticates the encrypted blob around them with the
+// plain one. Both are transcribed from `src/crypto/crypto.cpp` and both are
+// checked byte for byte against that code in test/moneroexport.test.ts.
+//
+// Neither generates its own nonce. That is the same rule `clsagSign` follows
+// and it is the only reason a second implementation can be compared to the
+// first: Monero draws `k` from its RNG, so the only way to reproduce a
+// signature is to hand both sides the same `k`. It also keeps the one
+// judgement that matters — where randomness comes from — in one place instead
+// of scattered through the signing code.
+
+/** A Monero signature on the wire: `c` then `r`, 32 bytes each. */
+export interface LegacySignature {
+  c: Uint8Array;
+  r: Uint8Array;
+}
+
+const signatureBytes = (sig: LegacySignature): Uint8Array => {
+  const out = new Uint8Array(64);
+  out.set(sig.c, 0);
+  out.set(sig.r, 32);
+  return out;
+};
+
+/**
+ * `crypto::generate_signature`, the Schnorr-shaped signature that
+ * authenticates an encrypted wallet blob.
+ *
+ * The hashed buffer is `struct s_comm`: the message, the public key, then
+ * `k·G`. Ninety-six bytes with no length prefix and no domain separator, which
+ * is worth stating because it is the sort of thing a reader assumes is there.
+ *
+ * @param nonce the `k` Monero would have drawn at random. Must be a reduced,
+ *   non-zero scalar; the caller owns that choice, and `signKeyImageBlob` is
+ *   where the vault's randomness actually enters.
+ */
+export function generateSignature(
+  message: Uint8Array,
+  publicKey: Uint8Array,
+  secret: Uint8Array,
+  nonce: Uint8Array,
+): LegacySignature {
+  if (message.length !== 32) throw new Error('A message to sign is a 32-byte hash.');
+  if (publicKey.length !== 32) throw new Error('A public key is 32 bytes.');
+
+  const k = scalarFromBytes(nonce);
+  if (k === 0n) throw new Error('The nonce reduced to zero.');
+
+  const buf = new Uint8Array(96);
+  buf.set(message, 0);
+  buf.set(publicKey, 32);
+  buf.set(Point.BASE.multiply(k).toBytes(), 64);
+
+  const c = scalarFromBytes(hashToScalar(buf));
+  /* Monero draws a fresh k and starts over when either half lands on zero.
+   * With a nonce supplied from outside there is nothing to draw, so this is a
+   * refusal instead. It is a once-in-2^252 event and a silent zero here would
+   * be a signature that leaks the secret. */
+  if (c === 0n) throw new Error('This nonce produces a zero challenge; draw another.');
+  const r = scSub(k, scMul(c, scalarFromBytes(secret)));
+  if (r === 0n) throw new Error('This nonce produces a zero response; draw another.');
+
+  return { c: scalarToBytes(c), r: scalarToBytes(r) };
+}
+
+/**
+ * `crypto::generate_ring_signature` over a ring of one, which is the shape
+ * `export_key_images` uses.
+ *
+ * The message is the key image itself, the ring holds only the output's own
+ * one-time public key, and the signer is that output's ephemeral secret. With
+ * one member there are no decoys to fake, so the loop in Monero's version
+ * collapses to its `i == sec_index` branch and the sum it subtracts is zero.
+ *
+ * Restricted to one member deliberately. A general implementation would be
+ * more code than this needs and every extra branch is one nothing here would
+ * exercise. `readKeyImageBlob` rejects anything that would want more.
+ *
+ * The hashed buffer is `rs_comm`: the message, then `k·G` and `k·Hp(P)`.
+ */
+export function generateRingSignatureOfOne(
+  keyImage: Uint8Array,
+  oneTimeKey: Uint8Array,
+  oneTimeSecret: Uint8Array,
+  nonce: Uint8Array,
+): LegacySignature {
+  if (keyImage.length !== 32) throw new Error('A key image is 32 bytes.');
+  if (oneTimeKey.length !== 32) throw new Error('A one-time key is 32 bytes.');
+
+  const k = scalarFromBytes(nonce);
+  if (k === 0n) throw new Error('The nonce reduced to zero.');
+
+  const buf = new Uint8Array(96);
+  /* The message is the key image, reinterpreted as a hash. That cast is in
+   * wallet2.cpp and it is not a mistake: there is no separate prefix hash for
+   * a key-image export, the image is the thing being committed to. */
+  buf.set(keyImage, 0);
+  buf.set(Point.BASE.multiply(k).toBytes(), 32);
+  buf.set(hashToEc(oneTimeKey).multiply(k).toBytes(), 64);
+
+  const c = scalarFromBytes(hashToScalar(buf));
+  const r = scSub(k, scMul(c, scalarFromBytes(oneTimeSecret)));
+  return { c: scalarToBytes(c), r: scalarToBytes(r) };
+}
+
+export { signatureBytes as legacySignatureBytes };

@@ -136,4 +136,27 @@ final class CryptoNightVectorTests: XCTestCase {
         CryptoNight.wipe(&secret)
         XCTAssertEqual(secret, [UInt8](repeating: 0, count: 32))
     }
+    // MARK: - The loop that closes the TypeScript side
+
+    /// The exact derivation `test/fixtures/monero-keyimages.json` was built on.
+    ///
+    /// `test/moneroexport.test.ts` cannot call this C, so it installs a shim
+    /// that answers with the fixture's `chachaKey` and builds a whole export
+    /// blob on top of it. On its own that would be circular: the TypeScript
+    /// would be proving it agrees with a number it was handed.
+    ///
+    /// This is the other half. The same view secret key goes into the real
+    /// vendored CryptoNight here, and has to come out as the same 32 bytes the
+    /// fixture pins. With both halves, the fixture is a contract between the
+    /// two languages rather than a note either of them wrote to itself.
+    ///
+    /// If this fails, do not adjust the constant. It came from Monero's own
+    /// `generate_chacha_key`, and a disagreement means the vendored C is not
+    /// computing what Monero computes.
+    func testMatchesTheKeyImageFixtureTheEngineIsTestedAgainst() throws {
+        let viewSecret = bytes("0e0d0c0b0a090807060504030201000f0e0d0c0b0a0908070605040302010001")
+        let expected = "b479c8e1275b2a2e0274fd5490d29967fe0daee1f54b5e5d6db4831d066d1306"
+        XCTAssertEqual(hex(try CryptoNight.walletChachaKey(fromSecretKey: viewSecret)), expected,
+                       "the vendored CryptoNight disagrees with test/fixtures/monero-keyimages.json")
+    }
 }

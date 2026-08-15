@@ -40,13 +40,17 @@ import Security
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 4
+    static let expectedVersion = 5
 
     private let context: JSContext
     private let api: JSValue
     /// Whether the engine adopted the native derivation at boot. Surfaced on
     /// the Settings screen next to the bundle digest.
     private(set) var kdfIsNative = false
+    /// Whether the vendored CryptoNight reached the engine. False means the
+    /// Monero key-image export other wallets read cannot be produced, and the
+    /// engine refuses it rather than encrypting under a substitute.
+    private(set) var cryptonightIsNative = false
     private let decoder = JSONDecoder()
 
     init(bundle: Bundle = .main) throws {
@@ -113,6 +117,26 @@ final class Engine {
         }
         context.setObject(derive, forKeyedSubscript: "__labyrinthArgon2id" as NSString)
 
+        /* CryptoNight, for the Monero key-image export and nothing else.
+         *
+         * Installed the same way and before the same `evaluateScript`, with
+         * one difference in what a failure means. The KDF above has a
+         * JavaScript implementation behind it, so a nil return costs a slow
+         * unlock. This has none: `chachaKeyFor` in the engine refuses when
+         * nothing was installed, because the alternative is an export file
+         * encrypted under a key Monero would never have derived — a file that
+         * looks correct, imports into no wallet, and quietly reports the wrong
+         * balance to whoever trusted it.
+         *
+         * So this returns nil on failure and the engine turns that into a
+         * refusal, rather than either side substituting something plausible. */
+        let cnSlowHash: @convention(block) ([NSNumber]) -> [NSNumber]? = { data in
+            let input = data.map { $0.uint8Value }
+            let digest = CryptoNight.slowHashV0(input)
+            return digest.map { NSNumber(value: $0) }
+        }
+        context.setObject(cnSlowHash, forKeyedSubscript: "__labyrinthCnSlowHash" as NSString)
+
         var thrown: String?
         context.exceptionHandler = { _, value in thrown = value?.toString() ?? "unknown" }
         context.evaluateScript(source)
@@ -133,6 +157,11 @@ final class Engine {
          * — it is just a minute slower per unlock, and that is a difference
          * worth being able to see rather than guess at. */
         self.kdfIsNative = version.kdf == "native"
+        /* Same treatment: recorded, not enforced. A build without it signs and
+         * computes key images exactly as before; the one thing it cannot do is
+         * write the file Cake and Feather import, and the screen that offers
+         * that is the place to say so. */
+        self.cryptonightIsNative = version.cryptonight == "native"
     }
 
     // MARK: - Calling
