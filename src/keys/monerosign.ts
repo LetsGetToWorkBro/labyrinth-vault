@@ -417,6 +417,116 @@ export function generateSignature(
 }
 
 /**
+ * `crypto::check_signature`, the other half of `generateSignature`.
+ *
+ * ## Why this exists now and did not before
+ *
+ * `moneroexport.ts` said, for several commits, that verifying the envelope
+ * signature "needs `check_signature`, which this repository does not have and
+ * which would be a second implementation of a verifier with nothing to check
+ * it against". The first clause was true. The second stopped being true when
+ * `oracle/` was committed: `oracle/src/keyimage.cpp` and `unsignedtxset.cpp`
+ * sign with Monero's own `crypto::generate_signature`, with the RNG stubbed to
+ * a counter, and the fixtures carry the result. There is something to check
+ * this against, and it is not us.
+ *
+ * `test/monerosign.test.ts` holds it to those bytes and to the harder
+ * standard: mutating the signature, the message or the public key must be
+ * rejected. A verifier that accepts its own prover's output proves almost
+ * nothing; one that accepts Monero's and rejects every neighbour of it is
+ * doing the job.
+ *
+ * ## Transcribed from crypto.cpp, including the parts that look redundant
+ *
+ * Written from Monero's source rather than by inverting the signer above,
+ * because the checks that matter are the ones a from-first-principles verifier
+ * leaves out:
+ *
+ *   - **`sc_check` on both halves.** A scalar whose 32 bytes encode a value at
+ *     or above the group order is refused rather than reduced. Reducing would
+ *     let two distinct 64-byte signatures verify for one message, which is
+ *     malleability given away for free.
+ *   - **`sig.c` must be non-zero.** Transcribed for agreement rather than
+ *     because a test can tell the difference, and that is said plainly because
+ *     deleting it breaks nothing here: with `c` zero the commitment becomes
+ *     `r·G`, and the challenge computed from it equals zero only with
+ *     probability 2^-252. It is Monero's belt beside its braces, and this
+ *     verifier's job is to decide what Monero decides, not to re-derive which
+ *     of its lines are load-bearing.
+ *   - **The commitment must not be the identity.** Upstream added
+ *     `if (memcmp(&buf.comm, &infinity_point, ...) == 0) return false;`, and
+ *     unlike the line above this one *is* observable: a signature whose
+ *     commitment is the identity verifies without it and is refused by Monero
+ *     with it. `test/monerosign.test.ts` constructs exactly that signature,
+ *     which is the only way this line could be held to anything, because an
+ *     honest signature never reaches it.
+ *
+ * The one deliberate divergence: `ge_frombytes_vartime` accepts some
+ * non-canonical point encodings that `@noble/curves` refuses, and a public key
+ * this vault cannot decode is rejected here rather than worked around. Every
+ * key this function is asked about is one the vault derived itself, so the
+ * stricter rule never fires in practice, and loosening it would mean
+ * hand-rolling a decoder to be bug-compatible with a decoder — which is how a
+ * verifier acquires the defect it was written to avoid.
+ *
+ * @param signature 64 bytes, `c` then `r`, as it appears on the wire.
+ */
+export function checkSignature(
+  message: Uint8Array,
+  publicKey: Uint8Array,
+  signature: Uint8Array,
+): boolean {
+  if (message.length !== 32 || publicKey.length !== 32 || signature.length !== 64) return false;
+
+  const cBytes = signature.subarray(0, 32);
+  const rBytes = signature.subarray(32, 64);
+  if (!isCanonicalScalar(cBytes) || !isCanonicalScalar(rBytes)) return false;
+
+  const c = scalarFromBytes(cBytes);
+  if (c === 0n) return false;
+
+  let comm: Uint8Array;
+  try {
+    /* `ge_double_scalarmult_base_vartime(&tmp2, &sig.c, &tmp3, &sig.r)`:
+     * c·P + r·G. The signer set r = k - c·x, so for an honest signature this
+     * is exactly k·G and the challenge below reproduces. */
+    const point = Point.fromBytes(publicKey)
+      .multiply(c)
+      .add(Point.BASE.multiply(scalarFromBytes(rBytes)));
+    comm = point.toBytes();
+  } catch {
+    /* An undecodable public key, or a scalar multiplication noble refuses.
+     * Either way there is nothing here to verify against. */
+    return false;
+  }
+
+  if (isIdentityEncoding(comm)) return false;
+
+  const buf = new Uint8Array(96);
+  buf.set(message, 0);
+  buf.set(publicKey, 32);
+  buf.set(comm, 64);
+  return scalarFromBytes(hashToScalar(buf)) === c;
+}
+
+/** `sc_check`: the 32 little-endian bytes encode a value below the order. */
+function isCanonicalScalar(bytes: Uint8Array): boolean {
+  let n = 0n;
+  for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]!);
+  return n < L;
+}
+
+/**
+ * Monero's `infinity_point`: the encoding of the ed25519 identity, which is
+ * `y = 1` with the sign bit clear, so `01` and then thirty-one zeroes.
+ */
+function isIdentityEncoding(bytes: Uint8Array): boolean {
+  if (bytes[0] !== 1) return false;
+  for (let i = 1; i < 32; i++) if (bytes[i] !== 0) return false;
+  return true;
+}
+
+/**
  * `crypto::generate_ring_signature` over a ring of one, which is the shape
  * `export_key_images` uses.
  *

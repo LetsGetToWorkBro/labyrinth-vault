@@ -15,17 +15,22 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import {
+  checkSignature,
   clsagSign,
   clsagVerify,
+  generateSignature,
   hashToEc,
   keyImageOf,
+  legacySignatureBytes,
   type Clsag,
   type RingMember,
   type SecretInput,
 } from '../src/keys/monerosign';
-import { commit, commitmentMask, RCT_H } from '../src/keys/monerocrypto';
+import { commit, commitmentMask, hashToScalar, RCT_H } from '../src/keys/monerocrypto';
 import { fromHex, publicFromSecret, reduceScalar, toHex } from '../src/keys/monero';
 
 const Point = ed25519.Point;
@@ -208,5 +213,212 @@ describe('rct::H is the generator these commitments use', () => {
     expect(RCT_H).toHaveLength(32);
     const zero = commit(0n, commitmentMask(scalar(5)));
     expect(zero).toHaveLength(32);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `check_signature`, against signatures Monero's own C produced
+
+describe('the envelope signature, verified', () => {
+  /* The fixtures under test/fixtures were made by `oracle/`, which links
+   * Monero's `crypto.cpp` and calls `crypto::generate_signature` with the RNG
+   * stubbed to a byte counter. So the signatures below are Monero's, not ours,
+   * and a verifier that accepts them is agreeing with the implementation that
+   * matters rather than with its own prover.
+   *
+   * That is the whole reason this function could not be written earlier and
+   * can be now: `moneroexport.ts` used to say a verifier would have "nothing
+   * to check it against", which was true until the harness was committed.
+   */
+
+  const keyImages = JSON.parse(
+    readFileSync('test/fixtures/monero-keyimages.json', 'utf8'),
+  ) as {
+    cases: { name: string; viewPublic: string; iv: string; file: string; keyImages: string[] }[];
+  };
+  const unsigned = JSON.parse(
+    readFileSync('test/fixtures/monero-unsigned-tx-set.json', 'utf8'),
+  ) as { file: string; viewSecret: string };
+
+  /**
+   * The `iv || ciphertext` an envelope signs, and the signature over it.
+   *
+   * The prefix is the magic plus its one version byte, which is why the magic
+   * is passed in rather than a length: getting it wrong by one shifts the
+   * whole body and every assertion below would fail together, which is a
+   * confusing way to be told the offset is off.
+   */
+  function envelope(fileHex: string, magic: string) {
+    const file = fromHex(fileHex);
+    const body = file.subarray(magic.length + 1, file.length - 64);
+    return { body, signature: file.subarray(file.length - 64) };
+  }
+
+  it('found the fixtures, so a pass means something', () => {
+    expect(keyImages.cases.length).toBeGreaterThan(1);
+    expect(unsigned.file.length).toBeGreaterThan(200);
+  });
+
+  for (const one of ['empty', 'two']) {
+    it(`accepts the key-image export Monero signed (${one})`, () => {
+      const found = keyImages.cases.find((c) => c.name === one)!;
+      const { body, signature } = envelope(found.file, 'Monero key image export');
+      expect(checkSignature(keccak_256(body), fromHex(found.viewPublic), signature)).toBe(true);
+    });
+  }
+
+  it('accepts the unsigned transaction set Monero signed', () => {
+    const { body, signature } = envelope(unsigned.file, 'Monero unsigned tx set');
+    const viewPublic = publicFromSecret(fromHex(unsigned.viewSecret));
+    expect(checkSignature(keccak_256(body), viewPublic, signature)).toBe(true);
+  });
+
+  it('rejects every single-byte change to the signature', () => {
+    /* The test that makes acceptance mean something. Accepting one signature
+     * is a property a function that returns `true` also has. */
+    const found = keyImages.cases.find((c) => c.name === 'two')!;
+    const { body, signature } = envelope(found.file, 'Monero key image export');
+    const message = keccak_256(body);
+    const key = fromHex(found.viewPublic);
+
+    for (let at = 0; at < 64; at++) {
+      const bent = Uint8Array.from(signature);
+      bent[at] = (bent[at]! + 1) & 0xff;
+      expect(checkSignature(message, key, bent), `byte ${at} of the signature`).toBe(false);
+    }
+  });
+
+  it('rejects a changed message and a changed key', () => {
+    const found = keyImages.cases.find((c) => c.name === 'two')!;
+    const { body, signature } = envelope(found.file, 'Monero key image export');
+    const message = keccak_256(body);
+    const key = fromHex(found.viewPublic);
+    expect(checkSignature(message, key, signature)).toBe(true);
+
+    const otherMessage = Uint8Array.from(message);
+    otherMessage[7] = (otherMessage[7]! ^ 0x01) & 0xff;
+    expect(checkSignature(otherMessage, key, signature)).toBe(false);
+
+    /* A different but perfectly valid public key. The signature is over this
+     * message; it is not over it *for that key*. */
+    expect(checkSignature(message, publicFromSecret(scalar(3)), signature)).toBe(false);
+  });
+
+  it('rejects a signature whose scalars are not canonical', () => {
+    /* `sc_check`. A verifier that reduced instead would accept `c + L` as well
+     * as `c`, which turns one signature into many for the same message. */
+    const found = keyImages.cases.find((c) => c.name === 'two')!;
+    const { body, signature } = envelope(found.file, 'Monero key image export');
+    const message = keccak_256(body);
+    const key = fromHex(found.viewPublic);
+
+    const shift = (start: number) => {
+      const bent = Uint8Array.from(signature);
+      let n = 0n;
+      for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(bent[start + i]!);
+      let plus = n + L;
+      for (let i = 0; i < 32; i++) {
+        bent[start + i] = Number(plus & 0xffn);
+        plus >>= 8n;
+      }
+      return bent;
+    };
+    expect(checkSignature(message, key, shift(0)), 'c + L was accepted').toBe(false);
+    expect(checkSignature(message, key, shift(32)), 'r + L was accepted').toBe(false);
+  });
+
+  it('rejects the shapes that are not signatures at all', () => {
+    const key = publicFromSecret(scalar(9));
+    const message = keccak_256(new Uint8Array(8));
+    expect(checkSignature(message, key, new Uint8Array(63))).toBe(false);
+    expect(checkSignature(message, key, new Uint8Array(65))).toBe(false);
+    expect(checkSignature(message, new Uint8Array(31), new Uint8Array(64))).toBe(false);
+    expect(checkSignature(new Uint8Array(31), key, new Uint8Array(64))).toBe(false);
+    // All zeroes: c is zero, which Monero refuses before doing any arithmetic.
+    expect(checkSignature(message, key, new Uint8Array(64))).toBe(false);
+    // A public key that is not a point at all.
+    expect(checkSignature(message, new Uint8Array(32).fill(0xff), new Uint8Array(64))).toBe(false);
+  });
+
+  it('rejects the signature whose commitment is the identity point', () => {
+    /* ## The one check a round trip can never justify
+     *
+     * Upstream's `check_signature` ends with
+     *
+     *     if (memcmp(&buf.comm, &infinity_point, sizeof(buf.comm)) == 0)
+     *       return false;
+     *
+     * and a verifier written by inverting the signer would not have it: an
+     * honest signature never produces the identity, so nothing in a
+     * sign-then-verify test ever reaches that line. Deleting it from this
+     * repository broke no test, which is how this one came to exist.
+     *
+     * The signature below is constructed rather than signed. Take the
+     * challenge the identity commitment hashes to, then choose `r` so that
+     * `c·P + r·G` really is the identity. Both scalars are canonical, `c` is
+     * non-zero, and a verifier missing that last line accepts it, because the
+     * commitment it hashes is exactly the one the challenge came from.
+     *
+     * It is not a forgery: building it needs the secret key, so it
+     * demonstrates no attack. What it demonstrates is the thing that matters
+     * here, which is *disagreement*. Monero rejects this signature. A vault
+     * that accepts an envelope real Monero software rejects is a vault reading
+     * files nobody else would.
+     */
+    const secretBytes = scalar(57);
+    const publicKey = publicFromSecret(secretBytes);
+    const message = keccak_256(new Uint8Array([9, 9, 9]));
+
+    const leToBigInt = (bytes: Uint8Array): bigint => {
+      let n = 0n;
+      for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]!);
+      return n;
+    };
+    const bigIntToLe = (value: bigint): Uint8Array => {
+      const out = new Uint8Array(32);
+      let n = ((value % L) + L) % L;
+      for (let i = 0; i < 32; i++) {
+        out[i] = Number(n & 0xffn);
+        n >>= 8n;
+      }
+      return out;
+    };
+
+    /* `ge_tobytes` of the identity: y = 1, sign bit clear. */
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+
+    const buf = new Uint8Array(96);
+    buf.set(message, 0);
+    buf.set(publicKey, 32);
+    buf.set(identity, 64);
+    const c = leToBigInt(hashToScalar(buf)) % L;
+    expect(c, 'the constructed challenge is zero, so this would prove nothing').not.toBe(0n);
+
+    const x = leToBigInt(secretBytes);
+    // r = -c·x, so that c·P + r·G = c·x·G - c·x·G = the identity.
+    const r = (L - ((c * x) % L)) % L;
+
+    /* The premise, asserted, so a mistake in the construction shows up as a
+     * failing premise rather than as a test that passes for the wrong reason. */
+    expect(
+      Point.BASE.multiply((c * x) % L).add(Point.BASE.multiply(r)).toBytes(),
+      'the constructed commitment is not the identity',
+    ).toEqual(identity);
+
+    const forged = new Uint8Array(64);
+    forged.set(bigIntToLe(c), 0);
+    forged.set(bigIntToLe(r), 32);
+    expect(checkSignature(message, publicKey, forged)).toBe(false);
+  });
+
+  it("agrees with this repository's own signer, both ways", () => {
+    /* The round trip, kept as well as the oracle check rather than instead of
+     * it. It is what catches a verifier and a signer drifting together. */
+    const secret = scalar(21);
+    const publicKey = publicFromSecret(secret);
+    const message = keccak_256(new Uint8Array([1, 2, 3, 4]));
+    const sig = legacySignatureBytes(generateSignature(message, publicKey, secret, scalar(44)));
+    expect(checkSignature(message, publicKey, sig)).toBe(true);
   });
 });

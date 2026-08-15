@@ -185,6 +185,36 @@ The last point on that screen is the one that keeps it from being a dead end:
 it names the route that does work, which is to start the payment in the
 Labyrinth wallet and let the vault check it before anybody approves anything.
 
+## Done since: the envelope signature is checked
+
+`encrypt_with_view_secret_key` puts a 64-byte `crypto::generate_signature`
+over `cn_fast_hash(iv || ciphertext)` on every one of these files, and for
+several commits this repository said, in three places, that verifying it
+"needs `check_signature`, which this repository does not have and which would
+be a second implementation of a verifier with nothing to check it against".
+
+The first half was true. The second stopped being true the moment `oracle/`
+was committed: the harness signs with Monero's own `generate_signature`, with
+the RNG stubbed to a counter, and the fixtures carry the result. So
+`checkSignature` in `src/keys/monerosign.ts` is written from `crypto.cpp` and
+held to Monero's bytes, plus the harder standard that every single-byte
+mutation of the signature, the message and the public key is rejected.
+
+Why it is worth having, precisely. ChaCha20 carries no authentication tag, so
+decryption cannot fail: a wrong key produces the wrong plaintext rather than an
+error, and every check downstream was really a question about whether the
+result looked plausible. A file altered in transit decrypted to different
+plaintext and the vault described whatever that turned out to mean. Both are
+now refused before anything is decrypted, and the order is deliberate:
+verifying needs no CryptoNight, so a build without it can still say the file
+belongs to another wallet rather than reporting the one failure it always has.
+
+What it does not buy is any claim about the contents. The signature says a
+wallet holding your view key wrote this file. A watch-only companion holds your
+view key, because holding it is what makes it a companion, and a compromised
+companion holds it too. The read-only screen says both halves in one paragraph
+so that neither can be read alone.
+
 ## What is not built
 
 Two layers, in the order they have to be built.
@@ -310,11 +340,14 @@ half-built.
    `moneroFile` on the bridge, and a read-only screen. Listed as its own step
    because it was briefly skipped, and a reader with no route to it is
    indistinguishable from no reader at all.
-6. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
+6. ~~The envelope signature~~. Done, in `checkSignature`, against signatures
+   Monero's own `generate_signature` produced. It was named as impossible for
+   want of an oracle, and the oracle arrived.
+7. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
    then end to end against a daemon on testnet, then stagenet, before anything
    touches mainnet.
 
-Step 6 also needs the thing the Bitcoin side already has: a confirmation screen
+Step 7 also needs the thing the Bitcoin side already has: a confirmation screen
 that shows what is actually being signed, re-derived from the vault's own keys
 rather than read from the file. That is the security, and it does not come free
 with the signature.

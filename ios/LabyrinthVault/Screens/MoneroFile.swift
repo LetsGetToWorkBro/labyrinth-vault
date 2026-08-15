@@ -118,14 +118,23 @@ struct MoneroFileView: View {
                  + "figure below is what the wallet that wrote the file says about itself. "
                  + "A wallet that lied about where the money goes would produce a file that "
                  + "reads exactly like this one.\n\n"
-                 /* Opening it feels like proof of origin and is not, so the
-                  * screen says the smaller true thing rather than letting the
-                  * larger false one stand. Monero puts a 64-byte signature on
-                  * these files; this build does not check it. What opening one
-                  * shows is that whoever wrote it held your view key. */
-                 + "Nor is opening it proof of where it came from. These files carry a "
-                 + "signature and the vault does not check it. All that opening one shows "
-                 + "is that whoever wrote it had your view key.")
+                 /* The distinction this paragraph exists to hold: the file's
+                  * origin is checked and its contents are not.
+                  *
+                  * These files carry a 64-byte signature over the encrypted
+                  * body, and the vault verifies it before decrypting anything
+                  * (`openViewSecretEnvelope`). That is a real check with a
+                  * real consequence — a file from another wallet, or one
+                  * altered on the way, does not reach this screen at all — and
+                  * it is exactly as far as it goes. A watch-only companion
+                  * holds your view key, because holding it is what makes it a
+                  * companion, so a compromised one signs perfectly valid files
+                  * full of whatever it likes. The screen says both halves in
+                  * the same breath so that neither can be read alone. */
+                 + "What the vault did check is where the file came from. These are signed, "
+                 + "and this one's signature is one only a wallet holding your view key could "
+                 + "have made, so it was not altered on the way here. That says who wrote it. "
+                 + "It says nothing about whether what they wrote is true.")
         }
         .padding(.top, 24)
     }

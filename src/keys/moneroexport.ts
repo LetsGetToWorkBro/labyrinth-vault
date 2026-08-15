@@ -58,6 +58,7 @@ import { chacha20orig } from '@noble/ciphers/chacha.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import {
+  checkSignature,
   generateRingSignatureOfOne,
   generateSignature,
   legacySignatureBytes,
@@ -280,36 +281,105 @@ const scalar = (bytes: Uint8Array): bigint => {
   return n % L;
 };
 
+/** Why an envelope did not open. Kept apart because they mean different
+ *  things to whoever is holding the file. */
+export type EnvelopeRefusal =
+  /** Too short, or not the shape of an envelope at all. */
+  | 'malformed'
+  /** The signature does not check against this vault's view public key. */
+  | 'not-this-wallet'
+  /** No CryptoNight, so the ChaCha20 key cannot be derived. */
+  | 'no-cryptonight';
+
+export interface EnvelopeResult {
+  ok: boolean;
+  plaintext?: Uint8Array;
+  reason?: EnvelopeRefusal;
+  /** A sentence a screen can show. Present whenever `ok` is false. */
+  problem?: string;
+}
+
 /**
- * Undo `wallet2::encrypt_with_view_secret_key`.
+ * Undo `wallet2::encrypt_with_view_secret_key`, and check that it was written
+ * by something holding this vault's view secret key.
  *
  * The same envelope wraps the key-image export and the unsigned transaction
  * set, which is why this is a function rather than two copies: an 8-byte IV, a
- * ChaCha20 body under the CryptoNight-derived key, and a 64-byte signature.
+ * ChaCha20 body under the CryptoNight-derived key, and a 64-byte signature
+ * over `cn_fast_hash(iv || ciphertext)`.
  *
- * The signature is **not** verified, and that is worth stating rather than
- * leaving to be discovered. Checking it needs `check_signature`, which this
- * repository does not have and which would be a second implementation of a
- * verifier with nothing to check it against. What callers get instead is that
- * the plaintext has to make sense: the key-image blob has to contain the view
- * public key this secret implies, and the transaction set has to parse as an
- * archive and consume every byte. A blob that fails those was not made under
- * this key. That is a weaker claim than authentication and it is the true one.
+ * ## The signature is checked now, and it was not before
  *
- * Returns null on anything malformed, never throws.
+ * This function used to say the signature was "not verified", that checking it
+ * needed `check_signature`, and that a verifier here would have "nothing to
+ * check it against". Accurate when written; it stopped being accurate when
+ * `oracle/` was committed. The harness signs with Monero's own
+ * `crypto::generate_signature` and the fixtures carry the result, so
+ * `checkSignature` in `monerosign.ts` is held to Monero's bytes and to every
+ * single-byte mutation of them.
+ *
+ * What the check buys, stated exactly. ChaCha20 carries no authentication tag,
+ * so decryption cannot fail: a wrong key yields the wrong plaintext rather
+ * than an error, and every guard downstream was really a question about
+ * whether the result looked plausible. A file not written under this view
+ * secret is now rejected before it is decrypted at all.
+ *
+ * What it does **not** buy: any claim that the contents are true. The
+ * signature says a wallet holding your view key wrote this. A watch-only
+ * companion holds your view key, because that is what one is for, and a
+ * compromised companion holds it too. What a `tx_construction_data` says about
+ * where money goes is still that wallet's own account of itself.
+ *
+ * ## Order, which is deliberate
+ *
+ * Signature first, decryption second. Verifying needs no CryptoNight, so a
+ * build without it can still tell somebody the file belongs to another wallet
+ * instead of reporting the one failure it always has. It is also far the
+ * cheaper of the two, and the only one of them that can reject.
+ *
+ * Never throws.
  */
-export function decryptWithViewSecretKey(
+export function openViewSecretEnvelope(
   body: Uint8Array,
   viewSecret: Uint8Array,
   kdfRounds = 1,
-): Uint8Array | null {
-  if (body.length < IV_BYTES + SIGNATURE_BYTES) return null;
-  const iv = body.subarray(0, IV_BYTES);
-  const ciphertext = body.subarray(IV_BYTES, body.length - SIGNATURE_BYTES);
+): EnvelopeResult {
+  if (viewSecret.length !== 32 || body.length < IV_BYTES + SIGNATURE_BYTES) {
+    return {
+      ok: false,
+      reason: 'malformed',
+      problem: 'That is too short to be a Monero wallet file.',
+    };
+  }
+  const signed = body.subarray(0, body.length - SIGNATURE_BYTES);
+  const signature = body.subarray(body.length - SIGNATURE_BYTES);
+
+  const viewPublic = ed25519.Point.BASE.multiply(scalar(viewSecret)).toBytes();
+  if (!checkSignature(keccak_256(signed), viewPublic, signature)) {
+    return {
+      ok: false,
+      reason: 'not-this-wallet',
+      problem:
+        'That file carries a signature, and it is not one this vault could have made. It ' +
+        'belongs to a different wallet, or it was damaged on the way here.',
+    };
+  }
+
+  const iv = signed.subarray(0, IV_BYTES);
+  const ciphertext = signed.subarray(IV_BYTES);
   try {
-    return chacha20orig(chachaKeyFor(viewSecret, kdfRounds), iv, ciphertext);
+    return {
+      ok: true,
+      plaintext: chacha20orig(chachaKeyFor(viewSecret, kdfRounds), iv, ciphertext),
+    };
   } catch {
-    return null;
+    return {
+      ok: false,
+      reason: 'no-cryptonight',
+      problem:
+        "That file is this wallet's, and this build cannot open it: the key to its contents " +
+        'comes from CryptoNight, which did not load.',
+    };
   }
 }
 
@@ -330,14 +400,12 @@ export interface ImportedKeyImages {
  * reading. This is the path a file or a camera reaches, so every branch that
  * could yield a plausible-but-wrong answer has to yield nothing instead.
  *
- * The outer signature is **not** verified here. Verifying it needs
- * `check_signature`, which this repository does not have and which would be a
- * second implementation of a verifier with nothing to check it against. What
- * is checked is that the ciphertext decrypts to a plaintext of exactly the
- * right shape, with the view public key the secret implies. A blob that fails
- * that was not made under this key. Stated rather than implied, because "it
- * decrypted" is a weaker claim than "it was authenticated" and the two are
- * easy to conflate.
+ * The outer signature **is** verified now, by `openViewSecretEnvelope`, which
+ * is also where the argument for what that does and does not prove lives. The
+ * plaintext check below is kept anyway rather than replaced: it is a different
+ * question (does this decrypt to the right *shape*, under the key we think),
+ * it costs one scalar multiplication, and two independent reasons to refuse a
+ * blob is the right number for a file that decides what a balance says.
  */
 export function readKeyImageBlob(file: Uint8Array, viewSecret: Uint8Array, kdfRounds = 1): ImportedKeyImages | null {
   if (viewSecret.length !== 32) return null;
@@ -348,7 +416,6 @@ export function readKeyImageBlob(file: Uint8Array, viewSecret: Uint8Array, kdfRo
     if (file[i] !== MAGIC_BYTES[i]) return null;
   }
 
-  const iv = file.subarray(MAGIC_BYTES.length, MAGIC_BYTES.length + IV_BYTES);
   const ciphertext = file.subarray(MAGIC_BYTES.length + IV_BYTES, file.length - SIGNATURE_BYTES);
   if (ciphertext.length < HEADER_BYTES) return null;
 
@@ -357,21 +424,18 @@ export function readKeyImageBlob(file: Uint8Array, viewSecret: Uint8Array, kdfRo
   const count = bodyLength / RECORD_BYTES;
   if (count > MAX_IMAGES) return null;
 
-  let chachaKey: Uint8Array;
-  try {
-    chachaKey = chachaKeyFor(viewSecret, kdfRounds);
-  } catch {
-    return null;
-  }
-  const plaintext = chacha20orig(chachaKey, iv, ciphertext);
+  const opened = openViewSecretEnvelope(file.subarray(MAGIC_BYTES.length), viewSecret, kdfRounds);
+  if (!opened.ok || !opened.plaintext) return null;
+  const plaintext = opened.plaintext;
 
   const offset =
     plaintext[0]! | (plaintext[1]! << 8) | (plaintext[2]! << 16) | (plaintext[3]! * 0x1000000);
   const spendPublic = plaintext.slice(4, 36);
   const viewPublic = plaintext.slice(36, 68);
 
-  /* The one check that the key was right. A wrong key gives random bytes here,
-   * and random bytes are not the view public key this secret produces. */
+  /* The second, independent check that the key was right. A wrong key gives
+   * random bytes here, and random bytes are not the view public key this
+   * secret produces. */
   const expected = ed25519.Point.BASE.multiply(scalar(viewSecret)).toBytes();
   for (let i = 0; i < 32; i++) {
     if (viewPublic[i] !== expected[i]) return null;

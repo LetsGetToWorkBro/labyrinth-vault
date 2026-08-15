@@ -34,7 +34,7 @@
  */
 
 import { ArchiveError, BinaryArchive } from './binaryarchive';
-import { decryptWithViewSecretKey } from './moneroexport';
+import { openViewSecretEnvelope } from './moneroexport';
 
 /** `"Monero unsigned tx set"`, then a version byte. wallet2.cpp:114. */
 export const UNSIGNED_TX_MAGIC = 'Monero unsigned tx set';
@@ -341,48 +341,39 @@ export function readUnsignedTxSetFile(
     }
   }
 
-  const plaintext = decryptWithViewSecretKey(file.subarray(MAGIC_BYTES.length), viewSecret, kdfRounds);
-  if (!plaintext) {
-    return {
-      ok: false,
-      problem:
-        'That unsigned transaction set could not be decrypted with this vault key. Either it ' +
-        'belongs to another wallet, or this build has no CryptoNight.',
-    };
+  /* The envelope is opened rather than merely decrypted: the 64-byte
+   * signature is checked against this vault's view public key first, so a file
+   * belonging to somebody else is refused here with those words rather than
+   * decrypted into noise and mis-described further down. See
+   * `openViewSecretEnvelope` for exactly what that check does and does not
+   * prove, and for what this code said before it existed. */
+  const opened = openViewSecretEnvelope(file.subarray(MAGIC_BYTES.length), viewSecret, kdfRounds);
+  if (!opened.ok || !opened.plaintext) {
+    return { ok: false, problem: opened.problem ?? 'That unsigned transaction set did not open.' };
   }
 
-  const read = readUnsignedTxSetArchive(plaintext);
+  const read = readUnsignedTxSetArchive(opened.plaintext);
   if (read.ok) return read;
 
-  /* ## Why the archive's own sentence is not enough here
+  /* ## A failure this far in means something narrower than it used to
    *
-   * `encrypt_with_view_secret_key` is ChaCha20 and a signature this reader
-   * does not check, so decryption cannot fail: a wrong key produces the wrong
-   * plaintext, not an error. What comes back is noise, and noise gets read as
-   * an archive.
+   * The signature has already checked, so this is not somebody else's file and
+   * it is not a corrupted one either: the bytes are what a wallet holding this
+   * view key wrote, and the reader could not make sense of them. That is a
+   * format this build does not read, or a genuine defect in the reader.
    *
-   * That is not hypothetical and the shape of it matters. A file from another
-   * wallet decrypted here read its first varint as 87 and the reader
-   * announced "an unsigned transaction set at archive version 87, and this
-   * build reads 2" — a precise, confident sentence about a format, describing
-   * a file whose format was fine. Somebody reading it goes looking for a
-   * newer Monero, or files a bug about a version that does not exist.
-   *
-   * So every failure past the decryption carries the ambiguity with it. The
-   * reader's sentence is kept, because when the key *is* right it is the
-   * accurate one and it names the byte; what is added is the fact that this
-   * layer cannot distinguish the two cases. Nothing here can: telling a
-   * damaged file from somebody else's file is what the 64-byte signature is
-   * for, and checking it is a separate piece of work (`check_signature`) that
-   * this build has not done. Claiming the distinction without it would be
-   * inventing a fact. */
+   * Before the signature was checked, this branch had to carry an ambiguity,
+   * and the reason is worth keeping: a file from another wallet decrypted to
+   * noise whose first varint read as 87, and the reader announced "an unsigned
+   * transaction set at archive version 87, and this build reads 2" — a
+   * precise, confident sentence about a format, describing a file whose format
+   * was fine. Somebody reading that goes looking for a newer Monero. The check
+   * is what made the sentence trustworthy rather than a hedge. */
   return {
     ok: false,
     problem:
-      `${read.problem} This far in, the vault cannot tell that apart from a file belonging ` +
-      'to another wallet: the envelope is decrypted with a key derived from the view secret ' +
-      'and nothing in it is authenticated, so somebody else\'s file decrypts to noise that ' +
-      'gets read as a damaged one.',
+      `${read.problem} The file's signature checked out, so these are bytes a wallet holding ` +
+      'your view key wrote; what this build cannot do is read them.',
   };
 }
 

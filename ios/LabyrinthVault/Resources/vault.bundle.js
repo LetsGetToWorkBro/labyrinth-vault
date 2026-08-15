@@ -3456,14 +3456,14 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       }
       if (bytes.length !== BYTES)
         throw new Error("Field.fromBytes: expected " + BYTES + " bytes, got " + bytes.length);
-      let scalar = isLE3 ? bytesToNumberLE(bytes) : bytesToNumberBE(bytes);
+      let scalar2 = isLE3 ? bytesToNumberLE(bytes) : bytesToNumberBE(bytes);
       if (modFromBytes)
-        scalar = mod(scalar, ORDER);
+        scalar2 = mod(scalar2, ORDER);
       if (!skipValidation) {
-        if (!this.isValid(scalar))
+        if (!this.isValid(scalar2))
           throw new Error("invalid field element: outside of range 0..ORDER");
       }
-      return scalar;
+      return scalar2;
     }
     // TODO: we don't need it here, move out to separate fn
     invertBatch(lst) {
@@ -3732,9 +3732,9 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     // Shared prologue of the constant-time entry points. Rejects scalar 0: in key/signature-style
     // callers a zero scalar means broken upstream plumbing, and concrete Points already reject it.
     // Uses inRange instead of Fn.isValidNot0: validateField() only certifies the arithmetic subset.
-    validateMulInput(point, scalar) {
+    validateMulInput(point, scalar2) {
       this.assertPoint(point);
-      if (!inRange(scalar, _1n4, this.Point.Fn.ORDER))
+      if (!inRange(scalar2, _1n4, this.Point.Fn.ORDER))
         throw new Error("invalid scalar");
     }
     // Constant-time dispatch shared by mulCT / mulCTBlinded. Un-precomputed points (W===1, e.g.
@@ -3746,12 +3746,12 @@ globalThis.TextDecoder.prototype.decode = function (input) {
         return this.fixedWindowCT(point, n, bits);
       return this.wnafCachedCT(this.getWnafPrecomputes(W, point, bits, transform), n);
     }
-    mulCT(point, scalar, transform) {
-      this.validateMulInput(point, scalar);
-      return this.runCT(point, scalar, this.bits, transform);
+    mulCT(point, scalar2, transform) {
+      this.validateMulInput(point, scalar2);
+      return this.runCT(point, scalar2, this.bits, transform);
     }
-    mulCTBlinded(point, scalar, transform) {
-      this.validateMulInput(point, scalar);
+    mulCTBlinded(point, scalar2, transform) {
+      this.validateMulInput(point, scalar2);
       if (this.randomBytes === void 0)
         throw new Error("randomBytes is required for scalar blinding");
       const bits = this.Point.Fn.BITS + BLIND_BITS;
@@ -3759,7 +3759,7 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       if (!isBytes3(blind) || blind.length !== BLIND_BYTES)
         throw new Error("randomBytes returned invalid byte array");
       blind[0] = blind[0] & 63 | 128;
-      const n = scalar + bytesToNumberBE(blind) * this.Point.Fn.ORDER;
+      const n = scalar2 + bytesToNumberBE(blind) * this.Point.Fn.ORDER;
       return this.runCT(point, n, bits, transform);
     }
     /**
@@ -3810,18 +3810,18 @@ globalThis.TextDecoder.prototype.decode = function (input) {
         this.baseCanBeBlinded = this.mulUnsafe(this.BASE, this.Point.Fn.ORDER).is0();
       return this.baseCanBeBlinded;
     }
-    mulSecret(point, scalar, cofactor, transform) {
-      return this.shouldBlind(point, cofactor) ? this.mulCTBlinded(point, scalar, transform) : this.mulCT(point, scalar, transform);
+    mulSecret(point, scalar2, cofactor, transform) {
+      return this.shouldBlind(point, cofactor) ? this.mulCTBlinded(point, scalar2, transform) : this.mulCT(point, scalar2, transform);
     }
-    mulUnsafe(point, scalar, transform) {
+    mulUnsafe(point, scalar2, transform) {
       this.assertPoint(point);
-      if (!isPosBig(scalar))
+      if (!isPosBig(scalar2))
         throw new Error("invalid scalar");
       const W = getWindowSize(point);
-      if (W === 1 || scalar >= this.Point.Fn.ORDER)
-        return mulAddUnsafe(this.Point, [point], [scalar], true);
+      if (W === 1 || scalar2 >= this.Point.Fn.ORDER)
+        return mulAddUnsafe(this.Point, [point], [scalar2], true);
       const precomputes = this.getWnafPrecomputes(W, point, this.bits, transform);
-      return this.wnafCachedCT(precomputes, scalar).p;
+      return this.wnafCachedCT(precomputes, scalar2).p;
     }
     // Remembers the window size used for precomputed wNAF multiplication of the given point
     // and drops any previously built tables. Usually only the base point is precomputed.
@@ -4098,10 +4098,10 @@ globalThis.TextDecoder.prototype.decode = function (input) {
         return this.add(other.negate());
       }
       // Constant-time multiplication.
-      multiply(scalar) {
-        if (!Fn3.isValidNot0(scalar))
+      multiply(scalar2) {
+        if (!Fn3.isValidNot0(scalar2))
           throw new RangeError("invalid scalar: expected 1 <= sc < curve.n");
-        const { p, f } = wnaf.mulSecret(this, scalar, cofactor, normalize3);
+        const { p, f } = wnaf.mulSecret(this, scalar2, cofactor, normalize3);
         return normalize3([p, f])[0];
       }
       // Non-constant-time multiplication. Uses double-and-add algorithm.
@@ -4109,14 +4109,14 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       // an exposed private key e.g. sig verification.
       // Keeps the same subgroup-scalar contract: 0 is allowed for public-scalar callers, but
       // n and larger values are rejected instead of being reduced mod n to the identity point.
-      multiplyUnsafe(scalar) {
-        if (!Fn3.isValid(scalar))
+      multiplyUnsafe(scalar2) {
+        if (!Fn3.isValid(scalar2))
           throw new RangeError("invalid scalar: expected 0 <= sc < curve.n");
-        if (scalar === _0n5)
+        if (scalar2 === _0n5)
           return _Point.ZERO;
-        if (this.is0() || scalar === _1n5)
+        if (this.is0() || scalar2 === _1n5)
           return this;
-        return wnaf.mulUnsafe(this, scalar, normalize3);
+        return wnaf.mulUnsafe(this, scalar2, normalize3);
       }
       // Checks if point is of small order.
       // If you add something to small order point, you will have "dirty"
@@ -4231,14 +4231,14 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       const hashed = abytes3(hash(key), 2 * len, "hashedSecretKey");
       const head2 = adjustScalarBytes2(hashed.slice(0, len));
       const prefix2 = hashed.slice(len, 2 * len);
-      const scalar = modN_LE(head2);
-      return { head: head2, prefix: prefix2, scalar };
+      const scalar2 = modN_LE(head2);
+      return { head: head2, prefix: prefix2, scalar: scalar2 };
     }
     function getExtendedPublicKey(secretKey) {
-      const { head: head2, prefix: prefix2, scalar } = getPrivateScalar(secretKey);
-      const point = BASE.multiply(scalar);
+      const { head: head2, prefix: prefix2, scalar: scalar2 } = getPrivateScalar(secretKey);
+      const point = BASE.multiply(scalar2);
       const pointBytes = point.toBytes();
-      return { head: head2, prefix: prefix2, scalar, point, pointBytes };
+      return { head: head2, prefix: prefix2, scalar: scalar2, point, pointBytes };
     }
     function getPublicKey(secretKey) {
       return getExtendedPublicKey(secretKey).pointBytes;
@@ -4252,11 +4252,11 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       msg = abytes3(msg, void 0, "message");
       if (prehash)
         msg = prehash(msg);
-      const { prefix: prefix2, scalar, pointBytes } = getExtendedPublicKey(secretKey);
+      const { prefix: prefix2, scalar: scalar2, pointBytes } = getExtendedPublicKey(secretKey);
       const r = hashDomainToScalar(options.context, prefix2, msg);
       const R = BASE.multiply(r).toBytes();
       const k = hashDomainToScalar(options.context, R, pointBytes, msg);
-      const s = Fn3.create(r + k * scalar);
+      const s = Fn3.create(r + k * scalar2);
       if (!Fn3.isValid(s))
         throw new Error("sign failed: invalid s");
       const rs = concatBytes2(R, Fn3.toBytes(s));
@@ -6099,9 +6099,9 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     return fromBigIntLE(toBigIntLE(bytes) % L, 32);
   }
   function publicFromSecret(secret) {
-    const scalar = toBigIntLE(secret) % L;
-    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
-    return Point.BASE.multiply(scalar).toBytes();
+    const scalar2 = toBigIntLE(secret) % L;
+    if (scalar2 === 0n) throw new Error("That secret key is zero, which is not usable.");
+    return Point.BASE.multiply(scalar2).toBytes();
   }
   function keysFromSeed(seed) {
     if (seed.length !== 32) throw new Error("A seed is 32 bytes.");
@@ -6508,9 +6508,9 @@ globalThis.TextDecoder.prototype.decode = function (input) {
   }
   function generateKeyDerivation(publicKey, secret) {
     const point = Point2.fromBytes(expect32(publicKey, "public key"));
-    const scalar = toBigIntLE2(expect32(secret, "secret key")) % L2;
-    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
-    return point.multiply(scalar).multiplyUnsafe(8n).toBytes();
+    const scalar2 = toBigIntLE2(expect32(secret, "secret key")) % L2;
+    if (scalar2 === 0n) throw new Error("That secret key is zero, which is not usable.");
+    return point.multiply(scalar2).multiplyUnsafe(8n).toBytes();
   }
   function writeVarint(value) {
     if (!Number.isInteger(value) || value < 0 || !Number.isSafeInteger(value)) {
@@ -6544,15 +6544,15 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     return keccak_256(buffer).subarray(0, 1);
   }
   function derivePublicKey(derivation, outputIndex, base) {
-    const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
-    if (scalar === 0n) throw new Error("That derivation produced a zero scalar.");
+    const scalar2 = toBigIntLE2(derivationToScalar(derivation, outputIndex));
+    if (scalar2 === 0n) throw new Error("That derivation produced a zero scalar.");
     const basePoint = Point2.fromBytes(expect32(base, "public key"));
-    return basePoint.add(Point2.BASE.multiply(scalar)).toBytes();
+    return basePoint.add(Point2.BASE.multiply(scalar2)).toBytes();
   }
   function deriveSecretKey(derivation, outputIndex, baseSecret) {
     expect32(baseSecret, "secret key");
-    const scalar = toBigIntLE2(derivationToScalar(derivation, outputIndex));
-    const sum = (toBigIntLE2(baseSecret) + scalar) % L2;
+    const scalar2 = toBigIntLE2(derivationToScalar(derivation, outputIndex));
+    const sum = (toBigIntLE2(baseSecret) + scalar2) % L2;
     return fromBigIntLE2(sum, 32);
   }
   var SUBADDRESS_DOMAIN = (() => {
@@ -6583,9 +6583,9 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     return point.multiplyUnsafe(8n);
   }
   function generateKeyImage(publicKey, secret) {
-    const scalar = toBigIntLE2(expect32(secret, "secret key")) % L2;
-    if (scalar === 0n) throw new Error("That secret key is zero, which is not usable.");
-    return hashToEc(publicKey).multiply(scalar).toBytes();
+    const scalar2 = toBigIntLE2(expect32(secret, "secret key")) % L2;
+    if (scalar2 === 0n) throw new Error("That secret key is zero, which is not usable.");
+    return hashToEc(publicKey).multiply(scalar2).toBytes();
   }
   var RCT_H = (() => {
     const hashed = keccak_256(Point2.BASE.toBytes());
@@ -6836,6 +6836,37 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       return false;
     }
   }
+  function checkSignature(message, publicKey, signature) {
+    if (message.length !== 32 || publicKey.length !== 32 || signature.length !== 64) return false;
+    const cBytes = signature.subarray(0, 32);
+    const rBytes = signature.subarray(32, 64);
+    if (!isCanonicalScalar(cBytes) || !isCanonicalScalar(rBytes)) return false;
+    const c = scalarFromBytes(cBytes);
+    if (c === 0n) return false;
+    let comm;
+    try {
+      const point = Point3.fromBytes(publicKey).multiply(c).add(Point3.BASE.multiply(scalarFromBytes(rBytes)));
+      comm = point.toBytes();
+    } catch {
+      return false;
+    }
+    if (isIdentityEncoding(comm)) return false;
+    const buf = new Uint8Array(96);
+    buf.set(message, 0);
+    buf.set(publicKey, 32);
+    buf.set(comm, 64);
+    return scalarFromBytes(hashToScalar(buf)) === c;
+  }
+  function isCanonicalScalar(bytes) {
+    let n = 0n;
+    for (let i = 31; i >= 0; i--) n = n << 8n | BigInt(bytes[i]);
+    return n < L3;
+  }
+  function isIdentityEncoding(bytes) {
+    if (bytes[0] !== 1) return false;
+    for (let i = 1; i < 32; i++) if (bytes[i] !== 0) return false;
+    return true;
+  }
 
   // src/keys/moneroexport.ts
   var KEY_IMAGE_MAGIC = "Monero key image export";
@@ -6877,14 +6908,43 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     }
     return digest;
   }
-  function decryptWithViewSecretKey(body, viewSecret, kdfRounds = 1) {
-    if (body.length < IV_BYTES + SIGNATURE_BYTES) return null;
-    const iv = body.subarray(0, IV_BYTES);
-    const ciphertext = body.subarray(IV_BYTES, body.length - SIGNATURE_BYTES);
+  var scalar = (bytes) => {
+    const L6 = 2n ** 252n + 27742317777372353535851937790883648493n;
+    let n = 0n;
+    for (let i = bytes.length - 1; i >= 0; i--) n = n << 8n | BigInt(bytes[i]);
+    return n % L6;
+  };
+  function openViewSecretEnvelope(body, viewSecret, kdfRounds = 1) {
+    if (viewSecret.length !== 32 || body.length < IV_BYTES + SIGNATURE_BYTES) {
+      return {
+        ok: false,
+        reason: "malformed",
+        problem: "That is too short to be a Monero wallet file."
+      };
+    }
+    const signed = body.subarray(0, body.length - SIGNATURE_BYTES);
+    const signature = body.subarray(body.length - SIGNATURE_BYTES);
+    const viewPublic = ed25519.Point.BASE.multiply(scalar(viewSecret)).toBytes();
+    if (!checkSignature(keccak_256(signed), viewPublic, signature)) {
+      return {
+        ok: false,
+        reason: "not-this-wallet",
+        problem: "That file carries a signature, and it is not one this vault could have made. It belongs to a different wallet, or it was damaged on the way here."
+      };
+    }
+    const iv = signed.subarray(0, IV_BYTES);
+    const ciphertext = signed.subarray(IV_BYTES);
     try {
-      return chacha20orig(chachaKeyFor(viewSecret, kdfRounds), iv, ciphertext);
+      return {
+        ok: true,
+        plaintext: chacha20orig(chachaKeyFor(viewSecret, kdfRounds), iv, ciphertext)
+      };
     } catch {
-      return null;
+      return {
+        ok: false,
+        reason: "no-cryptonight",
+        problem: "That file is this wallet's, and this build cannot open it: the key to its contents comes from CryptoNight, which did not load."
+      };
     }
   }
 
@@ -7448,10 +7508,10 @@ globalThis.TextDecoder.prototype.decode = function (input) {
        * @param scalar - by which the point would be multiplied
        * @returns New point
        */
-      multiply(scalar) {
-        if (!Fn3.isValidNot0(scalar))
+      multiply(scalar2) {
+        if (!Fn3.isValidNot0(scalar2))
           throw new RangeError("invalid scalar: out of range");
-        const { p, f } = wnaf.mulSecret(this, scalar, cofactor, normalize3);
+        const { p, f } = wnaf.mulSecret(this, scalar2, cofactor, normalize3);
         return normalize3([p, f])[0];
       }
       /**
@@ -7460,9 +7520,9 @@ globalThis.TextDecoder.prototype.decode = function (input) {
        * It's faster, but should only be used when you don't care about
        * an exposed secret key e.g. sig verification, which works over *public* keys.
        */
-      multiplyUnsafe(scalar) {
+      multiplyUnsafe(scalar2) {
         const p = this;
-        const sc = scalar;
+        const sc = scalar2;
         if (!Fn3.isValid(sc))
           throw new RangeError("invalid scalar: out of range");
         if (sc === _0n7 || p.is0())
@@ -7975,8 +8035,8 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     const d_ = Fn3.fromBytes(abytes3(priv, 32, "secretKey"));
     const p = BASE.multiply(d_);
     const affine = p.toAffine();
-    const scalar = hasEven(affine.y) ? d_ : Fn3.neg(d_);
-    return { scalar, bytes: affineXToBytes(affine) };
+    const scalar2 = hasEven(affine.y) ? d_ : Fn3.neg(d_);
+    return { scalar: scalar2, bytes: affineXToBytes(affine) };
   }
   function lift_x(x) {
     const Fp2 = Fpk1;
@@ -16899,18 +16959,15 @@ zoo`.split("\n"));
         };
       }
     }
-    const plaintext = decryptWithViewSecretKey(file.subarray(MAGIC_BYTES2.length), viewSecret, kdfRounds);
-    if (!plaintext) {
-      return {
-        ok: false,
-        problem: "That unsigned transaction set could not be decrypted with this vault key. Either it belongs to another wallet, or this build has no CryptoNight."
-      };
+    const opened = openViewSecretEnvelope(file.subarray(MAGIC_BYTES2.length), viewSecret, kdfRounds);
+    if (!opened.ok || !opened.plaintext) {
+      return { ok: false, problem: opened.problem ?? "That unsigned transaction set did not open." };
     }
-    const read2 = readUnsignedTxSetArchive(plaintext);
+    const read2 = readUnsignedTxSetArchive(opened.plaintext);
     if (read2.ok) return read2;
     return {
       ok: false,
-      problem: `${read2.problem} This far in, the vault cannot tell that apart from a file belonging to another wallet: the envelope is decrypted with a key derived from the view secret and nothing in it is authenticated, so somebody else's file decrypts to noise that gets read as a damaged one.`
+      problem: `${read2.problem} The file's signature checked out, so these are bytes a wallet holding your view key wrote; what this build cannot do is read them.`
     };
   }
   function outlineTx(tx) {
