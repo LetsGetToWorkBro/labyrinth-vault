@@ -118,6 +118,10 @@ enum EngineReply {
     /// that reads it exports Bitcoin, where it is always present.
     struct Export: Decodable {
         let frames: [String]
+        /// `ur:crypto-account`, for a wallet that is not ours. Nil for Monero,
+        /// which the registry has no type for, and nil for a watch-only
+        /// wallet, which has no master key to fingerprint.
+        let urFrames: [String]?
         let account: Account
         struct Account: Decodable { let zpub: String? }
     }

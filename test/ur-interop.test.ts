@@ -111,3 +111,54 @@ describe('a signed transaction can go back to a wallet that is not ours', () => 
     expect((signed.frames as string[])[0]!.startsWith('LV1:')).toBe(true);
   });
 });
+
+describe('a wallet that is not ours can be paired by camera', () => {
+  /* The other half of interoperating, and the one that comes first in time:
+   * without it there is nothing to send a PSBT *from*. Sparrow and Electrum
+   * set up a watch-only wallet by scanning `ur:crypto-account`, and the vault
+   * offered only its own frames, so pairing meant reading a zpub off the glass
+   * and typing it. */
+  let api: Api;
+
+  beforeAll(() => {
+    const context: Record<string, unknown> = { __labyrinthArgon2id: cheapKdf };
+    runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
+    api = context.LabyrinthVault as Api;
+    const demo = call(api, 'demoUnsigned');
+    expect(demo.ok, demo.problem).toBe(true);
+  });
+
+  it('emits crypto-account frames for Bitcoin', () => {
+    const exported = call(api, 'exportAccount', 'btc');
+    expect(exported.ok, exported.problem as string).toBe(true);
+    expect(Array.isArray(exported.urFrames)).toBe(true);
+    for (const frame of exported.urFrames as string[]) {
+      expect(frame.toLowerCase().startsWith('ur:crypto-account/')).toBe(true);
+    }
+  });
+
+  it('carries the master fingerprint and one wpkh descriptor', () => {
+    const exported = call(api, 'exportAccount', 'btc');
+    const collector = new UrCollector();
+    let progress;
+    for (const frame of exported.urFrames as string[]) progress = collector.offer(frame);
+    expect(progress!.cbor, 'the frames never reassembled').not.toBeNull();
+
+    const hex = Array.from(progress!.cbor!, (b) => b.toString(16).padStart(2, '0')).join('');
+    // a2 = map(2), 01 1a <fingerprint>, 02 81 = one descriptor,
+    // then 308(404(303(...))) as BCR-2020-015 nests them.
+    expect(hex.startsWith('a2011a')).toBe(true);
+    expect(hex).toContain('0281d90134d90194d9012f');
+  });
+
+  it('offers nothing for Monero, because the registry has no type for it', () => {
+    /* An empty answer rather than an invented one. Monero has no
+     * crypto-account equivalent, and a payload shaped like one would be a
+     * promise no wallet can keep. */
+    const exported = call(api, 'exportAccount', 'xmr');
+    expect(exported.ok, exported.problem as string).toBe(true);
+    expect(exported.urFrames).toBeNull();
+    // Its own wire still works.
+    expect((exported.frames as string[]).length).toBeGreaterThan(0);
+  });
+});

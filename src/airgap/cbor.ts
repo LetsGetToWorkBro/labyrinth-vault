@@ -18,6 +18,28 @@
 /** The only things that can appear in a payload this file will read. */
 export type CborValue = number | Uint8Array | CborValue[];
 
+/**
+ * What this file will *write*, which is deliberately more than it will read.
+ *
+ * The narrow reader above is a security argument and it still holds: a signing
+ * device that accepts a richer grammar than it needs is offering a parser to
+ * whoever is holding the other screen. Writing a richer grammar offers nobody
+ * anything. Nothing parses what we emit except the wallet the person chose,
+ * and the alternative to emitting maps and tags is not emitting `crypto-hdkey`
+ * at all, which means no way to pair with Sparrow or Electrum by camera.
+ *
+ * So: maps, tags and booleans on the way out only. `cborRead` is untouched and
+ * still refuses every one of them.
+ */
+export type CborWritable =
+  | number
+  | boolean
+  | Uint8Array
+  | CborWritable[]
+  /** Ordered pairs, because BC-UR's maps have small integer keys in order. */
+  | { map: Array<[number, CborWritable]> }
+  | { tag: number; value: CborWritable };
+
 // ---------------------------------------------------------------------------
 // Writing
 
@@ -64,6 +86,49 @@ function write(value: CborValue, out: number[]): void {
 export function cborEncode(value: CborValue): Uint8Array {
   const out: number[] = [];
   write(value, out);
+  return new Uint8Array(out);
+}
+
+/** Major types beyond the reader's vocabulary, for output only. */
+const MAJOR_MAP = 5;
+const MAJOR_TAG = 6;
+
+function writeRich(value: CborWritable, out: number[]): void {
+  if (value === true || value === false) {
+    // Major 7, simple values 21 and 20.
+    out.push(0xe0 | (value ? 21 : 20));
+    return;
+  }
+  if (typeof value === 'number' || value instanceof Uint8Array) {
+    write(value as CborValue, out);
+    return;
+  }
+  if (Array.isArray(value)) {
+    head(4, value.length, out);
+    for (const item of value) writeRich(item, out);
+    return;
+  }
+  if ('map' in value) {
+    head(MAJOR_MAP, value.map.length, out);
+    for (const [key, item] of value.map) {
+      head(0, key, out);
+      writeRich(item, out);
+    }
+    return;
+  }
+  head(MAJOR_TAG, value.tag, out);
+  writeRich(value.value, out);
+}
+
+/**
+ * Encode a structure with maps and tags in it, for BC-UR's registry types.
+ *
+ * Separate from `cborEncode` so that the narrow type stays the one used by
+ * everything on the receiving path, and reaching for this is a visible choice.
+ */
+export function cborWrite(value: CborWritable): Uint8Array {
+  const out: number[] = [];
+  writeRich(value, out);
   return new Uint8Array(out);
 }
 

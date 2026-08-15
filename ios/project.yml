@@ -61,7 +61,7 @@ targets:
         # orders uploads by and it must rise on every one; scripts/ship.mjs
         # bumps it so that nobody has to remember.
         CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "9"
+        CFBundleVersion: "10"
         # ## The export compliance answer is not here, and that is a retreat
         #
         # `ITSAppUsesNonExemptEncryption: true` was here, answered YES because
@@ -143,7 +143,7 @@ targets:
         # So the display name does the naming and the product keeps the
         # target's name. A space in a path that a build setting has to quote
         # is a cost with no benefit here.
-        CURRENT_PROJECT_VERSION: 9
+        CURRENT_PROJECT_VERSION: 10
         MARKETING_VERSION: 0.1.0
 
   # The contract tests.

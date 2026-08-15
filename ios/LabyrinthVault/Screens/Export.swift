@@ -9,8 +9,25 @@ struct ExportView: View {
     @EnvironmentObject private var vault: Vault
     @State private var revealed = false
 
+    /// Which wallet is going to scan this.
+    ///
+    /// The same choice the signed screen makes, for the same reason: the vault
+    /// cannot know what is pointed at it, and picking wrong is somebody
+    /// holding a phone up to a wallet that will never respond. Before this
+    /// existed, pairing with anything but the Labyrinth wallet meant reading
+    /// the zpub off the glass and typing it.
+    enum Wire: String, CaseIterable {
+        case labyrinth = "LABYRINTH"
+        case account = "SPARROW · ELECTRUM"
+
+        var kind: String { self == .labyrinth ? "ACCOUNT · LV1" : "UR:CRYPTO-ACCOUNT" }
+    }
+
+    @State private var wire: Wire = .labyrinth
+
     /// The real ACCOUNT frames, from the engine's watch-only export.
     @State private var frames: [String] = []
+    @State private var urFrames: [String] = []
     @State private var zpub = ""
     @State private var problem: String?
 
@@ -18,6 +35,7 @@ struct ExportView: View {
         do {
             let exported = try vault.exportAccount(chain: "btc")
             frames = exported.frames
+            urFrames = exported.urFrames ?? []
             zpub = exported.account.zpub ?? ""
         } catch {
             problem = error.localizedDescription
@@ -48,9 +66,30 @@ struct ExportView: View {
                             .padding(.top, 14)
                             .padding(.bottom, 22)
 
-                        QRAperture(frames: frames, interval: 0.9)
+                        HStack(spacing: 0) {
+                            ForEach(Wire.allCases, id: \.rawValue) { option in
+                                Button {
+                                    Haptic.tick()
+                                    wire = option
+                                } label: {
+                                    Text(option.rawValue)
+                                        .font(Type.mono(10))
+                                        .kerning(1.4)
+                                        .foregroundStyle(wire == option ? Ink.void : Ink.paperDim)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 9)
+                                        .background(wire == option ? Ink.paper : Color.clear)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .overlay { Rectangle().strokeBorder(Ink.rule, lineWidth: 1) }
+                        .padding(.bottom, 14)
 
-                        FieldRow(label: "ASSET", value: "BITCOIN").padding(.top, 18)
+                        QRAperture(frames: wire == .labyrinth ? frames : urFrames, interval: 0.9)
+
+                        FieldRow(label: "FORMAT", value: wire.kind).padding(.top, 18)
+                        FieldRow(label: "ASSET", value: "BITCOIN")
                         FieldRow(label: "STANDARD", value: "BIP84")
                         FieldRow(label: "ACCOUNT", value: "0")
                         FieldRow(label: "CONTAINS", value: "PUBLIC KEY ONLY", tone: .verified)

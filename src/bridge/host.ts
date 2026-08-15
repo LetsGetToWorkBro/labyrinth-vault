@@ -48,6 +48,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { encodeParts, type PayloadKind } from '../airgap/envelope';
 import { Scanner } from '../airgap/scanner';
 import { UR_PSBT, UrEncoder } from '../airgap/ur';
+import { bip84Account } from '../airgap/registry';
 import { cborEncode } from '../airgap/cbor';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '../keys/account';
 import { computeKeyImages, encodeKeyImageReply, parseKeyImageRequest } from '../keys/keyimages';
@@ -447,7 +448,35 @@ export const api = {
     const open = requireSession();
     const account = chain === 'xmr' ? moneroAccount(open.xmr) : bitcoinAccount(open.btc);
     const frames = encodeParts('ACCOUNT' satisfies PayloadKind, encodeAccount(account));
-    return done({ account, frames });
+
+    /* ## The other way to be paired with
+     *
+     * `frames` is this project's own wire. `urFrames` is `ur:crypto-account`,
+     * which is what Sparrow, Electrum and the hardware-signer companions scan
+     * to set up a watch-only wallet. Without it, pairing with anything but the
+     * Labyrinth wallet meant reading a zpub off the glass and typing it.
+     *
+     * Bitcoin only, and that is not a gap to be filled later: `crypto-account`
+     * describes Bitcoin output descriptors, and Monero has no equivalent in
+     * the registry. A Monero export stays on this project's own wire because
+     * there is nothing standard to speak.
+     *
+     * Absent for a watch-only wallet, which has no master to fingerprint. The
+     * vault always has the full one; this is the honest shape rather than a
+     * zero somebody would later mistake for a real fingerprint. */
+    let urFrames: string[] | null = null;
+    const btc = open.btc;
+    if (chain !== 'xmr' && btc.masterFingerprint !== undefined
+        && btc.account.publicKey && btc.account.chainCode) {
+      const payload = bip84Account({
+        masterFingerprint: btc.masterFingerprint,
+        keyData: btc.account.publicKey,
+        chainCode: btc.account.chainCode,
+        parentFingerprint: btc.account.parentFingerprint,
+      });
+      urFrames = new UrEncoder('crypto-account', payload).firstPass();
+    }
+    return done({ account, frames, urFrames });
   }),
 
   /**

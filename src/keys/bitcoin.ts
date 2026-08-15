@@ -91,6 +91,20 @@ export interface BtcWallet {
   account: HDKey;
   /** The account's zpub, which is what the companion gets. */
   zpub: string;
+  /**
+   * The BIP32 fingerprint of the *master* key, when this wallet has one.
+   *
+   * Needed to describe this account to anybody else. A descriptor names its
+   * origin as `[fingerprint/84h/0h/0h]`, and the fingerprint there is the
+   * master's, not the account's, so a wallet can recognise the same seed
+   * behind a different account later.
+   *
+   * It was being thrown away: the master is derived, the account taken from
+   * it, and the master dropped in the same expression. Absent for a watch-only
+   * wallet opened from a zpub, which has no master to fingerprint and no way
+   * to invent one.
+   */
+  masterFingerprint?: number;
 }
 
 /**
@@ -153,8 +167,14 @@ export function checkMnemonic(text: string): { ok: boolean; words?: string; prob
 export function openFromMnemonic(words: string): BtcWallet {
   const seed = mnemonicToSeedSync(words);
   try {
-    const account = HDKey.fromMasterSeed(seed, ZPUB_VERSIONS).derive(ACCOUNT_PATH);
-    return { kind: 'full', account, zpub: account.publicExtendedKey };
+    const master = HDKey.fromMasterSeed(seed, ZPUB_VERSIONS);
+    const account = master.derive(ACCOUNT_PATH);
+    return {
+      kind: 'full',
+      account,
+      zpub: account.publicExtendedKey,
+      masterFingerprint: master.fingerprint,
+    };
   } finally {
     /* The BIP39 seed is the master secret; HDKey has copied what it needs, so
      * this intermediate has no reason to outlive the call. The phrase itself

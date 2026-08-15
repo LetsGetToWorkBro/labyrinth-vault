@@ -1463,6 +1463,38 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     write(value, out);
     return new Uint8Array(out);
   }
+  var MAJOR_MAP = 5;
+  var MAJOR_TAG = 6;
+  function writeRich(value, out) {
+    if (value === true || value === false) {
+      out.push(224 | (value ? 21 : 20));
+      return;
+    }
+    if (typeof value === "number" || value instanceof Uint8Array) {
+      write(value, out);
+      return;
+    }
+    if (Array.isArray(value)) {
+      head(4, value.length, out);
+      for (const item of value) writeRich(item, out);
+      return;
+    }
+    if ("map" in value) {
+      head(MAJOR_MAP, value.map.length, out);
+      for (const [key, item] of value.map) {
+        head(0, key, out);
+        writeRich(item, out);
+      }
+      return;
+    }
+    head(MAJOR_TAG, value.tag, out);
+    writeRich(value.value, out);
+  }
+  function cborWrite(value) {
+    const out = [];
+    writeRich(value, out);
+    return new Uint8Array(out);
+  }
   function readHead(bytes, cursor) {
     if (cursor.at >= bytes.length) return null;
     const initial = bytes[cursor.at++];
@@ -2023,6 +2055,51 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       this.ur.reset();
     }
   };
+
+  // src/airgap/registry.ts
+  var TAG_HDKEY = 303;
+  var TAG_KEYPATH = 304;
+  var TAG_OUTPUT = 308;
+  var TAG_WITNESS_PUBLIC_KEY_HASH = 404;
+  function keypath(components, sourceFingerprint) {
+    const flat = [];
+    for (const part of components) {
+      flat.push(part.index);
+      flat.push(part.hardened);
+    }
+    const map = [[1, flat]];
+    if (sourceFingerprint !== void 0) map.push([2, sourceFingerprint]);
+    return { tag: TAG_KEYPATH, value: { map } };
+  }
+  function hdKey(parts) {
+    const map = [
+      [3, parts.keyData],
+      [4, parts.chainCode],
+      [6, keypath(parts.origin.components, parts.origin.sourceFingerprint)]
+    ];
+    if (parts.parentFingerprint !== void 0) map.push([8, parts.parentFingerprint]);
+    return { tag: TAG_HDKEY, value: { map } };
+  }
+  function witnessPublicKeyHashOutput(key) {
+    return { tag: TAG_OUTPUT, value: { tag: TAG_WITNESS_PUBLIC_KEY_HASH, value: key } };
+  }
+  function cryptoAccount(masterFingerprint, outputs) {
+    return cborWrite({ map: [[1, masterFingerprint], [2, outputs]] });
+  }
+  function bip84Account(args) {
+    const components = args.components ?? [
+      { index: 84, hardened: true },
+      { index: 0, hardened: true },
+      { index: 0, hardened: true }
+    ];
+    const key = hdKey({
+      keyData: args.keyData,
+      chainCode: args.chainCode,
+      origin: { components, sourceFingerprint: args.masterFingerprint },
+      parentFingerprint: args.parentFingerprint
+    });
+    return cryptoAccount(args.masterFingerprint, [witnessPublicKeyHashOutput(key)]);
+  }
 
   // node_modules/@noble/curves/utils.js
   /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
@@ -11401,8 +11478,14 @@ zoo`.split("\n"));
   function openFromMnemonic(words) {
     const seed = mnemonicToSeedSync(words);
     try {
-      const account = HDKey.fromMasterSeed(seed, ZPUB_VERSIONS).derive(ACCOUNT_PATH);
-      return { kind: "full", account, zpub: account.publicExtendedKey };
+      const master = HDKey.fromMasterSeed(seed, ZPUB_VERSIONS);
+      const account = master.derive(ACCOUNT_PATH);
+      return {
+        kind: "full",
+        account,
+        zpub: account.publicExtendedKey,
+        masterFingerprint: master.fingerprint
+      };
     } finally {
       wipe(seed);
     }
@@ -17978,7 +18061,18 @@ zoo`.split("\n"));
       const open = requireSession();
       const account = chain2 === "xmr" ? moneroAccount(open.xmr) : bitcoinAccount(open.btc);
       const frames = encodeParts("ACCOUNT", encodeAccount(account));
-      return done({ account, frames });
+      let urFrames = null;
+      const btc = open.btc;
+      if (chain2 !== "xmr" && btc.masterFingerprint !== void 0 && btc.account.publicKey && btc.account.chainCode) {
+        const payload = bip84Account({
+          masterFingerprint: btc.masterFingerprint,
+          keyData: btc.account.publicKey,
+          chainCode: btc.account.chainCode,
+          parentFingerprint: btc.account.parentFingerprint
+        });
+        urFrames = new UrEncoder("crypto-account", payload).firstPass();
+      }
+      return done({ account, frames, urFrames });
     }),
     /**
      * A deterministic demo vault and a real transaction for it, as the frames a
