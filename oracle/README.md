@@ -44,6 +44,8 @@ answer; this is the working.
 | `src/keyimage.cpp` | the key-image export blob, through `wallet2`'s own calls |
 | `src/unsignedtxset.cpp` | a real `unsigned_tx_set`, through Monero's own binary archive |
 | `src/importkeyimages.cpp` | hands our finished file to the real `wallet2::import_key_images` |
+| `src/clsag.cpp` | a CLSAG from `rct::proveRctCLSAGSimple`, and its verdict on ours |
+| `src/verifytx.cpp` | a whole transaction of ours, through the daemon's own verifiers |
 | `src/cryptonight.c` | `cn_slow_hash` at variant 0, from upstream |
 | `src/rng-counter.c` | replaces Monero's RNG with a byte counter |
 | `src/mlock-stub.cpp` | `epee::mlocker`, which only pins pages against swap |
@@ -92,6 +94,34 @@ means everything decidable offline was decided in the file's favour, and the
 wallet's transfers have already been written. So the fixture records those
 transfers, which is the actual evidence. Not "nothing objected" but "record n
 landed on transfer n plus offset".
+
+## What linking the wallet was actually worth
+
+`importkeyimages` was the reason to take on the heavy build. `clsag` and
+`verifytx` came almost free once `rctSigs.cpp` was compiling, and they are the
+ones that found something.
+
+The Monero project ships no fixed CLSAG vector: its own tests generate random
+keys, sign, and verify. So `clsagSign` and `clsagVerify` in this repository
+were each other's only witness, and they shared two mistakes in the
+aggregation hash. A prover and a verifier that share a mistake agree perfectly:
+the round trip was green, every tamper case passed, the whole suite passed, and
+the signatures would have been refused by the network.
+
+`clsag sign` asks `rct::proveRctCLSAGSimple` for the vector that does not
+exist, with the RNG stubbed so it is reproducible, and hands the same counter
+bytes to the TypeScript. `clsag verify` runs `rct::verRctCLSAGSimple` over a
+signature the TypeScript made, which is the direction that matters. `verifytx`
+does the same for a whole transaction, through `parse_and_validate_tx_from_blob`,
+`verRctSemanticsSimple` and `verRctNonSemanticsSimple`.
+
+Two habits are worth copying from this. The harnesses run **negative** cases as
+well as positive ones, because "Monero accepted it" is only interesting beside
+"and here is what Monero refuses". And `verifytx` takes `VERIFYTX_LOG=1`,
+because both verifiers say why they refused at log level 1 and then discard it;
+without that, a rejection is a wall. The first rejection it printed was my own
+harness forgetting that the key image is reconstructed rather than
+deserialized, not the code under test.
 
 ## The RNG stub is not a shortcut
 
@@ -145,11 +175,17 @@ the reference's frames instead would produce a fixture that tests nothing, and
 
 ## What still is not covered
 
-Nothing in here reaches a physical device. The oracle proves our bytes match
-what Electrum, Coldcard's reference and Monero compute, and that Monero's own
-wallet imports our key-image export; it cannot prove a Coldcard Q's camera
-resolves the QR on an iPhone's screen. `docs/testflight.md` is where that gets
-written down once somebody has done it.
+Nothing in here reaches a physical device or a running network. The oracle
+proves our bytes match what Electrum, Coldcard's reference and Monero compute,
+that Monero's own wallet imports our key-image export, and that Monero's own
+consensus verifiers accept a transaction we built. It cannot prove a Coldcard
+Q's camera resolves the QR on an iPhone's screen, and it cannot prove a daemon
+relayed anything: everything a node decides from chain state -- that the ring
+members exist and are old enough, that the key images are unspent, that the fee
+clears the minimum -- is outside what any of this reaches.
+`docs/testflight.md` is where the device half gets written down once somebody
+has done it, and the gate in `wallet/src/core/moneroreadiness.ts` is where the
+network half stays honest.
 
 Nor does it reach a real wallet's user interface. `importkeyimages` is
 `wallet2`, which is the library Cake, Feather and `monero-wallet-cli` are all

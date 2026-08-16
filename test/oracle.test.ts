@@ -11,7 +11,7 @@
  * between sessions, and had to be rebuilt from a fresh clone.
  *
  * That is the failure this file exists to stop repeating. `oracle/` is now
- * committed: a build recipe, five small harness sources, and a regenerator.
+ * committed: a build recipe, the harness sources, and a regenerator.
  * `./oracle/build.sh --check && node oracle/emit.mjs --check` rebuilds every
  * fixture from Monero at the pinned tag and diffs it against what is in the
  * tree, so "these came from Monero" is a claim a reviewer can run rather than
@@ -76,6 +76,8 @@ describe('the oracle rig', () => {
       'oracle/src/mlock-stub.cpp',
       'oracle/src/unreachable.c',
       'oracle/src/importkeyimages.cpp',
+      'oracle/src/verifytx.cpp',
+      'oracle/src/clsag.cpp',
       'oracle/src/wallet-unreachable.cpp',
       'oracle/src/shim/boost/preprocessor/stringize.hpp',
       'oracle/btc.sh',
@@ -353,5 +355,138 @@ describe("Monero's own wallet, importing a file this repository wrote", () => {
     expect(emit).toMatch(/expected \$\{each\.expect\} and wallet2 said/);
     const build = readFileSync('oracle/build.sh', 'utf8');
     expect(build).toContain('src/wallet/wallet2.cpp');
+  });
+});
+
+describe("Monero's own consensus verifiers, on a transaction this repository built", () => {
+  /* The last "unverified" line in docs/monero-send.md, and the one that found
+   * a real defect the moment it ran.
+   *
+   * Everything else in the Monero work compares bytes: our writer against
+   * Monero's writer, our reader against Monero's archive. A whole transaction
+   * could not be compared that way, because there is nothing to compare it to
+   * - the Monero project ships no fixed CLSAG vector, and a Bulletproof+ over
+   * our own commitments has no counterpart anywhere. So the transaction was
+   * checked by our own verifiers, and our own verifiers shared our own
+   * mistakes.
+   *
+   * `oracle/src/verifytx.cpp` links ringct/rctSigs.cpp and runs the two calls
+   * a daemon makes on an arriving transaction, plus the deserializer that
+   * decides whether it is a transaction at all. What it cannot do is anything
+   * that needs chain state: that the ring members exist and are old enough,
+   * that the key images are unspent, that the fee clears the dynamic minimum.
+   * Those still want a node, and the gate in the wallet still says so.
+   */
+  const fixture = JSON.parse(
+    readFileSync('test/fixtures/monero-verify-tx.json', 'utf8'),
+  ) as {
+    set: unknown;
+    randomness: string[];
+    seeds: { sender: string };
+    built: { hex: string; txid: string; weight: number; fee: string; keyImages: string[] };
+    chain: { globalIndex: number; key: string; commitment: string }[];
+    cases: {
+      name: string;
+      parsed: boolean;
+      txid: string | null;
+      weight: number | null;
+      rctType: number | null;
+      keyImages: string[];
+      semanticsOk: boolean;
+      nonSemanticsOk: boolean;
+    }[];
+  };
+
+  const named = (name: string) => {
+    const one = fixture.cases.find((each) => each.name === name);
+    expect(one, `the fixture has no ${name} case`).toBeDefined();
+    return one!;
+  };
+
+  it('deserialized it, and agreed about the id and the weight', () => {
+    const accepted = named('accepted');
+    expect(accepted.parsed).toBe(true);
+    /* Monero's own `get_transaction_hash` over Monero's own deserialization of
+     * our bytes. The serializer was already anchored to three real mainnet
+     * txids; this is the same check on a transaction we constructed rather
+     * than one we parsed. */
+    expect(accepted.txid).toBe(fixture.built.txid);
+    /* And `get_transaction_weight`, which is the number the fee is priced
+     * against - the Bulletproof+ clawback included. */
+    expect(accepted.weight).toBe(fixture.built.weight);
+    /* 6 is RCTTypeBulletproofPlus, which is what the network takes today. */
+    expect(accepted.rctType).toBe(6);
+    expect(accepted.keyImages).toEqual(fixture.built.keyImages);
+  });
+
+  it('accepted the range proofs, the balance, and every signature', () => {
+    const accepted = named('accepted');
+    /* verRctSemanticsSimple: the Bulletproof+ over the output commitments, and
+     * that the pseudo-outs balance the outputs plus the fee. The first outside
+     * opinion this repository's Bulletproof+ *prover* has ever had. */
+    expect(accepted.semanticsOk, 'verRctSemanticsSimple').toBe(true);
+    /* verRctNonSemanticsSimple: every CLSAG against the ring the offsets point
+     * at. This was false the first time it ran, and the reason was a real bug
+     * - see test/monerosign.test.ts. */
+    expect(accepted.nonSemanticsOk, 'verRctNonSemanticsSimple').toBe(true);
+  });
+
+  it('refused it when the chain held a different ring member', () => {
+    /* The transaction is unchanged and every signature in it is still valid.
+     * It is valid against a ring nobody has, which is the whole reason the
+     * harness rebuilds the ring from the transaction's own key offsets instead
+     * of being handed back the ring the signer used. */
+    const wrong = named('wrong-ring-member');
+    expect(wrong.parsed).toBe(true);
+    expect(wrong.txid).toBe(fixture.built.txid);
+    /* Semantics still passes: the range proofs and the balance have nothing to
+     * do with who is in the ring. Only the signatures fail. */
+    expect(wrong.semanticsOk).toBe(true);
+    expect(wrong.nonSemanticsOk).toBe(false);
+  });
+
+  it('refused it when one bit of one response was inverted', () => {
+    const flipped = named('flipped-signature-byte');
+    expect(flipped.parsed, 'still a well-formed transaction').toBe(true);
+    expect(flipped.txid).not.toBe(fixture.built.txid);
+    expect(flipped.nonSemanticsOk).toBe(false);
+  });
+
+  it('gave those verdicts to bytes this code still produces', async () => {
+    /* Same reason as the import fixture: a verdict about a transaction nobody
+     * can rebuild is a verdict that a later change silently inherits. The
+     * whole transaction is re-signed from the recorded set and the recorded
+     * randomness and has to come out identical, hex and id and weight. */
+    const { walletFromSeed, fromHex, toHex } = await import('../src/keys/monero');
+    const { signMoneroSpend } = await import('../src/keys/monerobuild');
+
+    const sender = walletFromSeed(fromHex(fixture.seeds.sender), 'stagenet');
+    const result = signMoneroSpend(
+      sender,
+      fixture.set as Parameters<typeof signMoneroSpend>[1],
+      fixture.randomness.map(fromHex),
+    );
+    expect(result.ok, result.ok ? '' : result.problem).toBe(true);
+    if (!result.ok) return;
+    expect(result.tx.hex).toBe(fixture.built.hex);
+    expect(result.tx.txid).toBe(fixture.built.txid);
+    expect(result.tx.weight).toBe(fixture.built.weight);
+    expect(toHex(fromHex(result.tx.hex))).toBe(fixture.built.hex);
+  });
+
+  it('is produced by a harness that runs the real verifiers', () => {
+    const harness = readFileSync('oracle/src/verifytx.cpp', 'utf8');
+    expect(harness).toMatch(/rct::verRctSemanticsSimple\(rv\)/);
+    expect(harness).toMatch(/rct::verRctNonSemanticsSimple\(rv\)/);
+    expect(harness).toMatch(/cryptonote::parse_and_validate_tx_from_blob\(blob, tx, txid, prefix_hash\)/);
+    /* The ring comes from the transaction's own offsets, not from the caller.
+     * Without this the wrong-ring case above could not fail. */
+    expect(harness).toMatch(/cryptonote::relative_output_offsets_to_absolute\(input->key_offsets\)/);
+    /* And the key image is put back where the serializer left it out. This one
+     * cost an afternoon of blaming the wrong code. */
+    expect(harness).toMatch(/rv\.p\.CLSAGs\[n\]\.I = rct::ki2rct\(input->k_image\)/);
+    const build = readFileSync('oracle/build.sh', 'utf8');
+    expect(build).toContain('src/ringct/rctSigs.cpp');
+    expect(build).toMatch(/for harness in importkeyimages verifytx clsag/);
   });
 });

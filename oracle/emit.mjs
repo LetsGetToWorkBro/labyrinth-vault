@@ -196,33 +196,37 @@ if (existsSync(IMPORT)) {
   process.exit(1);
 }
 
-async function emitImport() {
-  /* One bundle, not three.
-   *
-   * Each esbuild call produces an independent copy of every module, so
-   * installing CryptoNight into one copy of moneroexport.ts and then calling a
-   * writer that closed over a different copy would install nothing, silently.
-   * scripts/emit-swift-fixtures.mjs learned this the same way. */
+/**
+ * This repository's own TypeScript, bundled and evaluated.
+ *
+ * `contents` is a module that re-exports whatever the caller needs, and it has
+ * to be *one* module: each esbuild call produces an independent copy of every
+ * module underneath it, so installing CryptoNight into one copy of
+ * moneroexport.ts and then calling a writer that closed over a different copy
+ * would install nothing, silently. scripts/emit-swift-fixtures.mjs learned
+ * that the same way.
+ */
+async function loadVault(contents) {
   const compiled = await build({
-    stdin: {
-      contents: `
-        export { walletFromSeed, toHex, fromHex } from './src/keys/monero';
-        export { computeKeyImages, keyImageFileFor, keyImageFileRandomBytes,
-                 KEYIMAGE_VERSION } from './src/keys/keyimages';
-        export { setNativeCnSlowHash } from './src/keys/moneroexport';
-      `,
-      resolveDir: process.cwd(),
-      loader: 'ts',
-    },
+    stdin: { contents, resolveDir: process.cwd(), loader: 'ts' },
     bundle: true,
     format: 'esm',
     write: false,
     platform: 'neutral',
   });
-  const vault = await import(
+  return import(
     'data:text/javascript;base64,' +
       Buffer.from(compiled.outputFiles[0].text).toString('base64')
   );
+}
+
+async function emitImport() {
+  const vault = await loadVault(`
+    export { walletFromSeed, toHex, fromHex } from './src/keys/monero';
+    export { computeKeyImages, keyImageFileFor, keyImageFileRandomBytes,
+             KEYIMAGE_VERSION } from './src/keys/keyimages';
+    export { setNativeCnSlowHash } from './src/keys/moneroexport';
+  `);
 
   /* CryptoNight from the oracle's own harness, which build.sh has already held
    * to Monero's four official vectors. The vault normally gets this from
@@ -420,10 +424,329 @@ async function emitImport() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// CLSAG, and a whole transaction, judged by Monero
+//
+// The Monero project ships no fixed CLSAG vector: its own tests generate
+// random keys, sign, and verify. So for as long as this repository would not
+// compile `ringct/rctSigs.cpp`, `clsagSign` and `clsagVerify` were each
+// other's only witness -- and a prover and a verifier that share a mistake
+// agree perfectly. Two shared mistakes in the aggregation hash survived every
+// round trip and every tamper test in the suite until this ran.
+//
+// Both fixtures are recorded here rather than only in the harness output
+// because `npm test` cannot build C++, and the committed answer is what the
+// TypeScript suite reads.
+
+const CLSAG = 'oracle/.work/clsag';
+const VERIFYTX = 'oracle/.work/verifytx';
+for (const [path, what] of [[CLSAG, 'clsag'], [VERIFYTX, 'verifytx']]) {
+  if (!existsSync(path)) {
+    console.error(`oracle: no ${what} harness; run ./oracle/build.sh`);
+    process.exit(1);
+  }
+}
+const { clsagFixture, verifyFixture } = await emitSigning();
+
+async function emitSigning() {
+  const vault = await loadVault(`
+    export { clsagSign, clsagVerify } from './src/keys/monerosign';
+    export { commit } from './src/keys/monerocrypto';
+    export { signMoneroSpend, signingRandomCount } from './src/keys/monerobuild';
+    export { commitmentMask, derivationToScalar, derivePublicKey,
+             generateKeyDerivation } from './src/keys/monerocrypto';
+    export { fromHex, publicFromSecret, reduceScalar, toHex,
+             walletFromSeed } from './src/keys/monero';
+  `);
+  const { toHex, fromHex } = vault;
+
+  /* Counted-up bytes with the top nibble cleared, so every scalar is already
+   * below the group order and no reduction has to be described twice. */
+  const scalar = (seed) => {
+    const b = new Uint8Array(32);
+    let x = seed >>> 0 || 1;
+    for (let i = 0; i < 32; i++) {
+      x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0; b[i] = x & 0xff;
+    }
+    b[31] &= 0x0f;
+    return b;
+  };
+  const nonce = (start) =>
+    Uint8Array.from({ length: 32 }, (_, i) => (start + i) & 0xff);
+
+  const run = (harness, args) => execFileSync(harness, args, { encoding: 'utf8' });
+  const one = (text, key) => (new RegExp(`^${key} (.+)$`, 'm').exec(text) ?? [])[1] ?? null;
+  const all = (text, key) =>
+    [...text.matchAll(new RegExp(`^${key} (.+)$`, 'gm'))].map((m) => m[1]);
+
+  // -- one CLSAG, both directions -------------------------------------------
+
+  const RING = 4;
+  const INDEX = 2;
+  const AMOUNT = 12_345_678n;
+  const secret = scalar(0x1111);
+  const inMask = scalar(0x2222);
+  const outMask = scalar(0x3333);
+
+  const ring = [];
+  for (let i = 0; i < RING; i++) {
+    if (i === INDEX) {
+      ring.push({ key: toHex(vault.publicFromSecret(secret)), commitment: toHex(vault.commit(AMOUNT, inMask)) });
+    } else {
+      /* A decoy is any pair of valid points as far as a ring signature is
+       * concerned; whether they are on a chain is a question for a node. */
+      ring.push({
+        key: toHex(vault.publicFromSecret(scalar(0x4000 + i * 2))),
+        commitment: toHex(vault.publicFromSecret(scalar(0x4001 + i * 2))),
+      });
+    }
+  }
+  const pseudoOut = vault.commit(AMOUNT, outMask);
+  const message = scalar(0x7777);
+  /* z = inMask - outMask, the commitment-to-zero secret. `proveRctCLSAGSimple`
+   * derives it from the two masks itself, which is why the harness is handed
+   * the masks and this side is handed z. */
+  const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const little = (bytes) => {
+    let n = 0n;
+    for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]);
+    return n;
+  };
+  const bytesOf = (n) => Uint8Array.from({ length: 32 }, () => { const b = Number(n & 0xffn); n >>= 8n; return b; });
+  const z = bytesOf((((little(inMask) - little(outMask)) % L) + L) % L);
+
+  const inputs = [
+    `message ${toHex(message)}`,
+    `secret ${toHex(secret)}`,
+    `mask ${toHex(inMask)}`,
+    `out ${toHex(outMask)}`,
+    `offset ${toHex(pseudoOut)}`,
+    `index ${INDEX}`,
+    ...ring.map((m) => `ring ${m.key} ${m.commitment}`),
+  ];
+  const scratch = 'oracle/.work/signing';
+  mkdirSync(scratch, { recursive: true });
+  const inputPath = join(scratch, 'clsag.txt');
+  writeFileSync(inputPath, inputs.join('\n') + '\n');
+
+  const signed = run(CLSAG, ['sign', inputPath]);
+  const monero = {
+    c1: one(signed, 'c1'),
+    s: all(signed, 's'),
+    keyImage: one(signed, 'I'),
+    dInv8: one(signed, 'D'),
+  };
+  if (one(signed, 'self_ok') !== '1') {
+    console.error("oracle: Monero would not verify its own CLSAG. The harness is wrong, not the code.");
+    process.exit(1);
+  }
+
+  /* The same nonces the counter handed the C: alpha first, then one fake
+   * response per ring member after the real one, wrapping. Getting that order
+   * wrong shows up as a different c1, which is why it is exercised rather
+   * than asserted in a comment. */
+  const nonces = Array.from({ length: RING + 1 }, (_, i) => nonce(32 * i));
+  const ours = vault.clsagSign(message, ring, { p: secret, z, index: INDEX }, pseudoOut, nonces);
+
+  writeFileSync(
+    join(scratch, 'clsag-ours.txt'),
+    [
+      ...inputs,
+      `sig_c1 ${ours.c1}`,
+      ...ours.s.map((s) => `sig_s ${s}`),
+      `sig_I ${ours.keyImage}`,
+      `sig_D ${ours.dInv8}`,
+    ].join('\n') + '\n',
+  );
+  const verdict = one(run(CLSAG, ['verify', join(scratch, 'clsag-ours.txt')]), 'verified');
+
+  // -- a whole transaction, through the deserializer and both verifiers ------
+
+  const sender = vault.walletFromSeed(scalar(0xa11ce), 'stagenet');
+  const receiver = vault.walletFromSeed(scalar(0xb0b), 'stagenet');
+
+  /** An output the sender owns, made the way a payer makes one. */
+  const fund = (amount, indexInTx, seed) => {
+    const txSecret = scalar(seed);
+    const derivation = vault.generateKeyDerivation(fromHex(sender.viewPublic), txSecret);
+    const mask = vault.commitmentMask(vault.derivationToScalar(derivation, indexInTx));
+    return {
+      txPublicKey: toHex(vault.publicFromSecret(txSecret)),
+      key: toHex(vault.derivePublicKey(derivation, indexInTx, fromHex(sender.spendPublic))),
+      commitment: toHex(vault.commit(amount, mask)),
+      indexInTx,
+      amount,
+    };
+  };
+
+  const PAYMENT = 750_000_000_000n;
+  const CHANGE = 249_280_000_000n;
+  const FEE = 720_000_000n;
+  const REAL = 4;
+  const funded = fund(PAYMENT + CHANGE + FEE, 1, 0xfeed);
+  const txRing = [];
+  for (let i = 0; i < 16; i++) {
+    const globalIndex = 1_000_000 + i * 7;
+    if (i === REAL) txRing.push({ globalIndex, key: funded.key, commitment: funded.commitment });
+    else txRing.push({
+      globalIndex,
+      key: toHex(vault.publicFromSecret(scalar(0x9000 + i * 2))),
+      commitment: toHex(vault.publicFromSecret(scalar(0x9001 + i * 2))),
+    });
+  }
+  const set = {
+    v: 1,
+    chain: 'xmr',
+    network: 'stagenet',
+    inputs: [{
+      txPublicKey: funded.txPublicKey,
+      indexInTx: funded.indexInTx,
+      globalIndex: 1_000_000 + REAL * 7,
+      amount: funded.amount.toString(),
+      ring: txRing,
+      realPosition: REAL,
+    }],
+    outputs: [
+      { address: receiver.address, amount: PAYMENT.toString(), change: false, dummy: false },
+      { address: sender.address, amount: CHANGE.toString(), change: true, dummy: false },
+    ],
+    fee: FEE.toString(),
+    ringSize: 16,
+  };
+  const need = vault.signingRandomCount(set.inputs.length, set.ringSize, set.outputs.length);
+  const txRandom = Array.from({ length: need }, (_, i) => scalar(0x5151 + i));
+  const built = vault.signMoneroSpend(sender, set, txRandom);
+  if (!built.ok) {
+    console.error(`oracle: the vault would not sign the transaction: ${built.problem}`);
+    process.exit(1);
+  }
+
+  /** The stand-in chain: what sits at each global output index. */
+  const chainRows = (members) => members.map((m) => `out ${m.globalIndex} ${m.key} ${m.commitment}`);
+
+  const verifyCase = (name, what, rows, txHex) => {
+    const path = join(scratch, `${name}.txt`);
+    writeFileSync(path, [`tx ${txHex}`, ...rows].join('\n') + '\n');
+    const printed = run(VERIFYTX, [path]);
+    return {
+      name,
+      what,
+      parsed: one(printed, 'parsed') === '1',
+      txid: one(printed, 'txid'),
+      prefixHash: one(printed, 'prefix_hash'),
+      preClsagHash: one(printed, 'pre_mlsag_hash'),
+      rctType: printed.includes('rct_type') ? Number(one(printed, 'rct_type')) : null,
+      weight: printed.includes('weight') ? Number(one(printed, 'weight')) : null,
+      keyImages: all(printed, 'key_image'),
+      semanticsOk: one(printed, 'semantics_ok') === '1',
+      nonSemanticsOk: one(printed, 'non_semantics_ok') === '1',
+    };
+  };
+
+  /* One decoy replaced, so the chain and the signer disagree about a ring
+   * member the transaction points at. Every signature in the file is still
+   * valid; it is simply valid against a ring nobody has. This is the case
+   * that shows the verifier is checking against the chain rather than being
+   * handed back the signer's own assumptions. */
+  const wrongRing = txRing.map((m, i) =>
+    i === (REAL === 0 ? 1 : 0) ? { ...m, key: toHex(vault.publicFromSecret(scalar(0xdead))) } : m);
+
+  /* One byte of the last CLSAG response flipped. It is 32 bytes inside the
+   * prunable section, so the transaction still deserializes and still has the
+   * same shape; only the signature is wrong. */
+  const tampered = (() => {
+    const bytes = fromHex(built.tx.hex);
+    const at = bytes.length - 32 - 32 - 32 - 1; // inside the last s scalar
+    bytes[at] ^= 1;
+    return toHex(bytes);
+  })();
+
+  const cases = [
+    verifyCase('accepted', 'the transaction as the vault built it, against the chain it named',
+      chainRows(txRing), built.tx.hex),
+    verifyCase('wrong-ring-member', 'the same transaction, where the chain holds a different decoy',
+      chainRows(wrongRing), built.tx.hex),
+    verifyCase('flipped-signature-byte', 'one bit of one CLSAG response inverted',
+      chainRows(txRing), tampered),
+  ];
+  const accepted = cases[0];
+  if (!accepted.parsed || !accepted.semanticsOk || !accepted.nonSemanticsOk) {
+    console.error(
+      'oracle: Monero refused a transaction this repository built. That is the finding, not a ' +
+      'harness failure. Run oracle/.work/verifytx with VERIFYTX_LOG=1 for its reason.',
+    );
+    process.exit(1);
+  }
+  for (const each of cases.slice(1)) {
+    if (each.nonSemanticsOk) {
+      console.error(`oracle: case ${each.name} was supposed to be refused and was not`);
+      process.exit(1);
+    }
+  }
+
+  return {
+    clsagFixture: {
+      note:
+        "A CLSAG from Monero's own prover, which the Monero project does not ship. " +
+        'oracle/src/clsag.cpp calls rct::proveRctCLSAGSimple with the RNG stubbed to a byte ' +
+        'counter, so the signature is reproducible and the same counter bytes can be handed to ' +
+        'src/keys/monerosign.ts as its nonces. `verified` is rct::verRctCLSAGSimple on the ' +
+        "signature *this repository* made, which is the direction that matters: a prover and a " +
+        'verifier that share a mistake agree perfectly. Regenerate with ./oracle/build.sh && ' +
+        'node oracle/emit.mjs, and check with --check.',
+      source: { repo: PINNED.upstream, tag: PINNED.tag },
+      ringSize: RING,
+      realIndex: INDEX,
+      amount: AMOUNT.toString(),
+      secret: toHex(secret),
+      inputMask: toHex(inMask),
+      outputMask: toHex(outMask),
+      z: toHex(z),
+      message: toHex(message),
+      pseudoOut: toHex(pseudoOut),
+      ring,
+      nonces: nonces.map(toHex),
+      monero,
+      /* Monero's verdict on ours. Both are recorded because the pair is the
+       * evidence: the vector says our prover agrees with theirs, and this says
+       * their verifier agrees with our prover. */
+      oursVerified: verdict === '1',
+      ours,
+    },
+    verifyFixture: {
+      note:
+        "Verdicts from Monero's own consensus verifiers on a transaction this repository built. " +
+        'oracle/src/verifytx.cpp links ringct/rctSigs.cpp and runs parse_and_validate_tx_from_blob, ' +
+        'rct::verRctSemanticsSimple (the Bulletproof+ range proofs and the commitment balance) and ' +
+        'rct::verRctNonSemanticsSimple (every CLSAG, against the ring the offsets point at). The ' +
+        'ring is built from the transaction\'s own key offsets against the `chain` table below, ' +
+        'the way a daemon builds it. Regenerate with ./oracle/build.sh && node oracle/emit.mjs, ' +
+        'and check with --check.',
+      source: { repo: PINNED.upstream, tag: PINNED.tag },
+      seeds: { sender: toHex(scalar(0xa11ce)), receiver: toHex(scalar(0xb0b)) },
+      set,
+      randomness: txRandom.map(toHex),
+      built: {
+        hex: built.tx.hex,
+        txid: built.tx.txid,
+        weight: built.tx.weight,
+        fee: built.tx.fee,
+        keyImages: built.tx.keyImages,
+      },
+      chain: txRing,
+      wrongRingChain: wrongRing,
+      tamperedHex: tampered,
+      cases,
+    },
+  };
+}
+
 const outputs = [
   ['test/fixtures/monero-keyimages.json', fixture],
   ['test/fixtures/monero-unsigned-tx-set.json', unsignedFixture],
   ['test/fixtures/monero-import-key-images.json', importFixture],
+  ['test/fixtures/monero-clsag.json', clsagFixture],
+  ['test/fixtures/monero-verify-tx.json', verifyFixture],
 ];
 
 let anyDiffered = false;

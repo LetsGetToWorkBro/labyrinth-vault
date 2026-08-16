@@ -1,0 +1,64 @@
+{
+  "note": "A CLSAG from Monero's own prover, which the Monero project does not ship. oracle/src/clsag.cpp calls rct::proveRctCLSAGSimple with the RNG stubbed to a byte counter, so the signature is reproducible and the same counter bytes can be handed to src/keys/monerosign.ts as its nonces. `verified` is rct::verRctCLSAGSimple on the signature *this repository* made, which is the direction that matters: a prover and a verifier that share a mistake agree perfectly. Regenerate with ./oracle/build.sh && node oracle/emit.mjs, and check with --check.",
+  "source": {
+    "repo": "https://github.com/monero-project/monero",
+    "tag": "v0.18.5.1"
+  },
+  "ringSize": 4,
+  "realIndex": 2,
+  "amount": "12345678",
+  "secret": "0072c5d7fd95e759f840ac0da4fc77574f9771e8ddcb335c4ffddde52c9a6706",
+  "inputMask": "00e4abccf9b65a7f3e999752b6bf51cf54204f27c5e5e969d120e97b408c1701",
+  "outputMask": "00966e1b0423bd26c6d93b5f124326981bb73ecf182eda359edd349e6c167007",
+  "z": "ed21330e10f7afb04e5c539682760a4c39691058acb70f343343b4ddd375a709",
+  "message": "005efe967a1aab1d9f20281b7160a0aaa2a02da02e3fd7e8982cd468fdad6e0a",
+  "pseudoOut": "5c5338c824cfd89247eddd47cd7d21f6c2ba08429c97a1a84a26d5b29b8635ee",
+  "ring": [
+    {
+      "key": "ee6c62d1b4775639eb1c2d65441d8f5533ea9a03627771e9b541a9e99418b756",
+      "commitment": "4d9f6dd49a16803229ff1c4473ae3c9f653d007a806bdc6cb9522f39d218ad3b"
+    },
+    {
+      "key": "c11812e2b2ebbae45fcac6518a6620b67d7014dd1a3842a64692135bf26dc4f0",
+      "commitment": "63ea57acc2b61c05b4aa189fe5086f6a77bc6ce84f9450c6aa101a34af46e092"
+    },
+    {
+      "key": "9e3d20c2fc14a75e31295729a9b11b9c2ee1dc98b45874b7f8177d5a3c6ecc65",
+      "commitment": "0bb88d3a8439bb02f3e047034cd9b84494240fb6f8d725ae2ae5fa42172ec443"
+    },
+    {
+      "key": "39e4b933346180baa0b9c85e4e7d0da94d07d11252c6776b1eb18f8f380ce270",
+      "commitment": "f0f29f85ee3356ef12893dafe8ad7bc4500c2f806af840fff9d5c8e8d8fd70af"
+    }
+  ],
+  "nonces": [
+    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+    "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+  ],
+  "monero": {
+    "c1": "85befd6b0c55e6ea4350f29b1e2166e5c8665e94135fb29861722f0f400cf904",
+    "s": [
+      "9f1d7572c055ea8e1839741cf36bf3e64f5152535455565758595a5b5c5d5e0f",
+      "e595a9d8abafe5fe8b1fa5f6559855dd6f7172737475767778797a7b7c7d7e0f",
+      "cbe081bfe8384cf037e116962448252efa6f7e177d91ae894af32ef98c2dd107",
+      "59a5400cd5fbee1ea5524342903f91f02f3132333435363738393a3b3c3d3e0f"
+    ],
+    "keyImage": "3786277d6b61c235dd9b8d23322f63ca33559f3b43154a8394703288a9d918f4",
+    "dInv8": "d7563d53c5ba8439b6d048ba34f2ef572008292ca77cda2c9f631f6c373627ca"
+  },
+  "oursVerified": true,
+  "ours": {
+    "c1": "85befd6b0c55e6ea4350f29b1e2166e5c8665e94135fb29861722f0f400cf904",
+    "s": [
+      "9f1d7572c055ea8e1839741cf36bf3e64f5152535455565758595a5b5c5d5e0f",
+      "e595a9d8abafe5fe8b1fa5f6559855dd6f7172737475767778797a7b7c7d7e0f",
+      "cbe081bfe8384cf037e116962448252efa6f7e177d91ae894af32ef98c2dd107",
+      "59a5400cd5fbee1ea5524342903f91f02f3132333435363738393a3b3c3d3e0f"
+    ],
+    "keyImage": "3786277d6b61c235dd9b8d23322f63ca33559f3b43154a8394703288a9d918f4",
+    "dInv8": "d7563d53c5ba8439b6d048ba34f2ef572008292ca77cda2c9f631f6c373627ca"
+  }
+}

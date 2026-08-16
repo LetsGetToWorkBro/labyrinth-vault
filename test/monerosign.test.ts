@@ -560,3 +560,91 @@ describe('the ring signature a key image export carries', () => {
     expect(checkRingSignatureOfOne(image, oneTimeKey, signature)).toBe(true);
   });
 });
+
+describe("CLSAG against Monero's own prover and verifier", () => {
+  /* The gap this closes, and it was a real one.
+   *
+   * The header of this file says the Monero project publishes no fixed CLSAG
+   * vector, which is true, and everything above verifies the way their own
+   * tests do: round trip, then attack every field. That is a good test of a
+   * *pair*. It is no test at all of whether the pair matches Monero, because
+   * a prover and a verifier that make the same mistake agree perfectly.
+   *
+   * Two shared mistakes lived in the aggregation hash and survived every test
+   * in this file. `C_offset` sat where Monero puts the key images, and the
+   * *unscaled* auxiliary key image was hashed where Monero hashes D·(1/8).
+   * Signatures came out that this repository verified and the Monero network
+   * would have refused, which means every Monero spend the vault made would
+   * have been rejected on broadcast.
+   *
+   * `oracle/src/clsag.cpp` is what found them, and this is what stops them
+   * coming back. It goes in both directions:
+   *
+   *   - our `clsagSign`, handed the same nonces Monero's stubbed RNG produced,
+   *     has to reproduce `rct::proveRctCLSAGSimple` byte for byte;
+   *   - `rct::verRctCLSAGSimple` has to accept the signature we made.
+   *
+   * The second is the one that matters. The first only says two signers agree.
+   */
+  const fixture = JSON.parse(readFileSync('test/fixtures/monero-clsag.json', 'utf8')) as {
+    ringSize: number;
+    realIndex: number;
+    secret: string;
+    z: string;
+    message: string;
+    pseudoOut: string;
+    ring: { key: string; commitment: string }[];
+    nonces: string[];
+    monero: { c1: string; s: string[]; keyImage: string; dInv8: string };
+    oursVerified: boolean;
+    ours: { c1: string; s: string[]; keyImage: string; dInv8: string };
+  };
+
+  const ours = clsagSign(
+    fromHex(fixture.message),
+    fixture.ring,
+    { p: fromHex(fixture.secret), z: fromHex(fixture.z), index: fixture.realIndex },
+    fromHex(fixture.pseudoOut),
+    fixture.nonces.map(fromHex),
+  );
+
+  it("reproduces rct::proveRctCLSAGSimple byte for byte", () => {
+    /* Not "our signature verifies" - that was already true while it was
+     * wrong. The same challenge, the same responses, the same two images. */
+    expect(ours.c1).toBe(fixture.monero.c1);
+    expect(ours.s).toEqual(fixture.monero.s);
+    expect(ours.keyImage).toBe(fixture.monero.keyImage);
+    expect(ours.dInv8).toBe(fixture.monero.dInv8);
+    expect(fixture.monero.s).toHaveLength(fixture.ringSize);
+  });
+
+  it('is the signature the fixture recorded a verdict for', () => {
+    /* The verdict below was given to specific bytes. Without this, a later
+     * change to the signer would quietly inherit an answer about different
+     * ones. */
+    expect(ours).toEqual(fixture.ours);
+  });
+
+  it('was accepted by rct::verRctCLSAGSimple', () => {
+    /* A false here is not a failing test to work around. It means the vault
+     * signs Monero transactions the network refuses. */
+    expect(fixture.oursVerified).toBe(true);
+  });
+
+  it('still verifies here, so both verifiers agree about it', () => {
+    expect(clsagVerify(fromHex(fixture.message), fixture.ring, fromHex(fixture.pseudoOut), ours)).toBe(true);
+  });
+
+  it('hashes the images and the offset in Monero\'s order', () => {
+    /* The mutation guard for the actual defect. Both mistakes are in the last
+     * three entries of the aggregation hash, and both are invisible to every
+     * other test in this file, so the shape of that list is asserted directly
+     * rather than only through its consequences. */
+    const source = readFileSync('src/keys/monerosign.ts', 'utf8');
+    const inputs = [...source.matchAll(/dom, \.\.\.ringKeys, \.\.\.ringCommits, ([^\]]+)\]/g)]
+      .map((m) => m[1]!.trim().replace(/,$/, ''));
+    expect(inputs, 'clsagSign and clsagVerify both build the aggregation hash input').toHaveLength(2);
+    expect(inputs[0]).toBe('Ibytes, dInv8Bytes, Coforbytes');
+    expect(inputs[1]).toBe('Ibytes, dInv8Bytes, pseudoOut');
+  });
+});

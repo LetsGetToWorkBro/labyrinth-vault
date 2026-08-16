@@ -214,19 +214,51 @@ export function clsagSign(
   const I = Hp.multiply(p); // key image, p·Hp(P_l)
   const D = Hp.multiply(z); // auxiliary image, z·Hp(P_l)
   const Ibytes = I.toBytes();
-  const Dbytes = D.toBytes();
-  // The wire stores D·(1/8); hashing uses D itself (== 8·(D·1/8)).
+  /* The wire stores D·(1/8), and so does the aggregation hash. The
+   * *arithmetic* below uses the unscaled D. See `aggInput`. */
   const dInv8 = D.multiplyUnsafe(INV8);
+  const dInv8Bytes = dInv8.toBytes();
 
-  // Aggregation coefficients. The layout is Monero's: domain, every P, every
-  // C, then C_offset, I, D.
   const ringKeys: Uint8Array[] = [];
   for (const m of ring) ringKeys.push(fromHex(m.key));
   const ringCommits: Uint8Array[] = [];
   for (const m of ring) ringCommits.push(fromHex(m.commitment));
 
+  /**
+   * The aggregation hash input, in Monero's order and with Monero's values.
+   *
+   * `CLSAG_Gen` in `ringct/rctSigs.cpp` fills `mu_P_to_hash` as
+   *
+   *     [0]         the domain separator
+   *     [1 .. n]    every ring one-time key
+   *     [n+1 .. 2n] every ring commitment, un-offset
+   *     [2n+1]      sig.I
+   *     [2n+2]      sig.D
+   *     [2n+3]      C_offset
+   *
+   * Two things here are easy to get wrong and were both wrong here until
+   * Monero's own verifier was pointed at a transaction this code signed.
+   *
+   * The first is the order: `C_offset` is last, after the two key images, not
+   * before them. The trailing comment on Monero's own declaration says
+   * "domain, I, D, P, C, C_offset", which is not the order the code below it
+   * writes, and following the comment puts C_offset in the wrong slot.
+   *
+   * The second is subtler. `sig.D` at [2n+2] is the *eighth-scaled* auxiliary
+   * key image, because `CLSAG_Gen` assigns `scalarmultKey(sig.D, D, INV_EIGHT)`
+   * before it builds this vector. The unscaled D is what the L and R
+   * arithmetic uses; the scaled one is what gets hashed. A signer that hashes
+   * the unscaled D produces a signature its own verifier accepts and the
+   * network does not.
+   *
+   * Both mistakes are invisible to a round trip, because a prover and a
+   * verifier that make the same mistake agree perfectly. `oracle/src/verifytx.cpp`
+   * is what found them: `rct::verRctNonSemanticsSimple` on a transaction this
+   * repository built, and `test/fixtures/monero-verify-tx.json` is Monero's
+   * answer now.
+   */
   const aggInput = (dom: Uint8Array): Uint8Array[] => [
-    dom, ...ringKeys, ...ringCommits, Coforbytes, Ibytes, Dbytes,
+    dom, ...ringKeys, ...ringCommits, Ibytes, dInv8Bytes, Coforbytes,
   ];
   const muP = hashKeys(...aggInput(CLSAG_AGG_0));
   const muC = hashKeys(...aggInput(CLSAG_AGG_1));
@@ -305,15 +337,19 @@ export function clsagVerify(
     const C = ring.map((m) => pointFromBytes(fromHex(m.commitment)));
     const Cof = pointFromBytes(pseudoOut);
     const I = pointFromBytes(fromHex(sig.keyImage));
-    const D = pointFromBytes(fromHex(sig.dInv8)).multiplyUnsafe(8n);
+    const dInv8Bytes = fromHex(sig.dInv8);
+    /* Scaled back up for the arithmetic, exactly as `verRctCLSAGSimple` does
+     * with `key D_8 = scalarmult8(sig.D)`. The hash below takes the stored,
+     * unscaled-back value; see `clsagSign` for why that distinction matters. */
+    const D = pointFromBytes(dInv8Bytes).multiplyUnsafe(8n);
     const Ibytes = I.toBytes();
-    const Dbytes = D.toBytes();
 
     const ringKeys = ring.map((m) => fromHex(m.key));
     const ringCommits = ring.map((m) => fromHex(m.commitment));
 
+    // Monero's order: domain, keys, commitments, I, sig.D, C_offset.
     const aggInput = (dom: Uint8Array): Uint8Array[] => [
-      dom, ...ringKeys, ...ringCommits, pseudoOut, Ibytes, Dbytes,
+      dom, ...ringKeys, ...ringCommits, Ibytes, dInv8Bytes, pseudoOut,
     ];
     const muP = hashKeys(...aggInput(CLSAG_AGG_0));
     const muC = hashKeys(...aggInput(CLSAG_AGG_1));

@@ -114,13 +114,87 @@ So the risk that the word "signing" evokes and the risk that actually exists
 are different risks, and the actually-existing one is in the boring, tested,
 integer part.
 
-## The verification frontier, stated exactly
+## What Monero's own verifiers say, and the bug they found
 
-CLSAG round-trips and survives every tamper. But the Monero project ships no
-fixed CLSAG vector, its own tests generate random keys and round-trip them,
-so "round-trip plus adversarial plus constant-anchored" is as far as a test
-environment reaches. The one thing it cannot establish is that a real monerod
-accepts the bytes.
+This section used to be called "the verification frontier, stated exactly". It
+said that CLSAG round-trips and survives every tamper, that the Monero project
+ships no fixed CLSAG vector, and that round-trip plus adversarial plus
+constant-anchored was as far as a test environment reached.
+
+All of that was true and the conclusion was wrong. A test environment reaches
+as far as Monero's own code, and the only thing stopping it was that this
+repository would not compile `ringct/rctSigs.cpp`. It compiles it now.
+
+**It found a consensus-breaking bug in CLSAG on the first run.** Monero's
+aggregation hash is
+
+```
+[domain, P_0 .. P_n-1, C_0 .. C_n-1, I, sig.D, C_offset]
+```
+
+and two things about that are easy to get wrong. `C_offset` goes last, after
+the two key images, not before them; the trailing comment on Monero's own
+declaration reads "domain, I, D, P, C, C_offset", which is not the order the
+code beneath it writes. And `sig.D` is the *eighth-scaled* auxiliary key
+image, `D·(1/8)`, because `CLSAG_Gen` assigns
+`scalarmultKey(sig.D, D, INV_EIGHT)` before it builds the vector. The unscaled
+D is what the L and R arithmetic uses; the scaled one is what gets hashed.
+
+`clsagSign` had `C_offset` in the wrong slot and hashed the unscaled D.
+`clsagVerify` made both the same mistakes, which is why it accepted every
+signature the signer produced, why the round trip was green, why every tamper
+case passed, and why 911 tests said nothing at all. A prover and a verifier
+that share a mistake agree perfectly. Every Monero spend this vault made would
+have been refused by the network on broadcast, and the refusal would have
+arrived as a bare failure from a node with no way to tell why.
+
+Three things now stand where that stood.
+
+**A CLSAG vector, from `rct::proveRctCLSAGSimple`.** The Monero project ships
+none, so the oracle asks for one: the RNG is stubbed to a byte counter, the
+same counter bytes are handed to `clsagSign` as its nonces, and the two
+signatures have to be identical. They are, down to the byte, in
+`test/fixtures/monero-clsag.json`. Before the fix they were not.
+
+**Monero's verifier, on our signature.** `rct::verRctCLSAGSimple` over what
+`clsagSign` produced, which is the direction that matters. The fixture records
+its answer, and before the fix that answer was no.
+
+**Monero's consensus verifiers, on a whole transaction.**
+`oracle/src/verifytx.cpp` links `rctSigs.cpp` and runs what a daemon runs on an
+arriving transaction:
+
+| what runs | what it decides |
+| --- | --- |
+| `parse_and_validate_tx_from_blob` | these bytes deserialize as a transaction |
+| `get_transaction_hash` | its id, which has to equal the one we computed |
+| `get_transaction_weight` | the number the fee is priced against, clawback included |
+| `verRctSemanticsSimple` | the Bulletproof+ range proofs, and the balance |
+| `verRctNonSemanticsSimple` | every CLSAG, against the ring the offsets point at |
+
+All five agree, in `test/fixtures/monero-verify-tx.json`. That is the first
+outside opinion this repository's Bulletproof+ *prover* has ever had: the
+verifier is anchored to real mainnet proofs, and the prover was judged only by
+that verifier, which is a shorter loop than it looks.
+
+Two negative cases hold the positive one up. Replace one decoy in the chain the
+harness reads, and the transaction is untouched and every signature in it is
+still valid and it is refused anyway, because those signatures are valid
+against a ring nobody has. Invert one bit of one response and it is refused
+too. The ring is never handed to the verifier: it is rebuilt from the
+transaction's own key offsets through Monero's
+`relative_output_offsets_to_absolute` and looked up in a table standing in for
+the chain, which is how a node does it and the only reason the wrong-decoy case
+can fail at all.
+
+### What that still does not cover
+
+A node does more. It checks that the ring members exist and are old enough,
+that the key images are unspent, that the version and unlock time suit the
+current fork, and that the fee clears the dynamic minimum. Every one of those
+is a question about chain state and none can be answered without a chain. The
+gate below is unchanged by any of this, and it should be: what is verified now
+is that the bytes are right, not that a running daemon took them.
 
 A complete broadcastable transaction also needs a **Bulletproof+ range proof**
 over the output commitments. Verifying one is a few hundred lines of
@@ -145,9 +219,15 @@ The serializer got the same treatment. Reproducing three real transaction ids
 from parsed fields proves the byte layout against consensus, and the assembly
 test closes the loop from the other end: the receiver's own scan, run on the
 emitted bytes, finds the output, matches the view tag, decrypts the amount,
-and proves it against the commitment. What no test here can produce is a
-node's acceptance of a whole fresh transaction, and that is the one claim
-still marked unverified.
+and proves it against the commitment. Monero's own deserializer now reads a
+transaction this code emitted and computes the same id and the same weight,
+which is the same check on a transaction we constructed rather than one we
+parsed.
+
+The claim still marked unverified is narrower than it was: not "a node accepts
+these bytes" but "a running node, with a chain behind it, accepted and relayed
+one". The stateless half of that is answered above. The stateful half is what
+the gate is for.
 
 ## The gate
 

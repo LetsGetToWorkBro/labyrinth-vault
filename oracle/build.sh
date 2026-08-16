@@ -245,15 +245,32 @@ for f in $WALLET_CXX; do
 done
 g++ $WCXX $WALL -c -o "$WOBJ/version.o" "$GEN/version.cpp"
 g++ $WCXX $WALL -c -o "$WOBJ/wallet-unreachable.o" oracle/src/wallet-unreachable.cpp
-g++ $WCXX $WALL -c -o "$WOBJ/importkeyimages.o" oracle/src/importkeyimages.cpp
 
-say "linking importkeyimages"
-g++ -o "$WORK/importkeyimages" "$WOBJ"/*.o \
-  -lboost_serialization -lboost_filesystem -lboost_system -lboost_thread \
-  -lboost_chrono -lboost_regex -lboost_program_options -lboost_date_time \
-  -lssl -lcrypto -lunbound -lsodium -lpthread -lm -ldl
+# Each harness has its own main, kept out of $WOBJ so that the shared objects
+# can be linked into all three without three `main`s in one binary.
+WLIBS="-lboost_serialization -lboost_filesystem -lboost_system -lboost_thread
+       -lboost_chrono -lboost_regex -lboost_program_options -lboost_date_time
+       -lssl -lcrypto -lunbound -lsodium -lpthread -lm -ldl"
+for harness in importkeyimages verifytx clsag; do
+  g++ $WCXX $WALL -c -o "$WORK/main-$harness.o" "oracle/src/$harness.cpp"
+done
 
-say "built $WORK/importkeyimages"
+say "linking the wallet harnesses"
+g++ -o "$WORK/importkeyimages" "$WORK/main-importkeyimages.o" "$WOBJ"/*.o $WLIBS
+
+# verifytx keeps Monero's real RNG. `verBulletproofPlus` draws random weights
+# to batch its checks, and a predictable weight is a weaker check; a verifier
+# is the one place in this rig where determinism is not worth having.
+g++ -o "$WORK/verifytx" "$WORK/main-verifytx.o" "$WOBJ"/*.o $WLIBS
+
+# clsag is the opposite: it *signs*, and a signature draws a nonce, so without
+# the counter stub there is no vector to write down. Same trade as the crypto
+# harnesses above, made for the same reason.
+gcc -O2 -w $WALL -c -o "$WORK/rng-counter-wallet.o" oracle/src/rng-counter.c
+g++ -o "$WORK/clsag" "$WORK/main-clsag.o" "$WORK/rng-counter-wallet.o" \
+  $(ls "$WOBJ"/*.o | grep -v src_crypto_random) $WLIBS
+
+say "built $WORK/importkeyimages, $WORK/verifytx and $WORK/clsag"
 
 # --- the check ---------------------------------------------------------------
 if [ "${1:-}" = "--check" ]; then

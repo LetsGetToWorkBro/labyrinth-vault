@@ -6751,8 +6751,8 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     const I = Hp2.multiply(p);
     const D = Hp2.multiply(z);
     const Ibytes = I.toBytes();
-    const Dbytes = D.toBytes();
     const dInv8 = D.multiplyUnsafe(INV8);
+    const dInv8Bytes = dInv8.toBytes();
     const ringKeys = [];
     for (const m of ring) ringKeys.push(fromHex(m.key));
     const ringCommits = [];
@@ -6761,9 +6761,9 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       dom,
       ...ringKeys,
       ...ringCommits,
-      Coforbytes,
       Ibytes,
-      Dbytes
+      dInv8Bytes,
+      Coforbytes
     ];
     const muP = hashKeys(...aggInput(CLSAG_AGG_0));
     const muC = hashKeys(...aggInput(CLSAG_AGG_1));
@@ -6804,18 +6804,18 @@ globalThis.TextDecoder.prototype.decode = function (input) {
       const C = ring.map((m) => pointFromBytes(fromHex(m.commitment)));
       const Cof = pointFromBytes(pseudoOut);
       const I = pointFromBytes(fromHex(sig.keyImage));
-      const D = pointFromBytes(fromHex(sig.dInv8)).multiplyUnsafe(8n);
+      const dInv8Bytes = fromHex(sig.dInv8);
+      const D = pointFromBytes(dInv8Bytes).multiplyUnsafe(8n);
       const Ibytes = I.toBytes();
-      const Dbytes = D.toBytes();
       const ringKeys = ring.map((m) => fromHex(m.key));
       const ringCommits = ring.map((m) => fromHex(m.commitment));
       const aggInput = (dom) => [
         dom,
         ...ringKeys,
         ...ringCommits,
-        pseudoOut,
         Ibytes,
-        Dbytes
+        dInv8Bytes,
+        pseudoOut
       ];
       const muP = hashKeys(...aggInput(CLSAG_AGG_0));
       const muC = hashKeys(...aggInput(CLSAG_AGG_1));

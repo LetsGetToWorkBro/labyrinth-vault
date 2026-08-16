@@ -10,7 +10,9 @@
   "produces": [
     "test/fixtures/monero-keyimages.json",
     "test/fixtures/monero-unsigned-tx-set.json",
-    "test/fixtures/monero-import-key-images.json"
+    "test/fixtures/monero-import-key-images.json",
+    "test/fixtures/monero-clsag.json",
+    "test/fixtures/monero-verify-tx.json"
   ],
   "alsoChecks": [
     "vendor/cryptonight against tests/hash/tests-slow.txt, via oracle/src/cryptonight.c"
