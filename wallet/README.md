@@ -195,7 +195,7 @@ npm start            # then press i, or scan the code with Expo Go
 ```
 
 ```sh
-npm test             # 91 tests
+npm test             # 564 tests
 npm run typecheck    # strict, exactOptionalPropertyTypes, noUncheckedIndexedAccess
 ```
 
@@ -262,12 +262,19 @@ done and tested: decoy selection over the chain's output distribution
 change-goes-home arithmetic that is the real money-loss surface
 (`core/monerospend.ts`), and the orchestration that assembles an unsigned set
 against a node (`core/moneroplan.ts`). The vault's CLSAG ring signature
-(`@vault/keys/monerosign`) round-trips and survives every adversarial tamper.
+(`@vault/keys/monerosign`) reproduces `rct::proveRctCLSAGSimple` byte for byte
+and is accepted by `rct::verRctCLSAGSimple`. It used to say only that it
+round-tripped and survived every adversarial tamper, which was true and was
+passing while two mistakes in the aggregation hash would have had every spend
+refused by the network. `docs/verification.md` has that story.
 
-What is not established anywhere without a live node is that a from-scratch
-Bulletproof+ range proof is accepted by the network, so the wallet refuses to
-broadcast a Monero spend with real value on mainnet until a stagenet
-acceptance is recorded. The gate is `core/moneroreadiness.ts`, it is a source
+A whole transaction this code builds now goes through Monero's own consensus
+verifiers, which accept it: the deserializer, the transaction id, the weight,
+the Bulletproof+ range proof and every ring signature. What none of that
+reaches is chain state, which is what a running node adds: that the ring
+members exist and are old enough, that the key images are unspent, that the fee
+clears the dynamic minimum. So the wallet still refuses to broadcast a Monero
+spend with real value on mainnet until a stagenet acceptance is recorded. The gate is `core/moneroreadiness.ts`, it is a source
 constant rather than a flag, and [../docs/monero-send.md](../docs/monero-send.md)
 carries the whole argument, including why a range proof verified only against
 its own prover is exactly the unverifiable thing this repository refuses to
