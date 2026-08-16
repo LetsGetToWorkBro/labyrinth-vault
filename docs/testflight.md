@@ -2,11 +2,18 @@
 
 Everything below is a thing to do on the device, in order, with what you
 should see and what it would mean if you saw something else. It is written to
-be worked through top to bottom in one sitting of about an hour.
+be worked through top to bottom, part one in one sitting of about an hour.
 
 Three of these tests can only be done on real hardware. They are the reason
 this document exists rather than a simulator script, and they are marked
 **DEVICE ONLY**. If you do nothing else, do those three.
+
+It is in two parts. **Part one** is the vault on its own, signing Bitcoin, and
+is the hour. **Part two** is Monero and the companion wallet, which need a
+second device and a stagenet faucet, and which no phone has ever run. Part two
+contains the two tests where a failure would cost somebody money rather than
+time: test 12, whether the seed phrase restores in another wallet, and test 15,
+whether a real wallet imports a key-image export.
 
 ## Before you start
 
@@ -249,17 +256,244 @@ the app talking to itself.
 
 ---
 
+# Part two: Monero, and the companion
+
+Everything above was written when the vault signed Bitcoin and nothing else,
+and it ends by saying the Monero path and the companion wallet are untested.
+Both have been built since. This half is the plan for them, and it is longer
+than part one for a reason worth stating plainly: **none of it has ever run on
+a phone.** Every screen below is a screen whose first contact with real
+hardware is you.
+
+Part one can be done with the vault alone. Part two needs the companion wallet
+too, which means either two phones or a phone and a simulator. One of each is
+fine and is arguably better, because a simulator can be pointed at a stagenet
+node while the vault stays in airplane mode, which is the arrangement real use
+has.
+
+## 12. The Monero half of the setup walk
+
+Set up a Monero wallet on the vault, or find it if setup already made one.
+
+**Expect:** twenty-five words, and an address beginning `4` for mainnet or `5`
+for stagenet.
+
+**Check the words rather than admiring them.** Type them into Feather or Cake
+as a restore, on the same network, and confirm the address that comes out is
+character-for-character the one the vault showed. This is the single most
+important check in this document. The words are the backup; a backup that
+restores to a different wallet is not a backup, and there is no way to discover
+that later except by needing it.
+
+That check is anchored in the suite already: `test/fixtures/monero-address.json`
+holds what Monero's own `ElectrumWords::bytes_to_words` and
+`get_account_address_as_str` produce for the same secrets, across all three
+networks. What it cannot do is prove the phone runs the same code as the test
+machine, which is what you are doing here.
+
+## 13. The launch self-test, again, for the native seam
+
+Back to test 1's launch screen, and read the check names this time.
+
+**Expect:** the Keccak, ed25519 base point and address round-trip checks, all
+passing.
+
+**Watch for:** anything about CryptoNight. That is thirty-four files of
+Monero's C compiled into the app rather than JavaScript, and it is the only
+part of the engine that is not the bundle. It is what encrypts a key-image
+export so other wallets can read it. If the app reports it absent, test 15's
+MONERO FILE option will be missing and that is the explanation, not a bug in
+the screen.
+
+## 14. A Monero file the vault can read
+
+The vault reads one of Monero's own file formats: `unsigned_monero_tx`, the
+file `monero-wallet-cli` writes with `--do-not-relay`. It reads it and **will
+not sign it**, deliberately, and this test is about whether the screen says
+that in a way somebody believes.
+
+Make one in `monero-wallet-cli` on stagenet, or take one from anywhere, and get
+it to the vault. Two routes, both worth trying:
+
+- **From the companion:** its MONERO FILE screen, which opens the Files app,
+  reads the file, and animates it over the airgap.
+- **From a browser:** the tools site has a page that does the same thing, if
+  you have it running.
+
+**Expect:** a screen headed WHAT THIS FILE / SAYS IT WILL DO, with every payee,
+the amounts, the fee, and a caveat panel **above** the figures rather than
+under them. One lever, reading DONE.
+
+**Watch for:** any green. `Ink.verified` is deliberately absent from this
+screen: the numbers are the sending wallet's account of its own transaction,
+not something this vault has verified, and a green tick would say otherwise.
+Also watch for a signing lever. There is not supposed to be one anywhere on
+this screen, and finding one is a serious finding rather than a missing
+feature.
+
+**Then show it a file the vault cannot open**: a `signed_monero_tx`, or a
+key-image export. **Expect:** THE VAULT / COULD NOT / OPEN THIS, and a sentence
+naming which of Monero's six formats it is. Being told "that is a signed
+transaction set, which this vault does not read" is the point; "not a
+transaction" would send somebody off to debug a file that was never wrong.
+
+## 15. Key images, both ways off the device
+
+KEY IMAGES on the vault. This is the one computation a watching wallet cannot
+do, and there are two wires out.
+
+**Expect:** a picker with LABYRINTH and MONERO FILE.
+
+- **LABYRINTH** is this project's own reply, for the companion.
+- **MONERO FILE** is the file Cake, Feather and `monero-wallet-cli` import.
+  **It only appears if CryptoNight is installed** (test 13). If the picker
+  shows one option, that is why.
+
+Do both.
+
+For MONERO FILE, the file has to leave the phone and land in another wallet.
+Animate it to the companion, save it, and import it into a real Feather or Cake
+watching the same account. **Expect:** the import succeeds and the wallet's
+balance changes from "everything ever received" to "what is actually left".
+
+That import is the most externally-checkable thing in the whole Monero path,
+and it is worth doing carefully. Monero's own `wallet2::import_key_images` has
+already accepted a file this code wrote, which is what
+`test/fixtures/monero-import-key-images.json` records. But `wallet2` is the
+library, not the application. **No real Cake or Feather has ever imported one of these.**
+You would be the first.
+
+**If it fails:** the error will be short and unhelpful, probably "signature
+check failed". That message means the records were paired with the wrong
+outputs, which is a positional problem rather than a cryptographic one.
+Photograph it and say which wallet and which version.
+
+## 16. A Monero spend, across the airgap
+
+The companion builds it, the vault signs it, the companion broadcasts it.
+**Stagenet.** The wallet will refuse mainnet by itself and you should not talk
+it out of that.
+
+1. Pair the companion with the vault: its VAULT screen, two steps done by hand,
+   and the vault's export QR.
+2. Fund the stagenet address from a faucet, and let the companion scan until it
+   sees it.
+3. Import key images (test 15, the LABYRINTH wire), so the companion knows what
+   is still unspent rather than only what arrived.
+4. Build a payment on the companion. Show the unsigned set to the vault.
+5. **On the vault, read the review screen properly.** Every payee, the fee, the
+   change checked against your own address, and the ring under a PRIVACY
+   heading. The ring is there because decoy choice cannot move money and
+   should not be presented as though it could.
+6. Hold to sign. **Expect:** frames headed NOT BROADCAST.
+7. Scan them back. The companion checks the fee and the key images against what
+   you approved before it will send anything.
+
+**Expect at the end:** a transaction id, and the payment visible on a stagenet
+explorer.
+
+**This is the test that lifts the gate.** `MONERO_SEND_BROADCAST_VERIFIED` in
+`wallet/src/core/moneroreadiness.ts` is `false`, and until a real node accepts a
+transaction this code built, the wallet refuses to broadcast a Monero spend
+with real value on mainnet. Send back the transaction id and the node that took
+it; those two facts, and nothing else, are what flip that constant.
+
+If you would rather do it without the QR round trip,
+`wallet/scripts/stagenet-send.ts` drives the identical loop with the signer in
+process. It finds its own coins now; it wants a seed, a node, a destination, an
+amount and roughly where to start scanning.
+
+## 17. Try to make the wallet broadcast on mainnet
+
+Switch the companion to mainnet and try to send Monero.
+
+**Expect:** a refusal saying the build can construct and sign a Monero spend but
+has never had one accepted by a live node, so it will not broadcast one with
+real value.
+
+**Watch for:** any way through it. This is a source constant rather than a
+setting, precisely so that there is no screen anywhere that turns it off. If
+you find one, that is the highest severity bug in the companion.
+
+## 18. The Bitcoin wires the plan never covered
+
+Three of these are newer than part one.
+
+- **DESCRIPTOR** on the export screen. An output descriptor, which is a string
+  rather than a QR format, so it can be pasted anywhere. Paste it into Electrum
+  and expect a watch-only wallet with the right addresses. Electrum reads no
+  BC-UR at all, so this and the zpub are its only routes in.
+- **`ur:psbt` against Cake.** Cake reads `ur:psbt` and not `ur:crypto-psbt`,
+  which is the opposite of Sparrow. Both are offered; check the right one
+  reaches the right wallet.
+- **BBQr against a Coldcard Q**, if you have one. Coinkite's own joiner has
+  reassembled our frames in the test suite; a real camera has not.
+
+## 19. Two-layer storage, across an update
+
+Only doable if you have an older build installed.
+
+Install a build from before the two-layer storage change, make a wallet, then
+update to this one. **Expect:** the wallet still opens with the same passphrase
+and the same address. A migration that quietly makes a new wallet is
+indistinguishable from a working one until somebody looks for money that is no
+longer there.
+
+## 20. The settings audit
+
+SETTINGS on the vault.
+
+**Expect:** a screen that says what this build is and what it is not, without
+marketing. Read it as somebody who has not been in this repository. Anything on
+it that overstates what has been tested is a bug in the copy, and copy that
+overstates on a security screen is a real defect rather than a nitpick.
+
+## 21. The companion's own screens
+
+Nothing above exercises the companion except as the vault's other half. It is
+an app in its own right and these are the parts of it a person actually lives
+in.
+
+- **Onboarding.** Run it on a phone that has never had it. Expect it to say
+  what this wallet is and is not, and to reach a usable state without a vault.
+- **Activity.** After test 16, expect the spend to appear, and expect the
+  Monero balance to be the honest one: what arrived **minus** what the key
+  images say is gone, rather than everything ever received. Before key images
+  are imported it cannot know that, and it is supposed to say so rather than
+  show a number that looks like a balance.
+- **Asset.** Bitcoin and Monero side by side. Check the Monero figure carries
+  the same caveat as above.
+- **Nodes.** Point it at a node that is syncing, and at one that is not there
+  at all. Expect two different sentences. "Could not connect" for a node that
+  is down and a height for one that is behind are different facts and a wallet
+  that renders both as an error is a wallet that sends somebody to the wrong
+  problem.
+
+**Swap and its status screen are deliberately out of scope here.** They talk to
+third-party exchanges over the network, which is a different trust question
+from anything else in this document, and mixing it into an airgap test plan
+would blur the thing the plan exists to establish.
+
+---
+
 ## What to send back
 
 For each numbered test: passed, failed, or not run. For test 4, the number in
-seconds. For anything that failed, a photograph of the screen beats a
-description of it, because every screen in this app names what it is doing.
+seconds. For test 16, the transaction id and the node. For anything that
+failed, a photograph of the screen beats a description of it, because every
+screen in this app names what it is doing.
 
-## What this plan does not cover
+Part one is about an hour. Part two is longer, needs a faucet and a second
+device, and can be done across several sittings; tests 12 and 15 are the two
+worth doing first if you only have a little time, because they are the two
+where a failure would mean somebody loses money rather than being inconvenienced.
 
-- **Monero signing end to end.** The Bitcoin path can be closed against
-  Sparrow; the Monero path needs the companion wallet, which has never been
-  compiled, and a stagenet acceptance run. Both are open work.
-- **The companion wallet at all.** Nothing in this document tests it.
+## What this plan still does not cover
+
 - **Restoring a vault.** There is no import path. Test 5 destroys the vault to
   test the refusal, and test 3 is the only reason that is survivable.
+- **A second person.** Every test here is done by somebody who knows what the
+  screen is supposed to say. The first time somebody reads these screens
+  without that, they will find copy this document cannot.
+- **Anything on Android.** The companion is React Native and could run there;
+  nobody has tried.
