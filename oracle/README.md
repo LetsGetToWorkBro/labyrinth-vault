@@ -46,6 +46,7 @@ answer; this is the working.
 | `src/importkeyimages.cpp` | hands our finished file to the real `wallet2::import_key_images` |
 | `src/clsag.cpp` | a CLSAG from `rct::proveRctCLSAGSimple`, and its verdict on ours |
 | `src/verifytx.cpp` | a whole transaction of ours, through the daemon's own verifiers |
+| `src/address.cpp` | addresses, subaddresses and the twenty-five words, from Monero's encoders |
 | `src/cryptonight.c` | `cn_slow_hash` at variant 0, from upstream |
 | `src/rng-counter.c` | replaces Monero's RNG with a byte counter |
 | `src/mlock-stub.cpp` | `epee::mlocker`, which only pins pages against swap |
@@ -122,6 +123,20 @@ because both verifiers say why they refused at log level 1 and then discard it;
 without that, a rejection is a wall. The first rejection it printed was my own
 harness forgetting that the key image is reconstructed rather than
 deserialized, not the code under test.
+
+`address` came next and found a second one, by asking the same question about
+the two things a person actually holds. The address encoder and the seed phrase
+had been tested entirely by round trip -- this repository encoding and then
+decoding its own output -- which is the same shape and the same blind spot. It
+turned out `subaddressKeys` returned `a·B` at index (0, 0) where Monero returns
+`a·G`, a key pair belonging to no address at all. Latent, because the function
+has no caller in `src/` and the bundler drops it before the engine ships, and
+enshrined in a test that stated the wrong rule outright.
+
+The pattern is worth naming, because it is now three for three: **wherever this
+repository has both halves of a format, the tests will be round trips, and
+round trips prove nothing about the format.** The remedy is cheap once an
+oracle exists. Ask upstream.
 
 ## The RNG stub is not a shortcut
 

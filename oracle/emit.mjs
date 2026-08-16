@@ -741,7 +741,94 @@ async function emitSigning() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The address and the seed phrase
+//
+// The two artifacts a person actually holds, and the two whose tests were all
+// round trips: encode then decode, split then rejoin. That is the shape that
+// let two mistakes live in CLSAG, and the consequences here are worse. A wrong
+// address is money sent where nobody can spend it, and the watch-only
+// companion derives from the same code so it would agree. A wrong seed phrase
+// is a backup that restores in no other wallet, discovered on the day the
+// phone is gone.
+
+const ADDRESS = 'oracle/.work/address';
+if (!existsSync(ADDRESS)) {
+  console.error('oracle: no address harness; run ./oracle/build.sh');
+  process.exit(1);
+}
+const addressFixture = emitAddress();
+
+function emitAddress() {
+  /* Three secrets rather than one. Counted-up bytes are the usual choice here,
+   * but a value with a top byte of zero and one that needs reduction exercise
+   * the encoder differently, and the leading-zero case is the one that eats a
+   * byte in a base58 implementation written from the Bitcoin one. */
+  const SECRETS = {
+    'counted-up': '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00',
+    'leading-zeros': '0000000000000000000000000000000000000000000000000000000000000001',
+    'needs-reduction': 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543200',
+  };
+  const PAYMENT_ID = '0011223344556677';
+  const NETWORKS = ['mainnet', 'stagenet', 'testnet'];
+
+  const accounts = [];
+  for (const [name, spendSecret] of Object.entries(SECRETS)) {
+    for (const network of NETWORKS) {
+      const printed = execFileSync(ADDRESS, [spendSecret, network, PAYMENT_ID], { encoding: 'utf8' });
+      const one = (key) => (new RegExp(`^${key} (.+)$`, 'm').exec(printed) ?? [])[1] ?? null;
+      if (one('mnemonic_round_trip') !== '1') {
+        console.error(`oracle: Monero's own words did not restore for ${name}`);
+        process.exit(1);
+      }
+      /* Monero parsing what Monero wrote, so a reader can see both ends of the
+       * string are upstream before comparing ours to it. */
+      if (one('parsed_spend') !== one('spend_public') || one('parsed_view') !== one('view_public')) {
+        console.error(`oracle: Monero did not read back the address it wrote for ${name}`);
+        process.exit(1);
+      }
+      accounts.push({
+        name,
+        network,
+        spendSecret: one('spend_secret'),
+        /* Derived by Monero from the spend secret, not asserted here: the
+         * deterministic rule is a reduced Keccak, and this is what checks that
+         * this repository follows it. */
+        viewSecret: one('view_secret'),
+        spendPublic: one('spend_public'),
+        viewPublic: one('view_public'),
+        address: one('address'),
+        paymentId: PAYMENT_ID,
+        integrated: one('integrated'),
+        mnemonic: one('mnemonic').split(' '),
+        mnemonicLanguage: one('mnemonic_language'),
+        subaddresses: [...printed.matchAll(/^subaddress (\d+) (\d+) (\w+) (\w+) (\S+)$/gm)].map((m) => ({
+          major: Number(m[1]),
+          minor: Number(m[2]),
+          spendPublic: m[3],
+          viewPublic: m[4],
+          address: m[5],
+        })),
+      });
+    }
+  }
+
+  return {
+    note:
+      "Addresses, subaddresses, integrated addresses and seed phrases from Monero's own " +
+      'encoders. oracle/src/address.cpp calls cryptonote::get_account_address_as_str, ' +
+      'get_account_integrated_address_as_str, hw::device::get_subaddress and ' +
+      'crypto::ElectrumWords::bytes_to_words at the tag below. Every one of these was ' +
+      'previously checked only by round-tripping this repository against itself, which is ' +
+      'how subaddressKeys came to return a·B at index (0,0) where Monero returns a·G. ' +
+      'Regenerate with ./oracle/build.sh && node oracle/emit.mjs, and check with --check.',
+    source: { repo: PINNED.upstream, tag: PINNED.tag },
+    accounts,
+  };
+}
+
 const outputs = [
+  ['test/fixtures/monero-address.json', addressFixture],
   ['test/fixtures/monero-keyimages.json', fixture],
   ['test/fixtures/monero-unsigned-tx-set.json', unsignedFixture],
   ['test/fixtures/monero-import-key-images.json', importFixture],

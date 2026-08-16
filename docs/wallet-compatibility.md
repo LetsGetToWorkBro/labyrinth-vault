@@ -97,10 +97,46 @@ published one and `73c5da0a` is the fingerprint every wallet reports for it.
 
 ## Monero
 
-Unchanged by this work, and recorded here so the two chains are in one place.
 Cake and Feather both read the same four `xmr-*` UR types over the same
 `wallet2` payload, which is what makes them a standard rather than one app's
 habit. `docs/monero-signing.md` has the detail.
+
+### The two artifacts a person holds
+
+The compatibility that matters most is not a wire format. It is the address on
+the screen and the twenty-five words on the paper, and both are now checked
+against Monero's own encoders rather than against this repository's own
+decoders.
+
+`oracle/src/address.cpp` calls `get_account_address_as_str`,
+`get_account_integrated_address_as_str`, `hw::device::get_subaddress` and
+`ElectrumWords::bytes_to_words`, over three secrets on all three networks.
+`test/fixtures/monero-address.json` is what it said.
+
+| checked against Monero | why it matters |
+| --- | --- |
+| the deterministic view secret | a different rule makes a different wallet out of the same words |
+| the standard address, on all three networks | a wrong one is money nobody can spend |
+| subaddresses at five indices | the same, and (0, 0) is a special case an implementation can lose |
+| integrated addresses | the vault does not write them but is shown them, and must not call a real one invalid |
+| the twenty-five English words | a phrase that restores nowhere else is not a backup |
+
+Before this, all of it was round trips: this repository encoding and then
+decoding its own output. The single exception was `KNOWN_ADDRESS`, the Monero
+project's donation address, which anchors *parsing* one mainnet address.
+
+It found one defect, latent but real. `subaddressKeys` at index (0, 0) returned
+`a·B` where Monero returns `a·G`: the main spend key beside a subaddress-style
+view key, a pair belonging to no address at all. It never reached a device -
+the function has no caller in `src/`, so the bundler drops it and the shipped
+engine does not contain it - and the test covering it asserted the same wrong
+rule in as many words. It was waiting for the first caller that walked indices
+from zero to build a list.
+
+One thing this deliberately does not do is fabricate a spend. The vault holds
+one wallet and shows one address; the subaddress code exists because the vault
+must *send* to somebody else's subaddress and must recognize its own. That
+these encode the way Monero encodes is the whole claim.
 
 ## What is not claimed
 

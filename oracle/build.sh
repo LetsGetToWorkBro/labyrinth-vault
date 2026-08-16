@@ -251,7 +251,7 @@ g++ $WCXX $WALL -c -o "$WOBJ/wallet-unreachable.o" oracle/src/wallet-unreachable
 WLIBS="-lboost_serialization -lboost_filesystem -lboost_system -lboost_thread
        -lboost_chrono -lboost_regex -lboost_program_options -lboost_date_time
        -lssl -lcrypto -lunbound -lsodium -lpthread -lm -ldl"
-for harness in importkeyimages verifytx clsag; do
+for harness in importkeyimages verifytx clsag address; do
   g++ $WCXX $WALL -c -o "$WORK/main-$harness.o" "oracle/src/$harness.cpp"
 done
 
@@ -270,7 +270,11 @@ gcc -O2 -w $WALL -c -o "$WORK/rng-counter-wallet.o" oracle/src/rng-counter.c
 g++ -o "$WORK/clsag" "$WORK/main-clsag.o" "$WORK/rng-counter-wallet.o" \
   $(ls "$WOBJ"/*.o | grep -v src_crypto_random) $WLIBS
 
-say "built $WORK/importkeyimages, $WORK/verifytx and $WORK/clsag"
+# address draws no randomness at all: everything it prints is a function of the
+# spend secret it is handed.
+g++ -o "$WORK/address" "$WORK/main-address.o" "$WOBJ"/*.o $WLIBS
+
+say "built $WORK/importkeyimages, $WORK/verifytx, $WORK/clsag and $WORK/address"
 
 # --- the check ---------------------------------------------------------------
 if [ "${1:-}" = "--check" ]; then

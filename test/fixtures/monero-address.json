@@ -1,0 +1,693 @@
+{
+  "note": "Addresses, subaddresses, integrated addresses and seed phrases from Monero's own encoders. oracle/src/address.cpp calls cryptonote::get_account_address_as_str, get_account_integrated_address_as_str, hw::device::get_subaddress and crypto::ElectrumWords::bytes_to_words at the tag below. Every one of these was previously checked only by round-tripping this repository against itself, which is how subaddressKeys came to return a·B at index (0,0) where Monero returns a·G. Regenerate with ./oracle/build.sh && node oracle/emit.mjs, and check with --check.",
+  "source": {
+    "repo": "https://github.com/monero-project/monero",
+    "tag": "v0.18.5.1"
+  },
+  "accounts": [
+    {
+      "name": "counted-up",
+      "network": "mainnet",
+      "spendSecret": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "viewSecret": "1fb262d4f00ddd25a973e8a0755361a61f69de96f40da77d75136c3dcd22880b",
+      "spendPublic": "616e237719716e25ead63d831f9117f79b5aa05af8be30ff0eddb3dc43e8bdcf",
+      "viewPublic": "030ea8deb14335b2f2b66f89c19bd57fe0f2a21b600c7063464dd1f9a0631252",
+      "address": "45KFi1Ti4yB7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXAGRCh4p",
+      "paymentId": "0011223344556677",
+      "integrated": "4F1vipHCgEh7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXEiWJg3tqmPBEVmFKcN",
+      "mnemonic": [
+        "object",
+        "anxiety",
+        "asked",
+        "stockpile",
+        "saucepan",
+        "skew",
+        "ailments",
+        "journal",
+        "listen",
+        "elite",
+        "chlorine",
+        "dotted",
+        "kernels",
+        "thaw",
+        "vapidly",
+        "pram",
+        "mouth",
+        "paradise",
+        "unfit",
+        "elite",
+        "guarded",
+        "dilute",
+        "width",
+        "width",
+        "width"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "616e237719716e25ead63d831f9117f79b5aa05af8be30ff0eddb3dc43e8bdcf",
+          "viewPublic": "030ea8deb14335b2f2b66f89c19bd57fe0f2a21b600c7063464dd1f9a0631252",
+          "address": "45KFi1Ti4yB7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXAGRCh4p"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "6f312342cb23f9a057a94efb8c5cc53c963457ac7990e779d764e68d9d000056",
+          "viewPublic": "10bf85c006abe8fedce9ef2a9b88a6d72479a9d4b64ecd4ef2ba450c00e8a961",
+          "address": "86fePitqqDrTpXJLtxGviYB8mVykqVShLMP1pF3GFhJfFPwfFxVpAMdjdVQk53Hmh7cz9nsofM8RaECty8V7H87rBzHQy8E"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "ed2f844576ef1414516b812965d69ada7b792b84263f0844b25f707ddb6f1350",
+          "viewPublic": "8c0d29f5532a51349317279d05c0e5fbf608574cbd206096100ec101c01ef427",
+          "address": "8BSa8ZoJWhh4Q7Qjd21oCMdYZ2UhJHhW7CVSo1Kh5KmtEUQdwdVdGpp9o3GtgKQ1Vvj9LbrdCfoRRS6oC88uUUcb5TQUUsJ"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "315f154c75270e19e2e1cd81a8d5e74f759a4dbc629c04976a491c09f9c0ac01",
+          "viewPublic": "4b693b5b86e053ddc0b4742ea5a1a9b977c7037be105f010e11fe8a231e43d88",
+          "address": "84KmUmn51dw5L8VPakfFvnEHrdAFFmiRHSKvBSifNtJX1DZRTRTe8sUe6HDCRcPDtCY2GhrsxDyhq3pkaELhxVt8GR1iSv8"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "2ea0a732540cfd75ca71d60ab423bba65640fc8fdd15f7795710350e655cd9fc",
+          "viewPublic": "5cdb5df44dbb5851a702a9f501d456aeff53fa19cb6b50fc88dc4103b6416fce",
+          "address": "84DjgyLVd88LhifP6xxrhYUpgEzoz7tkEMJ9kZVnK3NpjDEbxKLtYX9Ef8Zhfw9997WGhEmqp3r8PjEuKYEFkDB4QJYqLew"
+        }
+      ]
+    },
+    {
+      "name": "counted-up",
+      "network": "stagenet",
+      "spendSecret": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "viewSecret": "1fb262d4f00ddd25a973e8a0755361a61f69de96f40da77d75136c3dcd22880b",
+      "spendPublic": "616e237719716e25ead63d831f9117f79b5aa05af8be30ff0eddb3dc43e8bdcf",
+      "viewPublic": "030ea8deb14335b2f2b66f89c19bd57fe0f2a21b600c7063464dd1f9a0631252",
+      "address": "55XHnrNfiaH7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXAFyWNjo",
+      "paymentId": "0011223344556677",
+      "integrated": "5FDxofCAKqo7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXEiWJg3tqmPBEVSy4cb",
+      "mnemonic": [
+        "object",
+        "anxiety",
+        "asked",
+        "stockpile",
+        "saucepan",
+        "skew",
+        "ailments",
+        "journal",
+        "listen",
+        "elite",
+        "chlorine",
+        "dotted",
+        "kernels",
+        "thaw",
+        "vapidly",
+        "pram",
+        "mouth",
+        "paradise",
+        "unfit",
+        "elite",
+        "guarded",
+        "dilute",
+        "width",
+        "width",
+        "width"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "616e237719716e25ead63d831f9117f79b5aa05af8be30ff0eddb3dc43e8bdcf",
+          "viewPublic": "030ea8deb14335b2f2b66f89c19bd57fe0f2a21b600c7063464dd1f9a0631252",
+          "address": "55XHnrNfiaH7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXAFyWNjo"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "6f312342cb23f9a057a94efb8c5cc53c963457ac7990e779d764e68d9d000056",
+          "viewPublic": "10bf85c006abe8fedce9ef2a9b88a6d72479a9d4b64ecd4ef2ba450c00e8a961",
+          "address": "76TcJsytBckTpXJLtxGviYB8mVykqVShLMP1pF3GFhJfFPwfFxVpAMdjdVQk53Hmh7cz9nsofM8RaECty8V7H87rC2BWf5Q"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "ed2f844576ef1414516b812965d69ada7b792b84263f0844b25f707ddb6f1350",
+          "viewPublic": "8c0d29f5532a51349317279d05c0e5fbf608574cbd206096100ec101c01ef427",
+          "address": "7BEY3itLs6b4Q7Qjd21oCMdYZ2UhJHhW7CVSo1Kh5KmtEUQdwdVdGpp9o3GtgKQ1Vvj9LbrdCfoRRS6oC88uUUcb5SkVCk6"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "315f154c75270e19e2e1cd81a8d5e74f759a4dbc629c04976a491c09f9c0ac01",
+          "viewPublic": "4b693b5b86e053ddc0b4742ea5a1a9b977c7037be105f010e11fe8a231e43d88",
+          "address": "747jPvs7N2q5L8VPakfFvnEHrdAFFmiRHSKvBSifNtJX1DZRTRTe8sUe6HDCRcPDtCY2GhrsxDyhq3pkaELhxVt8GNJExov"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "2ea0a732540cfd75ca71d60ab423bba65640fc8fdd15f7795710350e655cd9fc",
+          "viewPublic": "5cdb5df44dbb5851a702a9f501d456aeff53fa19cb6b50fc88dc4103b6416fce",
+          "address": "741hc8RXyX2LhifP6xxrhYUpgEzoz7tkEMJ9kZVnK3NpjDEbxKLtYX9Ef8Zhfw9997WGhEmqp3r8PjEuKYEFkDB4QFx7a9p"
+        }
+      ]
+    },
+    {
+      "name": "counted-up",
+      "network": "testnet",
+      "spendSecret": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "viewSecret": "1fb262d4f00ddd25a973e8a0755361a61f69de96f40da77d75136c3dcd22880b",
+      "spendPublic": "616e237719716e25ead63d831f9117f79b5aa05af8be30ff0eddb3dc43e8bdcf",
+      "viewPublic": "030ea8deb14335b2f2b66f89c19bd57fe0f2a21b600c7063464dd1f9a0631252",
+      "address": "9vroCG7yMLH7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXAGBh88L",
+      "paymentId": "0011223344556677",
+      "integrated": "A6ZUD4wTxbo7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXEiWJg3tqmPBEYD5nH8",
+      "mnemonic": [
+        "object",
+        "anxiety",
+        "asked",
+        "stockpile",
+        "saucepan",
+        "skew",
+        "ailments",
+        "journal",
+        "listen",
+        "elite",
+        "chlorine",
+        "dotted",
+        "kernels",
+        "thaw",
+        "vapidly",
+        "pram",
+        "mouth",
+        "paradise",
+        "unfit",
+        "elite",
+        "guarded",
+        "dilute",
+        "width",
+        "width",
+        "width"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "616e237719716e25ead63d831f9117f79b5aa05af8be30ff0eddb3dc43e8bdcf",
+          "viewPublic": "030ea8deb14335b2f2b66f89c19bd57fe0f2a21b600c7063464dd1f9a0631252",
+          "address": "9vroCG7yMLH7Lr3eHFxpN2iR6c3nZmkU7jfPCgJsAFZWbdGxd7Q7k7nWw2CcUM415NNParEHH8w11Hc67mU2oVTXAGBh88L"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "6f312342cb23f9a057a94efb8c5cc53c963457ac7990e779d764e68d9d000056",
+          "viewPublic": "10bf85c006abe8fedce9ef2a9b88a6d72479a9d4b64ecd4ef2ba450c00e8a961",
+          "address": "BcPmgg6CbqiTpXJLtxGviYB8mVykqVShLMP1pF3GFhJfFPwfFxVpAMdjdVQk53Hmh7cz9nsofM8RaECty8V7H87rByUEyZj"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "ed2f844576ef1414516b812965d69ada7b792b84263f0844b25f707ddb6f1350",
+          "viewPublic": "8c0d29f5532a51349317279d05c0e5fbf608574cbd206096100ec101c01ef427",
+          "address": "BhAhRWzfHKZ4Q7Qjd21oCMdYZ2UhJHhW7CVSo1Kh5KmtEUQdwdVdGpp9o3GtgKQ1Vvj9LbrdCfoRRS6oC88uUUcb5V5U4xz"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "315f154c75270e19e2e1cd81a8d5e74f759a4dbc629c04976a491c09f9c0ac01",
+          "viewPublic": "4b693b5b86e053ddc0b4742ea5a1a9b977c7037be105f010e11fe8a231e43d88",
+          "address": "Ba3tmiyRnFo5L8VPakfFvnEHrdAFFmiRHSKvBSifNtJX1DZRTRTe8sUe6HDCRcPDtCY2GhrsxDyhq3pkaELhxVt8GRg6nt8"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "2ea0a732540cfd75ca71d60ab423bba65640fc8fdd15f7795710350e655cd9fc",
+          "viewPublic": "5cdb5df44dbb5851a702a9f501d456aeff53fa19cb6b50fc88dc4103b6416fce",
+          "address": "BZwryvXrPjzLhifP6xxrhYUpgEzoz7tkEMJ9kZVnK3NpjDEbxKLtYX9Ef8Zhfw9997WGhEmqp3r8PjEuKYEFkDB4QHsqG7s"
+        }
+      ]
+    },
+    {
+      "name": "leading-zeros",
+      "network": "mainnet",
+      "spendSecret": "0000000000000000000000000000000000000000000000000000000000000001",
+      "viewSecret": "cea3c5dfea43f31197bd4b7166da59f90af44b4afac2b0732d9fcbe2b7fa0c06",
+      "spendPublic": "1ed49357e217e79dab3c5503822f2bdb561e302e24476ee6ff33242c7551d4e7",
+      "viewPublic": "8944790c0cfa9998c2f196061be89b2b8387f9d397db20ea8e049899cdc947d1",
+      "address": "42nsXK8WbVGTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQdF28r3",
+      "paymentId": "0011223344556677",
+      "integrated": "4CVYY7x1CknTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnbxZjSZtUzMsEUyYT2x",
+      "mnemonic": [
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "bamboo",
+        "jaws",
+        "jerseys",
+        "abbey"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "1ed49357e217e79dab3c5503822f2bdb561e302e24476ee6ff33242c7551d4e7",
+          "viewPublic": "8944790c0cfa9998c2f196061be89b2b8387f9d397db20ea8e049899cdc947d1",
+          "address": "42nsXK8WbVGTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQdF28r3"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "d2eece121a9ea45732b9fd2925859f06a3a0d27362eb868a4f604d22478aef95",
+          "viewPublic": "8eca3992993f4c2912607fd748960604fac266ac5ba125451e32fb5b5eb6dd49",
+          "address": "8ASsQuwymABFaw1rXy2pFp27QgVd2hqZwQ8nHqZKX446S1u51ay654f7sSyGtSCnDK1qJqzZnHGx4CZXnmHNa56t9HRDBxX"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "bb70ea262e251be6964c3ebaee7e84301a0e14bd829283a66a4d2333453f84e9",
+          "viewPublic": "b971d1693618ce45f2f81c390bc12c0f54cda7ecbb5c4de7e3c3b59458e82966",
+          "address": "89ZEftksG8AfZz4FLzLyAs93eZB4vq26EUqSJfAW2dkXg6RKpRVb9g9ChbSoKNdCZq3ZjUz33QZYGfnczka8ig9eCbXjL47"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "04d844a7e88cf7f4d19fb86cf0ea19c7bba40b1eb7ca816321b0fd4c266bf0ef",
+          "viewPublic": "11661495bdc5b231295405a41db421242c974b45f2bc3fd86b928a9cb3c34a77",
+          "address": "82duCi6pw6vhx3sMxWeRMzaQfHKLvjY4xHaheNVy6yVqgzG1L3HTaJd9DvoDzJWnME73wDz5PNR7UdCYjPwbvCzmEVAWapr"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "81c24f1adfc453e6484487819c772fe7d386c21d6ad3fe4366a9f101d6ed73c3",
+          "viewPublic": "1621883bc54359c651295cddc5e1e76acd40d4232371c8df5e3b733ff8bccf5f",
+          "address": "87NTLGd9bNifX2YvcQ7JHkfn1JiEtNHwjCGsiaAEEZb8Zdaoz3RpNzcaAvaGyoStWaJs7SGPRPFDheMx7st7BzBxBpJEtVP"
+        }
+      ]
+    },
+    {
+      "name": "leading-zeros",
+      "network": "stagenet",
+      "spendSecret": "0000000000000000000000000000000000000000000000000000000000000001",
+      "viewSecret": "cea3c5dfea43f31197bd4b7166da59f90af44b4afac2b0732d9fcbe2b7fa0c06",
+      "spendPublic": "1ed49357e217e79dab3c5503822f2bdb561e302e24476ee6ff33242c7551d4e7",
+      "viewPublic": "8944790c0cfa9998c2f196061be89b2b8387f9d397db20ea8e049899cdc947d1",
+      "address": "52zucA3UF6NTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQf9eTdc",
+      "paymentId": "0011223344556677",
+      "integrated": "5ChacxrxrMtTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnbxZjSZtUzMsEWFAa8B",
+      "mnemonic": [
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "bamboo",
+        "jaws",
+        "jerseys",
+        "abbey"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "1ed49357e217e79dab3c5503822f2bdb561e302e24476ee6ff33242c7551d4e7",
+          "viewPublic": "8944790c0cfa9998c2f196061be89b2b8387f9d397db20ea8e049899cdc947d1",
+          "address": "52zucA3UF6NTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQf9eTdc"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "d2eece121a9ea45732b9fd2925859f06a3a0d27362eb868a4f604d22478aef95",
+          "viewPublic": "8eca3992993f4c2912607fd748960604fac266ac5ba125451e32fb5b5eb6dd49",
+          "address": "7AEqL5327Z5Faw1rXy2pFp27QgVd2hqZwQ8nHqZKX446S1u51ay654f7sSyGtSCnDK1qJqzZnHGx4CZXnmHNa56t9G9MRKP"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "bb70ea262e251be6964c3ebaee7e84301a0e14bd829283a66a4d2333453f84e9",
+          "viewPublic": "b971d1693618ce45f2f81c390bc12c0f54cda7ecbb5c4de7e3c3b59458e82966",
+          "address": "79MCb3qucX4fZz4FLzLyAs93eZB4vq26EUqSJfAW2dkXg6RKpRVb9g9ChbSoKNdCZq3ZjUz33QZYGfnczka8ig9eCcKmvUG"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "04d844a7e88cf7f4d19fb86cf0ea19c7bba40b1eb7ca816321b0fd4c266bf0ef",
+          "viewPublic": "11661495bdc5b231295405a41db421242c974b45f2bc3fd86b928a9cb3c34a77",
+          "address": "72Rs7sBsHVphx3sMxWeRMzaQfHKLvjY4xHaheNVy6yVqgzG1L3HTaJd9DvoDzJWnME73wDz5PNR7UdCYjPwbvCzmEWM2Z5s"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "81c24f1adfc453e6484487819c772fe7d386c21d6ad3fe4366a9f101d6ed73c3",
+          "viewPublic": "1621883bc54359c651295cddc5e1e76acd40d4232371c8df5e3b733ff8bccf5f",
+          "address": "77ARFRiBwmcfX2YvcQ7JHkfn1JiEtNHwjCGsiaAEEZb8Zdaoz3RpNzcaAvaGyoStWaJs7SGPRPFDheMx7st7BzBxBoRsisV"
+        }
+      ]
+    },
+    {
+      "name": "leading-zeros",
+      "network": "testnet",
+      "spendSecret": "0000000000000000000000000000000000000000000000000000000000000001",
+      "viewSecret": "cea3c5dfea43f31197bd4b7166da59f90af44b4afac2b0732d9fcbe2b7fa0c06",
+      "spendPublic": "1ed49357e217e79dab3c5503822f2bdb561e302e24476ee6ff33242c7551d4e7",
+      "viewPublic": "8944790c0cfa9998c2f196061be89b2b8387f9d397db20ea8e049899cdc947d1",
+      "address": "9tLR1ZnmsrNTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQeidLrM",
+      "paymentId": "0011223344556677",
+      "integrated": "A4362NcGV7tTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnbxZjSZtUzMsEUKMp8j",
+      "mnemonic": [
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "abbey",
+        "bamboo",
+        "jaws",
+        "jerseys",
+        "abbey"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "1ed49357e217e79dab3c5503822f2bdb561e302e24476ee6ff33242c7551d4e7",
+          "viewPublic": "8944790c0cfa9998c2f196061be89b2b8387f9d397db20ea8e049899cdc947d1",
+          "address": "9tLR1ZnmsrNTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQeidLrM"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "d2eece121a9ea45732b9fd2925859f06a3a0d27362eb868a4f604d22478aef95",
+          "viewPublic": "8eca3992993f4c2912607fd748960604fac266ac5ba125451e32fb5b5eb6dd49",
+          "address": "BgAzhs9LXn3Faw1rXy2pFp27QgVd2hqZwQ8nHqZKX446S1u51ay654f7sSyGtSCnDK1qJqzZnHGx4CZXnmHNa56t9KvuGEc"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "bb70ea262e251be6964c3ebaee7e84301a0e14bd829283a66a4d2333453f84e9",
+          "viewPublic": "b971d1693618ce45f2f81c390bc12c0f54cda7ecbb5c4de7e3c3b59458e82966",
+          "address": "BfHMxqxE2k2fZz4FLzLyAs93eZB4vq26EUqSJfAW2dkXg6RKpRVb9g9ChbSoKNdCZq3ZjUz33QZYGfnczka8ig9eCWscDG6"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "04d844a7e88cf7f4d19fb86cf0ea19c7bba40b1eb7ca816321b0fd4c266bf0ef",
+          "viewPublic": "11661495bdc5b231295405a41db421242c974b45f2bc3fd86b928a9cb3c34a77",
+          "address": "BYN2VfJBhinhx3sMxWeRMzaQfHKLvjY4xHaheNVy6yVqgzG1L3HTaJd9DvoDzJWnME73wDz5PNR7UdCYjPwbvCzmEVVPfxx"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "81c24f1adfc453e6484487819c772fe7d386c21d6ad3fe4366a9f101d6ed73c3",
+          "viewPublic": "1621883bc54359c651295cddc5e1e76acd40d4232371c8df5e3b733ff8bccf5f",
+          "address": "Bd6adDpWMzafX2YvcQ7JHkfn1JiEtNHwjCGsiaAEEZb8Zdaoz3RpNzcaAvaGyoStWaJs7SGPRPFDheMx7st7BzBxBmCu444"
+        }
+      ]
+    },
+    {
+      "name": "needs-reduction",
+      "network": "mainnet",
+      "spendSecret": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543200",
+      "viewSecret": "c1fbabbdf3535d067e12e9e350be10dae6f66ae6405ff51f08d9e00b2e0cc904",
+      "spendPublic": "96195454421f3c25869a9d294046c4624f6949097e1b58d07d83608aae44087d",
+      "viewPublic": "b73f10304d7882790e73355ed1de80ce049ab3b8826072b9f6c099f265b429a4",
+      "address": "47K1wesJbqm7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJKZUTu4U",
+      "paymentId": "0011223344556677",
+      "integrated": "4H1gxTgoD7H7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJUS1TpF3HdKbESkoK6u",
+      "mnemonic": [
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "mullet",
+        "solved",
+        "somewhere",
+        "slid"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "96195454421f3c25869a9d294046c4624f6949097e1b58d07d83608aae44087d",
+          "viewPublic": "b73f10304d7882790e73355ed1de80ce049ab3b8826072b9f6c099f265b429a4",
+          "address": "47K1wesJbqm7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJKZUTu4U"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "1b0a4af76c8723b8a13f9e8c0b37b7ef0bdaa3a66bc465d8d8c410bb9a5ad95a",
+          "viewPublic": "77468546e4851e9074b22803febc5839140d1ef1ce84599002929292c46bbe46",
+          "address": "83Ugggdx27kXt9Bc8LFbiegz3pVJjE5EUdGgjSB3oWTJG8dhZ24vVvMRAQMTmLq9VqAYjQwP25fepR65WxLNBZUZ8xQzpot"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "9549292a3fb30c2c79d193bc727e86e09139c3921a01eccad5018e2cb76fd323",
+          "viewPublic": "e083049a315fc486b216b212b52547e0fcea251f82268e9afb09e524c7e14f06",
+          "address": "887NcdvtuHM8SUM7u8Nb9weZasZNdwuu5avj3wN7TTYN7141NK1BzjmPXiZhbCCoEvedfZonuBHg9SvWMgZXGsFc1mTY3Wq"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "b4409ca03c98954ccae37567f042f681449161aa58dd944c481f71bf4cd4635e",
+          "viewPublic": "3794cf1e1ba0248be4e4a0f136ff8bb917518ccc0787a24832e91dabb8b7cb54",
+          "address": "89HSFhmrqVNDqz4PgrEXZ7Nd4UsGY9LV1Dm2eKCV3gTLGm2PqhNw5uDQQ9bLxyEujGXxchEhvRcwjD5RL7ZasCsCAZofAhj"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "114eec21e0800ac7680707ed82da2a7390a58b30c215600199915c1cea7fc8ca",
+          "viewPublic": "4a4ee0df6599109bfeced9bcfa2300f2590f2f0ebd1a739d85439e8e9d79dd32",
+          "address": "837J4AGUNcZaMVWFDwTat9LL8HESje2Ns1GXCvJAtvibaqUCeex5JfZT6MKDWNmABhhY5XhMPtSznTM9WmVYvbDe6eqjmpn"
+        }
+      ]
+    },
+    {
+      "name": "needs-reduction",
+      "network": "stagenet",
+      "spendSecret": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543200",
+      "viewSecret": "c1fbabbdf3535d067e12e9e350be10dae6f66ae6405ff51f08d9e00b2e0cc904",
+      "spendPublic": "96195454421f3c25869a9d294046c4624f6949097e1b58d07d83608aae44087d",
+      "viewPublic": "b73f10304d7882790e73355ed1de80ce049ab3b8826072b9f6c099f265b429a4",
+      "address": "57X42VnGFSs7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJKWxu75r",
+      "paymentId": "0011223344556677",
+      "integrated": "5HDj3JbkriP7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJUS1TpF3HdKbEXUpUuh",
+      "mnemonic": [
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "mullet",
+        "solved",
+        "somewhere",
+        "slid"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "96195454421f3c25869a9d294046c4624f6949097e1b58d07d83608aae44087d",
+          "viewPublic": "b73f10304d7882790e73355ed1de80ce049ab3b8826072b9f6c099f265b429a4",
+          "address": "57X42VnGFSs7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJKWxu75r"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "1b0a4af76c8723b8a13f9e8c0b37b7ef0bdaa3a66bc465d8d8c410bb9a5ad95a",
+          "viewPublic": "77468546e4851e9074b22803febc5839140d1ef1ce84599002929292c46bbe46",
+          "address": "73GebqizNWeXt9Bc8LFbiegz3pVJjE5EUdGgjSB3oWTJG8dhZ24vVvMRAQMTmLq9VqAYjQwP25fepR65WxLNBZUZ919w5Xc"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "9549292a3fb30c2c79d193bc727e86e09139c3921a01eccad5018e2cb76fd323",
+          "viewPublic": "e083049a315fc486b216b212b52547e0fcea251f82268e9afb09e524c7e14f06",
+          "address": "77uLXo1wFgF8SUM7u8Nb9weZasZNdwuu5avj3wN7TTYN7141NK1BzjmPXiZhbCCoEvedfZonuBHg9SvWMgZXGsFc1guS1NV"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "b4409ca03c98954ccae37567f042f681449161aa58dd944c481f71bf4cd4635e",
+          "viewPublic": "3794cf1e1ba0248be4e4a0f136ff8bb917518ccc0787a24832e91dabb8b7cb54",
+          "address": "795QArruBtGDqz4PgrEXZ7Nd4UsGY9LV1Dm2eKCV3gTLGm2PqhNw5uDQQ9bLxyEujGXxchEhvRcwjD5RL7ZasCsCAauQ3Ur"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "114eec21e0800ac7680707ed82da2a7390a58b30c215600199915c1cea7fc8ca",
+          "viewPublic": "4a4ee0df6599109bfeced9bcfa2300f2590f2f0ebd1a739d85439e8e9d79dd32",
+          "address": "72uFyKMWj1TaMVWFDwTat9LL8HESje2Ns1GXCvJAtvibaqUCeex5JfZT6MKDWNmABhhY5XhMPtSznTM9WmVYvbDe6fXgzVA"
+        }
+      ]
+    },
+    {
+      "name": "needs-reduction",
+      "network": "testnet",
+      "spendSecret": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543200",
+      "viewSecret": "c1fbabbdf3535d067e12e9e350be10dae6f66ae6405ff51f08d9e00b2e0cc904",
+      "spendPublic": "96195454421f3c25869a9d294046c4624f6949097e1b58d07d83608aae44087d",
+      "viewPublic": "b73f10304d7882790e73355ed1de80ce049ab3b8826072b9f6c099f265b429a4",
+      "address": "9xrZRuXZtCs7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJKaYK535",
+      "paymentId": "0011223344556677",
+      "integrated": "A8ZESiM4VUP7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJUS1TpF3HdKbETpGG6Z",
+      "mnemonic": [
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "aces",
+        "slid",
+        "theatrics",
+        "having",
+        "mops",
+        "cake",
+        "mullet",
+        "solved",
+        "somewhere",
+        "slid"
+      ],
+      "mnemonicLanguage": "English",
+      "subaddresses": [
+        {
+          "major": 0,
+          "minor": 0,
+          "spendPublic": "96195454421f3c25869a9d294046c4624f6949097e1b58d07d83608aae44087d",
+          "viewPublic": "b73f10304d7882790e73355ed1de80ce049ab3b8826072b9f6c099f265b429a4",
+          "address": "9xrZRuXZtCs7H3ju6kVSvFHSjTkkKcUUwbscnPAndyYKN2br5b2qQqPMFQ9nM1uHsDbTdgpvPXmNHY75nhDF3XyJKaYK535"
+        },
+        {
+          "major": 0,
+          "minor": 1,
+          "spendPublic": "1b0a4af76c8723b8a13f9e8c0b37b7ef0bdaa3a66bc465d8d8c410bb9a5ad95a",
+          "viewPublic": "77468546e4851e9074b22803febc5839140d1ef1ce84599002929292c46bbe46",
+          "address": "BZCoydqJnjcXt9Bc8LFbiegz3pVJjE5EUdGgjSB3oWTJG8dhZ24vVvMRAQMTmLq9VqAYjQwP25fepR65WxLNBZUZ8zx8inY"
+        },
+        {
+          "major": 1,
+          "minor": 0,
+          "spendPublic": "9549292a3fb30c2c79d193bc727e86e09139c3921a01eccad5018e2cb76fd323",
+          "viewPublic": "e083049a315fc486b216b212b52547e0fcea251f82268e9afb09e524c7e14f06",
+          "address": "BdqVub8FfuD8SUM7u8Nb9weZasZNdwuu5avj3wN7TTYN7141NK1BzjmPXiZhbCCoEvedfZonuBHg9SvWMgZXGsFc1h3nRVs"
+        },
+        {
+          "major": 2,
+          "minor": 3,
+          "spendPublic": "b4409ca03c98954ccae37567f042f681449161aa58dd944c481f71bf4cd4635e",
+          "viewPublic": "3794cf1e1ba0248be4e4a0f136ff8bb917518ccc0787a24832e91dabb8b7cb54",
+          "address": "Bf1ZYeyDc7EDqz4PgrEXZ7Nd4UsGY9LV1Dm2eKCV3gTLGm2PqhNw5uDQQ9bLxyEujGXxchEhvRcwjD5RL7ZasCsCAZzeipF"
+        },
+        {
+          "major": 0,
+          "minor": 1000,
+          "spendPublic": "114eec21e0800ac7680707ed82da2a7390a58b30c215600199915c1cea7fc8ca",
+          "viewPublic": "4a4ee0df6599109bfeced9bcfa2300f2590f2f0ebd1a739d85439e8e9d79dd32",
+          "address": "BYqRM7Tq9ERaMVWFDwTat9LL8HESje2Ns1GXCvJAtvibaqUCeex5JfZT6MKDWNmABhhY5XhMPtSznTM9WmVYvbDe6hT95Ce"
+        }
+      ]
+    }
+  ]
+}

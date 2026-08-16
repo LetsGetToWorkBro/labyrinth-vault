@@ -8,6 +8,7 @@
     "rapidjson": "129d19ba7f496df5e33658527a7158c79b99c21c"
   },
   "produces": [
+    "test/fixtures/monero-address.json",
     "test/fixtures/monero-keyimages.json",
     "test/fixtures/monero-unsigned-tx-set.json",
     "test/fixtures/monero-import-key-images.json",

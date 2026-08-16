@@ -412,6 +412,27 @@ export function subaddressSecretKey(viewSecret: Uint8Array, major: number, minor
  * `D = B + m·G` where `m` is the subaddress secret and `B` the main spend
  * public key; `C = a·D`, the subaddress view key, which is `a·D` and not `a·G`,
  * the difference that makes subaddresses unlinkable to the main address.
+ *
+ * ## Index (0, 0) is not a subaddress, and the difference matters
+ *
+ * Monero's `get_subaddress` returns `m_account_address` unchanged at (0, 0):
+ * the main address, whose keys are `(B, A)` with `A = a·G`. It is not the
+ * subaddress formula evaluated at a zero offset, because the main address
+ * predates subaddresses and its view key was never `a·B`.
+ *
+ * This returned `a·B` until `oracle/src/address.cpp` asked Monero. That is the
+ * main *spend* key beside a *subaddress-style* view key: a pair belonging to
+ * no address at all, which nobody could spend from and nobody could watch.
+ *
+ * It never reached a device. This function has no caller in `src/` -- sending
+ * to somebody else's subaddress uses the keys out of their address string, not
+ * a derivation -- so the bundler drops it and the shipped engine does not
+ * contain it. The defect was waiting for the first caller that walked indices
+ * from zero to build a list, which is a thing this vault will want to do.
+ *
+ * `test/monerocrypto.test.ts` asserted the same wrong rule, in as many words,
+ * which is why nothing caught it. `test/fixtures/monero-address.json` is the
+ * witness now.
  */
 export function subaddressKeys(
   spendPublic: Uint8Array,
@@ -421,8 +442,8 @@ export function subaddressKeys(
 ): { spend: Uint8Array; view: Uint8Array } {
   expect32(spendPublic, 'spend public key');
   if (major === 0 && minor === 0) {
-    const B = Point.fromBytes(spendPublic);
-    return { spend: spendPublic, view: B.multiplyUnsafe(toBigIntLE(expect32(viewSecret, 'view secret')) % L).toBytes() };
+    const a = toBigIntLE(expect32(viewSecret, 'view secret')) % L;
+    return { spend: spendPublic, view: Point.BASE.multiply(a).toBytes() };
   }
   const m = toBigIntLE(subaddressSecretKey(viewSecret, major, minor));
   const D = Point.fromBytes(spendPublic).add(Point.BASE.multiply(m));

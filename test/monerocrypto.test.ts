@@ -236,10 +236,21 @@ describe('subaddresses', () => {
   const spendPublic = publicFromSecret(spendSecret);
 
   it('returns the main address at index (0, 0)', () => {
+    /* This asserted `a·B` until recently, with a comment reading "main view
+     * key is a·B = a·(main spend)", and `subaddressKeys` agreed with it. Both
+     * were wrong. The main address is `(B, A)` with `A = a·G`, which is what
+     * Monero's `get_subaddress` hands back unchanged for (0, 0): the main
+     * address is not a subaddress and its view key predates them.
+     *
+     * `a·B` is the *subaddress* view formula. Applied to the main spend key it
+     * produces a pair that is no address at all - unspendable by its owner and
+     * invisible to its watcher. Nothing shipped it: `subaddressKeys` has no
+     * caller in `src/` and the bundler drops it. A test and an implementation
+     * making the same mistake is why nothing caught it, and
+     * `test/fixtures/monero-address.json` is the outside witness that did. */
     const sub = subaddressKeys(spendPublic, viewSecret, 0, 0);
     expect(hex(sub.spend)).toBe(hex(spendPublic));
-    /* Main view key is a·B = a·(main spend). */
-    const mainView = Point.fromHex(hex(spendPublic)).multiply(toBig(viewSecret)).toBytes();
+    const mainView = Point.BASE.multiply(toBig(viewSecret)).toBytes();
     expect(hex(sub.view)).toBe(hex(mainView));
   });
 

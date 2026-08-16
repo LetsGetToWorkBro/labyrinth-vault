@@ -78,6 +78,7 @@ describe('the oracle rig', () => {
       'oracle/src/importkeyimages.cpp',
       'oracle/src/verifytx.cpp',
       'oracle/src/clsag.cpp',
+      'oracle/src/address.cpp',
       'oracle/src/wallet-unreachable.cpp',
       'oracle/src/shim/boost/preprocessor/stringize.hpp',
       'oracle/btc.sh',

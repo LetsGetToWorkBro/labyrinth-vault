@@ -46,10 +46,14 @@ import {
   toHex,
   wipeWallet,
   watchOnlyExport,
+  subaddressFor,
   walletFromMnemonic,
   walletFromSeed,
+  type Network,
 } from '../src/keys/monero';
+import { subaddressKeys } from '../src/keys/monerocrypto';
 import { MONERO_WORDS, PREFIX_LENGTH } from '../src/keys/monero-words';
+import { readFileSync } from 'node:fs';
 
 const seedFrom = (text: string) => {
   // A deterministic 32 bytes, so every test here is reproducible.
@@ -650,4 +654,128 @@ describe('formatting piconero', () => {
     expect(formatXmr(1n)).toBe('0.000000000001');
     expect(formatXmr(-600_000_000_000n)).toBe('-0.6');
   });
+});
+
+describe("addresses and seed phrases, against Monero's own encoders", () => {
+  /* Everything else in this file about addresses and phrases is a round trip:
+   * encode then decode, split then rejoin, the checksum word sits where the
+   * checksum function says. That proves an encoder and a decoder agree, and it
+   * is exactly the shape of test that let two mistakes live in CLSAG for
+   * months. One real anchor existed - KNOWN_ADDRESS, the Monero project's
+   * donation address - and it anchors parsing one mainnet standard address.
+   *
+   * These two artifacts are the ones a person holds, and the failures are the
+   * worst kind: silent and late.
+   *
+   *   A wrong address is money sent where nobody can spend it, and the
+   *   watch-only companion derives from this same code, so both screens would
+   *   agree and nothing would look wrong until a third wallet disagreed.
+   *
+   *   A wrong seed phrase is a backup that restores in no other wallet. The
+   *   person finds out on the day the phone is gone, which is the one day it
+   *   cannot be fixed.
+   *
+   * `oracle/src/address.cpp` asks Monero: get_account_address_as_str,
+   * get_account_integrated_address_as_str, hw::device::get_subaddress, and
+   * ElectrumWords::bytes_to_words. Three secrets across three networks, and
+   * the leading-zeros one is there because a base58 written from Bitcoin's
+   * eats a zero byte that Monero's block encoding keeps.
+   */
+  const fixture = JSON.parse(readFileSync('test/fixtures/monero-address.json', 'utf8')) as {
+    accounts: {
+      name: string;
+      network: Network;
+      spendSecret: string;
+      viewSecret: string;
+      spendPublic: string;
+      viewPublic: string;
+      address: string;
+      paymentId: string;
+      integrated: string;
+      mnemonic: string[];
+      subaddresses: { major: number; minor: number; spendPublic: string; viewPublic: string; address: string }[];
+    }[];
+  };
+
+  it('covers three networks and the awkward secrets', () => {
+    expect(fixture.accounts.length).toBe(9);
+    expect(new Set(fixture.accounts.map((a) => a.network))).toEqual(
+      new Set(['mainnet', 'stagenet', 'testnet']),
+    );
+    expect(fixture.accounts.some((a) => a.name === 'leading-zeros')).toBe(true);
+  });
+
+  for (const account of fixture.accounts) {
+    describe(`${account.name} on ${account.network}`, () => {
+      const wallet = walletFromSeed(fromHex(account.spendSecret), account.network);
+
+      it('derives the same view secret and the same public keys', () => {
+        /* The deterministic-wallet rule, which is Monero's and not ours: the
+         * view secret is the reduced Keccak of the spend secret. Asked for
+         * rather than asserted. */
+        expect(toHex(wallet.viewSecret)).toBe(account.viewSecret);
+        expect(wallet.spendPublic).toBe(account.spendPublic);
+        expect(wallet.viewPublic).toBe(account.viewPublic);
+      });
+
+      it('encodes the address Monero encodes', () => {
+        expect(wallet.address).toBe(account.address);
+        expect(addressFor(fromHex(account.spendPublic), fromHex(account.viewPublic), account.network))
+          .toBe(account.address);
+      });
+
+      it('reads back what Monero wrote', () => {
+        const parsed = parseAddress(account.address);
+        expect(parsed.valid).toBe(true);
+        expect(parsed.network).toBe(account.network);
+        expect(parsed.kind).toBe('standard');
+        expect(parsed.spendPublic).toBe(account.spendPublic);
+        expect(parsed.viewPublic).toBe(account.viewPublic);
+      });
+
+      it('reads back the integrated address, payment id and all', () => {
+        /* This vault does not write integrated addresses, but it will be shown
+         * one and has to say what it is. A wrong prefix table or a wrong
+         * length would make it call a real address invalid. */
+        const parsed = parseAddress(account.integrated);
+        expect(parsed.valid, account.integrated).toBe(true);
+        expect(parsed.kind).toBe('integrated');
+        expect(parsed.network).toBe(account.network);
+        expect(parsed.spendPublic).toBe(account.spendPublic);
+        expect(parsed.viewPublic).toBe(account.viewPublic);
+        expect(parsed.paymentId).toBe(account.paymentId);
+      });
+
+      it('produces the same twenty-five words', () => {
+        /* The one that would fail on the worst possible day. Monero's
+         * wordlist, Monero's checksum, Monero's ordering. */
+        expect(mnemonicFromSeed(wallet.spendSecret)).toEqual(account.mnemonic);
+      });
+
+      it('restores the same wallet from those words', () => {
+        const back = walletFromMnemonic(account.mnemonic, account.network);
+        expect('problem' in back ? back.problem : '').toBe('');
+        expect((back as typeof wallet).address).toBe(account.address);
+      });
+
+      it('derives every subaddress Monero derives', () => {
+        for (const sub of account.subaddresses) {
+          const keys = subaddressKeys(
+            fromHex(account.spendPublic), wallet.viewSecret, sub.major, sub.minor,
+          );
+          const where = `(${sub.major}, ${sub.minor})`;
+          expect(toHex(keys.spend), `${where} spend`).toBe(sub.spendPublic);
+          /* (0, 0) is the main address and is encoded with the standard tag,
+           * not the subaddress tag. Its view key is a·G, not a·D - which is
+           * the distinction this fixture caught us getting wrong. */
+          expect(toHex(keys.view), `${where} view`).toBe(sub.viewPublic);
+          const main = sub.major === 0 && sub.minor === 0;
+          const encoded = main
+            ? addressFor(keys.spend, keys.view, account.network)
+            : subaddressFor(keys.spend, keys.view, account.network);
+          expect(encoded, `${where} address`).toBe(sub.address);
+        }
+      });
+    });
+  }
 });
