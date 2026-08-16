@@ -479,15 +479,41 @@ describe('a swap deposit is an ordinary payment, checked by reading the source',
    */
 
   const screen = readFileSync('src/screens/Swap.tsx', 'utf8');
+  const deposit = readFileSync('src/screens/SwapDeposit.tsx', 'utf8');
   const store = readFileSync('src/state/store.tsx', 'utf8');
 
-  it('hands off to the send flow rather than signing anything itself', () => {
+  it('hands the order to the deposit screen rather than signing anything itself', () => {
+    /* This used to require `navigate('Send')` here, from the days when a swap
+     * could only start from a coin this wallet signs for. A deposit is paid
+     * from anywhere now, so the handoff is to the screen that shows the
+     * address, and paying from this wallet is one offer on it. The invariant
+     * did not change: neither screen may reach the signing machinery itself. */
     expect(screen).toMatch(/depositForSwap\(/);
-    expect(screen).toMatch(/navigation\.navigate\('Send'\)/);
-    // Nothing on this screen may reach for the signing machinery directly.
-    for (const forbidden of ['prepareDraft', 'offerSignature', 'broadcast', 'beginTransmit']) {
-      expect(screen, `Swap.tsx calls ${forbidden}`).not.toMatch(new RegExp(`\\b${forbidden}\\b`));
+    expect(screen).toMatch(/navigation\.navigate\('SwapDeposit'/);
+    expect(deposit).toMatch(/navigation\.navigate\('Send'\)/);
+  });
+
+  it('keeps both swap screens away from the signing machinery', () => {
+    /* Comments stripped before the check. The first version of this fired on
+     * the sentence "the wallet built and broadcast the deposit payment
+     * itself", which is a screen explaining why it no longer does the thing
+     * the guard forbids. A guard that fails on its own documentation teaches
+     * people to delete the documentation. */
+    const code = (source: string) =>
+      source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const [name, source] of [['Swap.tsx', screen], ['SwapDeposit.tsx', deposit]] as const) {
+      for (const forbidden of ['prepareDraft', 'offerSignature', 'broadcast', 'beginTransmit']) {
+        expect(code(source), `${name} calls ${forbidden}`).not.toMatch(new RegExp(`\\b${forbidden}\\b`));
+      }
     }
+  });
+
+  it('only offers to pay from this wallet for a coin it watches', () => {
+    /* The offer is gated on `coin.ours`, which is null for every coin this
+     * wallet does not watch. Ungated, the button would set an asset of `null`
+     * and drop somebody into a send flow for a chain with no node behind it. */
+    expect(deposit).toMatch(/coin\.ours !== null/);
+    expect(deposit).toMatch(/canPayHere \?/);
   });
 
   it('routes the deposit through compose, so the vault renders the address', () => {

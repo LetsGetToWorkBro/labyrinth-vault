@@ -29,6 +29,7 @@ import { AssetScreen } from './src/screens/Asset';
 import { ReceiveScreen } from './src/screens/Receive';
 import { SwapScreen } from './src/screens/Swap';
 import { CoinPickerScreen } from './src/screens/CoinPicker';
+import { SwapDepositScreen } from './src/screens/SwapDeposit';
 import { SwapStatusScreen } from './src/screens/SwapStatus';
 import { NodesScreen } from './src/screens/Nodes';
 import { KeyImagesScreen } from './src/screens/KeyImages';
@@ -90,6 +91,7 @@ export default function App() {
                 <Stack.Screen name="Send" component={SendScreen} />
                 <Stack.Screen name="Swap" component={SwapScreen} />
                 <Stack.Screen name="CoinPicker" component={CoinPickerScreen} />
+                <Stack.Screen name="SwapDeposit" component={SwapDepositScreen} />
               <Stack.Screen name="SwapStatus" component={SwapStatusScreen} />
               <Stack.Screen name="Nodes" component={NodesScreen} />
               <Stack.Screen name="KeyImages" component={KeyImagesScreen} />

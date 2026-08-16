@@ -62,6 +62,23 @@ export type Routes = {
    */
   CoinPicker: { side: 'from' | 'to'; selected: string; exclude: string };
   /**
+   * Where to send the coin, once an exchange has taken the order.
+   *
+   * Carries the order's own fields rather than reading them from a store,
+   * because a deposit address is the one thing on the screen that must be the
+   * one the exchange gave: routed through a parameter it is the value that
+   * came back from `createOrder`, and nothing between here and there can
+   * substitute a different one without it being visible in a diff.
+   */
+  SwapDeposit: {
+    fromId: string;
+    address: string;
+    extra: string | null;
+    amount: number;
+    provider: string;
+    orderId: string;
+  };
+  /**
    * Where a created swap has got to, on the provider's say-so.
    *
    * Its own route rather than a face of Swap because it outlives the compose

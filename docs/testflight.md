@@ -514,6 +514,13 @@ in.
   is the defect: two chains would read alike, and picking the wrong one sends
   money somewhere nobody can retrieve it from.
 
+- **Swap deposit.** Start a swap from a coin this wallet does *not* watch, say
+  USDC on Base. Expect a deposit screen with the exact amount, a QR, and the
+  address set in groups of four with alternating contrast. Check the chain is
+  named in a warning above it. Then start one from Bitcoin or Monero and expect
+  the same screen plus a PAY FROM THIS WALLET lever. **Do not send anything**;
+  this is a reading test, and the order can be abandoned.
+
 **Swap and its status screen are deliberately out of scope here.** They talk to
 third-party exchanges over the network, which is a different trust question
 from anything else in this document, and mixing it into an airgap test plan

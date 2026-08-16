@@ -35,7 +35,7 @@ import { Gap, Press, Rule, Screen } from '../design/atoms';
 import { Body, Label, LabelWide, Small, Strong } from '../design/text';
 import { Header } from '../components/chrome';
 import { assetColor, color, radius, space } from '../design/tokens';
-import { OUR_COINS, SWAP_COINS, chainName, type SwapCoin } from '../core/swap';
+import { SWAP_COINS, chainName, type SwapCoin } from '../core/swap';
 import { groupCoins, searchCoins } from '../core/coinpick';
 import type { Nav } from '../nav/routes';
 
@@ -49,22 +49,28 @@ export function CoinPickerScreen({ navigation, route }: Nav<'CoinPicker'>) {
   const [query, setQuery] = useState('');
 
   /*
-   * Two different catalogs, and the asymmetry is the product rather than an
-   * omission.
+   * The whole catalog, both sides.
    *
-   * The sending side offers only what this wallet holds, because sending is
-   * this wallet building and broadcasting a payment, and it can only do that
-   * for a chain it watches. The receiving side offers everything, because
-   * receiving is an exchange paying out to an address, and the address can be
-   * anywhere.
+   * The sending side used to offer only what this wallet holds, because the
+   * wallet built and broadcast the deposit payment itself and can only do that
+   * for a chain it watches. That was a limit of the implementation wearing the
+   * costume of a limit of the product. An exchange does not care who pays: it
+   * gives out an address and swaps whatever arrives, so the deposit can come
+   * from any wallet anywhere, and `SwapDeposit` is the screen that makes that
+   * possible. Two sendable coins became twenty-four without watching a single
+   * new chain.
    *
-   * Either way the coin on the other side of the trade is withdrawn. An
+   * Paying from this wallet is still offered, and still preferred where it can
+   * be: for Bitcoin and Monero the amount is filled in exactly and the vault
+   * reviews it as usual. `coin.ours` is what the row uses to say so.
+   *
+   * The coin on the other side of the trade is withdrawn either way. An
    * exchange asked to turn a coin into itself refuses at order time, after
    * somebody has already chosen and typed an amount.
    */
   const catalog = useMemo(
-    () => (side === 'from' ? OUR_COINS : SWAP_COINS).filter((coin) => coin.id !== exclude),
-    [side, exclude],
+    () => SWAP_COINS.filter((coin) => coin.id !== exclude),
+    [exclude],
   );
 
   const rows = useMemo<Row[]>(() => {
@@ -214,9 +220,9 @@ function CoinRowItem({
           <Small tone={color.slate}>{coin.label}</Small>
         </View>
 
-        {/* Held here as well as tradable: worth saying, because it is the
-            difference between a swap that lands in this wallet and one that
-            lands somewhere a person has to go and fetch. */}
+        {/* Watched here, which decides two different conveniences: sending,
+            this wallet can build the deposit itself; receiving, the payout
+            lands somewhere it can see rather than somewhere to go and fetch. */}
         {coin.ours ? <Label tone={color.slate}>IN THIS WALLET</Label> : null}
         {selected ? <Label tone={tone}>·</Label> : null}
       </View>

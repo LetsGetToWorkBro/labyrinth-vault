@@ -160,15 +160,31 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
       return;
     }
     confirmed();
-    store.depositForSwap(result.order, from.ours as Asset, to.id);
-    navigation.navigate('Send');
+    /*
+     * Always the deposit screen, even when this wallet could pay it.
+     *
+     * The old path went straight into Send for the two coins it could sign
+     * for, which read as helpful and quietly made those two the only coins a
+     * swap could start from. Now the deposit is a thing somebody pays, and
+     * paying it from here is one offer on that screen rather than the only
+     * route through it. For Bitcoin and Monero the offer is still there and
+     * still fills the amount in exactly.
+     */
+    if (from.ours) store.depositForSwap(result.order, from.ours as Asset, to.id);
+    navigation.navigate('SwapDeposit', {
+      fromId: from.id,
+      address: result.order.depositAddress,
+      extra: result.order.depositExtra,
+      amount: result.order.depositAmount,
+      provider: result.order.provider,
+      orderId: result.order.id,
+    });
   }
 
-  /* Reversing the trade is only meaningful when the coin coming back is one
-   * this wallet holds, because a swap must start from one it can sign for.
-   * The control disables rather than disappears: an affordance that vanishes
-   * teaches nobody why. */
-  const canFlip = to.ours !== null;
+  /* Reversing used to need the coin coming back to be one this wallet holds,
+   * because a swap could only start from one it could sign for. A deposit is
+   * paid from anywhere now, so any pair reverses. */
+  const canFlip = true;
   const flipTurns = useSharedValue(0);
   function flip() {
     if (!canFlip) return;
