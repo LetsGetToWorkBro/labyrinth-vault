@@ -54,6 +54,7 @@ import {
   type SwapOrder,
   type SwapRequest,
   type SwapTransport,
+  preferredProvider,
 } from '../src/core/swap';
 
 /** Addresses this wallet would derive. Fixed so a diff is readable. */
@@ -1198,5 +1199,73 @@ describe('anchored to what the exchanges actually answered', () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.problem).toMatch(/expired/);
+  });
+});
+
+describe('which exchange the order actually goes to', () => {
+  /*
+   * The screen used to hold the provider in state, initialised to a constant,
+   * and move it only when somebody tapped a row. It computed the best payer,
+   * labelled it, and then built the order with whoever the constant named.
+   *
+   * Two silent ways to lose money, and both are tested below: the other
+   * exchange offering more, and the constant's exchange having declined the
+   * pair outright while a working quote sat unused on the screen.
+   */
+  const quote = (provider: 'exolix' | 'godex', toAmount: number | null): SwapQuote =>
+    ({ provider, ok: toAmount !== null, toAmount, problem: toAmount === null ? 'no' : null }) as SwapQuote;
+
+  it('takes the exchange that pays most', () => {
+    expect(preferredProvider([quote('exolix', 10), quote('godex', 11)], null)).toBe('godex');
+    expect(preferredProvider([quote('exolix', 12), quote('godex', 11)], null)).toBe('exolix');
+  });
+
+  it('never picks one that declined while another answered', () => {
+    expect(preferredProvider([quote('exolix', null), quote('godex', 5)], null)).toBe('godex');
+    expect(preferredProvider([quote('exolix', 5), quote('godex', null)], null)).toBe('exolix');
+  });
+
+  it('ignores an answer of zero, which is not an offer', () => {
+    expect(preferredProvider([quote('exolix', 0), quote('godex', 1)], null)).toBe('godex');
+    expect(preferredProvider([quote('exolix', 0), quote('godex', null)], null)).toBe(null);
+  });
+
+  it('honours a pin while that exchange is still answering', () => {
+    const quotes = [quote('exolix', 10), quote('godex', 11)];
+    expect(preferredProvider(quotes, 'exolix')).toBe('exolix');
+    expect(preferredProvider(quotes, 'godex')).toBe('godex');
+  });
+
+  it('drops a pin on an exchange that has stopped answering', () => {
+    /* Otherwise a pin set against one quote set silently survives into a
+     * later one where that exchange refused, and the order is built for an
+     * exchange that just said no. */
+    expect(preferredProvider([quote('exolix', null), quote('godex', 7)], 'exolix')).toBe('godex');
+  });
+
+  it('keeps a pin when nothing answered, so the refusal shown is the chosen one', () => {
+    expect(preferredProvider([quote('exolix', null), quote('godex', null)], 'exolix')).toBe('exolix');
+  });
+
+  it('has nothing to say before any quotes arrive', () => {
+    expect(preferredProvider([], null)).toBe(null);
+    expect(preferredProvider([], 'godex')).toBe('godex');
+  });
+
+  it('breaks a tie by catalog order rather than arrival order', () => {
+    /* Equal payouts must not depend on which network reply landed first, or
+     * the same trade picks a different exchange run to run. */
+    const first = preferredProvider([quote('exolix', 9), quote('godex', 9)], null);
+    const second = preferredProvider([quote('godex', 9), quote('exolix', 9)], null);
+    expect(first).toBe('exolix');
+    expect(second).toBe('godex');
+  });
+
+  it('is what the screen uses, rather than a constant', () => {
+    const screen = readFileSync('src/screens/Swap.tsx', 'utf8');
+    expect(screen).toMatch(/const chosen = preferredProvider\(/);
+    expect(screen, 'a default provider constant is the defect').not.toMatch(
+      /useState<ProviderId>\('exolix'\)/,
+    );
   });
 });

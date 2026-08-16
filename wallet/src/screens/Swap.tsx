@@ -69,6 +69,7 @@ import {
   buildRequest,
   createOrder,
   parsePair,
+  preferredProvider,
   quoteAll,
   swapCoin,
   type ProviderId,
@@ -88,7 +89,10 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
   const [typedPayout, setTypedPayout] = useState('');
   const [phase, setPhase] = useState<Phase>('compose');
   const [quotes, setQuotes] = useState<SwapQuote[]>([]);
-  const [chosen, setChosen] = useState<ProviderId>('exolix');
+  /* What somebody explicitly picked, or null for "whatever pays best". Not a
+   * default provider: see `preferredProvider` for why a remembered favourite
+   * is the same defect in slower motion. */
+  const [pinned, setPinned] = useState<ProviderId | null>(null);
   /** A refusal: the problem in words, and what was actually seen. */
   const [refusal, setRefusal] = useState<{ problem: string; detail: string } | null>(null);
 
@@ -105,6 +109,7 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
     if (!chose) return;
     if (chose.side === 'from') setFromId(chose.id);
     else setToId(chose.id);
+    setPinned(null);
     setPhase('compose');
     /* Cleared so that coming back to this screen a third time, by any route,
      * does not re-apply a choice somebody has since changed by hand. */
@@ -113,6 +118,12 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
 
   const from = swapCoin(fromId)!;
   const to = swapCoin(toId)!;
+
+  /* Derived before the request that uses it. The exchange this order goes to
+   * is whichever one actually quoted best, not a constant somebody would have
+   * had to notice a badge and tap a row to override. */
+  const chosen = preferredProvider(quotes, pinned) ?? PROVIDERS[0]!.id;
+  const best = quotes.find((quote) => quote.provider === chosen && quote.ok);
 
   const pair = parsePair(fromId, toId);
   const request = pair.ok
@@ -124,8 +135,6 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
         typedPayout,
       })
     : ({ ok: false, problem: pair.problem } as const);
-
-  const best = quotes.find((quote) => quote.provider === chosen && quote.ok);
   const creating = phase === 'creating';
 
   /* The one honest ranking this screen can compute: of the quotes that
@@ -278,7 +287,7 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
           {['0.01', '0.05', '0.1', '0.25'].map((step) => (
             <Chip
               key={step}
-              onPress={() => { setAmount(step); setPhase('compose'); }}
+              onPress={() => { setAmount(step); setPinned(null); setPhase('compose'); }}
               tone={amount === step ? color.bone : color.slate}
               fill={amount === step ? color.raised : 'transparent'}
             >
@@ -334,7 +343,7 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
                 chosen={quote.provider === chosen}
                 bestPayout={quote.provider === bestPayoutProvider}
                 index={index}
-                onPress={() => setChosen(quote.provider)}
+                onPress={() => setPinned(quote.provider)}
               />
             ))}
             <Gap size={space.gap} />

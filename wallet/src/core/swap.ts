@@ -273,6 +273,48 @@ export const PROVIDERS: { id: ProviderId; label: string; host: string }[] = [
  * thing in this wallet that talks to a stranger about coins you own, and the
  * cost is the same on the hundredth swap as on the first.
  */
+/**
+ * Which exchange should be selected, given what they actually answered.
+ *
+ * The screen used to hold a provider in state, initialised to a constant, and
+ * change it only when somebody tapped a row. So quotes would arrive, the
+ * screen would compute the best payer and label it, and the CREATE button
+ * would build an order with whoever the constant named. Two ways that cost
+ * money, both silent:
+ *
+ *   - one exchange offers more and the order goes to the other one;
+ *   - the constant's exchange declines the pair entirely, and the order is
+ *     built for an exchange that just said no, while a working quote sits on
+ *     the screen unused.
+ *
+ * So the selection is derived from the quotes rather than remembered across
+ * them. Highest payout wins; ties keep the earlier provider, which is the
+ * order `PROVIDERS` is written in. A person who taps a row pins it, and a pin
+ * survives until the trade itself changes, because a pin is a statement about
+ * this comparison and not about exchanges in general.
+ *
+ * Deliberately not persisted across sessions. A remembered favourite is the
+ * same defect in slower motion: rates move, and a preference set last week
+ * quietly beats the better price today.
+ */
+export function preferredProvider(
+  quotes: readonly SwapQuote[],
+  pinned: ProviderId | null,
+): ProviderId | null {
+  if (pinned && quotes.some((quote) => quote.provider === pinned && quote.ok)) return pinned;
+
+  let best: SwapQuote | null = null;
+  for (const quote of quotes) {
+    if (!quote.ok || (quote.toAmount ?? 0) <= 0) continue;
+    if (best === null || (quote.toAmount ?? 0) > (best.toAmount ?? 0)) best = quote;
+  }
+  if (best) return best.provider;
+
+  /* Nothing answered. Keeping the pin means the refusal shown belongs to the
+   * exchange somebody chose, rather than to one they never picked. */
+  return pinned;
+}
+
 export const PRIVACY_NOTE =
   'A swap tells an exchange your IP address, the coin you are sending, and two ' +
   'addresses you own. That is the least private thing this wallet can do, and ' +
