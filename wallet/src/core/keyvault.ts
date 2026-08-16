@@ -46,7 +46,13 @@
  * exercised on a device is a key store nobody tests.
  */
 
-import { walletFromSeed, revealSecretHex, wipeWallet, type Network } from '@vault/keys/monero';
+import {
+  revealSecretHex,
+  seedFromMnemonic,
+  walletFromSeed,
+  wipeWallet,
+  type Network,
+} from '@vault/keys/monero';
 import {
   checkMnemonic,
   closeWallet,
@@ -79,10 +85,10 @@ export const KEYVAULT_SCHEMA = 1;
  */
 export interface HotRecord {
   v: number;
-  /** 64 hex characters. The Monero spend seed. */
-  xmrSeed: string;
-  /** Twelve BIP39 words. The Bitcoin account. */
-  btcMnemonic: string;
+  /** 64 hex characters, or null for a wallet holding no Monero keys. */
+  xmrSeed: string | null;
+  /** Twelve BIP39 words, or null for a wallet holding no Bitcoin keys. */
+  btcMnemonic: string | null;
   /** Which Monero network this seed is for. */
   network: Network;
   /** Milliseconds. Where a Monero scan may start, since a new wallet has no past. */
@@ -123,18 +129,31 @@ export function parseHotRecord(text: string | null): ReadResult {
     };
   }
 
-  const xmrSeed = record['xmrSeed'];
-  if (typeof xmrSeed !== 'string' || !/^[0-9a-f]{64}$/.test(xmrSeed)) {
+  /* Each half is optional and at least one must be present. Somebody
+   * restoring a twenty-five word phrase out of Feather has a Monero wallet and
+   * no Bitcoin one, and a record that insisted on both would have had to
+   * invent a Bitcoin seed to hold their Monero. Inventing key material to
+   * satisfy a shape is how a wallet ends up with an account nobody backed up. */
+  const rawXmr = record['xmrSeed'];
+  if (rawXmr !== null && rawXmr !== undefined && (typeof rawXmr !== 'string' || !/^[0-9a-f]{64}$/.test(rawXmr))) {
     return { ok: false, problem: 'The stored Monero seed is not 32 bytes of hex.' };
   }
+  const xmrSeed = typeof rawXmr === 'string' ? rawXmr : null;
 
-  const btcMnemonic = record['btcMnemonic'];
-  if (typeof btcMnemonic !== 'string') {
-    return { ok: false, problem: 'The stored Bitcoin phrase is missing.' };
+  const rawBtc = record['btcMnemonic'];
+  if (rawBtc !== null && rawBtc !== undefined) {
+    if (typeof rawBtc !== 'string') {
+      return { ok: false, problem: 'The stored Bitcoin phrase is missing.' };
+    }
+    const phrase = checkMnemonic(rawBtc);
+    if (!phrase.ok) {
+      return { ok: false, problem: `The stored Bitcoin phrase is not valid: ${phrase.problem ?? 'unknown'}` };
+    }
   }
-  const phrase = checkMnemonic(btcMnemonic);
-  if (!phrase.ok) {
-    return { ok: false, problem: `The stored Bitcoin phrase is not valid: ${phrase.problem ?? 'unknown'}` };
+  const btcMnemonic = typeof rawBtc === 'string' ? rawBtc : null;
+
+  if (xmrSeed === null && btcMnemonic === null) {
+    return { ok: false, problem: 'These keys hold neither a Monero nor a Bitcoin wallet.' };
   }
 
   const network = record['network'];
@@ -208,7 +227,8 @@ export function makeHotRecord(
  * this module has no lifecycle to hang it off. Whoever opens one is the one
  * who knows when the signing is over.
  */
-export function openBitcoin(record: HotRecord): BtcWallet {
+export function openBitcoin(record: HotRecord): BtcWallet | null {
+  if (record.btcMnemonic === null) return null;
   return openFromMnemonic(record.btcMnemonic);
 }
 
@@ -219,6 +239,7 @@ export function closeBitcoin(wallet: BtcWallet): void {
 
 /** Open the Monero half. The caller wipes it. */
 export function openMonero(record: HotRecord) {
+  if (record.xmrSeed === null) return null;
   const seed = new Uint8Array(32);
   for (let i = 0; i < 32; i++) seed[i] = parseInt(record.xmrSeed.slice(i * 2, i * 2 + 2), 16);
   const wallet = walletFromSeed(seed, record.network);
@@ -263,4 +284,117 @@ export async function saveHot(store: Store, record: HotRecord): Promise<void> {
  */
 export async function forgetHot(store: Store): Promise<void> {
   await store.clear();
+}
+
+// ---------------------------------------------------------------- restoring
+
+/** What a pasted phrase turned out to be. */
+export type Restored =
+  | { ok: true; chain: 'xmr'; xmrSeed: string; words: number }
+  | { ok: true; chain: 'btc'; btcMnemonic: string; words: number }
+  | { ok: false; problem: string };
+
+/**
+ * Read a phrase somebody typed or pasted, and say which chain it is.
+ *
+ * The word count decides, and it almost decides unambiguously: Monero's list
+ * is twenty-five words and BIP39's is twelve, fifteen, eighteen, twenty-one or
+ * twenty-four. No count means both, so there is no picker asking somebody to
+ * classify their own backup.
+ *
+ * The "almost" is twenty-four, and it is the case worth handling rather than
+ * the case worth ignoring. A Monero phrase with one word dropped is twenty-
+ * four words, which is a valid BIP39 length, so it takes the Bitcoin branch
+ * and fails a Bitcoin checksum. A person who fumbled their Monero backup then
+ * reads a sentence about Bitcoin. So a twenty-four word phrase that fails
+ * names both possibilities, because the wallet cannot tell which one it is
+ * and the person can.
+ *
+ * Whitespace is collapsed and case is folded before anything else, because a
+ * phrase arrives from a screenshot, a password manager, or a piece of paper
+ * read aloud, and none of those preserve spacing. What is *not* done is any
+ * correction of the words themselves: a phrase with a typo must fail, loudly,
+ * naming the count it found, rather than being nudged into a valid phrase for
+ * a different wallet.
+ *
+ * The counts are named in the refusals on purpose. "Not a valid phrase" sends
+ * somebody to check twenty-five words one at a time; "found 24 words, Monero
+ * uses 25" sends them to look for the one they dropped.
+ */
+export function readPhrase(text: string): Restored {
+  const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+  if (words.length === 0) return { ok: false, problem: 'Nothing to read yet.' };
+
+  if (words.length === 25) {
+    const back = seedFromMnemonic(words);
+    if (back.seed === null) {
+      return { ok: false, problem: back.problem ?? 'That is not a valid Monero phrase.' };
+    }
+    return { ok: true, chain: 'xmr', xmrSeed: revealSecretHex(back.seed), words: 25 };
+  }
+
+  if ([12, 15, 18, 21, 24].includes(words.length)) {
+    const joined = words.join(' ');
+    const check = checkMnemonic(joined);
+    if (!check.ok) {
+      if (words.length === 24) {
+        return {
+          ok: false,
+          problem:
+            'Found 24 words. That is a Bitcoin length, and these fail a Bitcoin checksum, so ' +
+            'either one word is mistyped or this is a Monero phrase with one of its 25 missing.',
+        };
+      }
+      return { ok: false, problem: check.problem ?? 'That is not a valid Bitcoin phrase.' };
+    }
+    return { ok: true, chain: 'btc', btcMnemonic: check.words ?? joined, words: words.length };
+  }
+
+  /* Neither length. Naming the two that would have worked is the whole value
+   * of this branch: somebody who pasted 24 words meant Monero and dropped one,
+   * or meant Bitcoin and has a valid 24-word phrase that took the branch
+   * above. Either way the count is the clue. */
+  return {
+    ok: false,
+    problem:
+      `Found ${words.length} words. A Monero phrase is 25 and a Bitcoin phrase is 12 or 24, ` +
+      'so this is missing some or has picked up something that is not a word.',
+  };
+}
+
+/**
+ * Fold a restored phrase into a record, keeping whatever was already there.
+ *
+ * Restoring one chain must never quietly discard the other. Somebody who has
+ * a Bitcoin wallet on this device and then restores a Monero phrase ends up
+ * holding both, and the Bitcoin half is untouched: it is not this operation's
+ * business, and losing it here would be a wipe wearing the word "restore".
+ */
+export function withRestored(
+  existing: HotRecord | null,
+  restored: Restored,
+  network: Network,
+  when: number,
+): { ok: true; record: HotRecord } | { ok: false; problem: string } {
+  if (!restored.ok) return { ok: false, problem: restored.problem };
+
+  const base: HotRecord = existing ?? {
+    v: KEYVAULT_SCHEMA,
+    xmrSeed: null,
+    btcMnemonic: null,
+    network,
+    /* A restored wallet has a past, and nobody typing a phrase knows the
+     * height it was made at. Zero means scan from the beginning, which is slow
+     * and correct; guessing a recent height would be fast and would silently
+     * miss every coin received before it. */
+    birth: 0,
+  };
+
+  const record: HotRecord =
+    restored.chain === 'xmr'
+      ? { ...base, xmrSeed: restored.xmrSeed, birth: existing ? base.birth : 0 }
+      : { ...base, btcMnemonic: restored.btcMnemonic, birth: existing ? base.birth : when };
+
+  return { ok: true, record };
 }
