@@ -43,7 +43,7 @@
  * screens earn their reputation.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Animated, { FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
@@ -59,10 +59,8 @@ import { useStore } from '../state/store';
 import type { Nav } from '../nav/routes';
 import type { Asset } from '../core/model';
 import {
-  OUR_COINS,
   PRIVACY_NOTE,
   PROVIDERS,
-  SWAP_COINS,
   chainCanBeProven,
   chainIsAmbiguous,
   chainName,
@@ -81,7 +79,7 @@ import { swapConfigured } from '../net/swapproxy';
 
 type Phase = 'compose' | 'quoting' | 'quoted' | 'creating' | 'refused';
 
-export function SwapScreen({ navigation }: Nav<'Swap'>) {
+export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
   const store = useStore();
 
   const [fromId, setFromId] = useState('btc');
@@ -94,13 +92,27 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
   /** A refusal: the problem in words, and what was actually seen. */
   const [refusal, setRefusal] = useState<{ problem: string; detail: string } | null>(null);
 
+  /*
+   * A choice handed back by the picker.
+   *
+   * Read from the route rather than through a callback, because a callback in
+   * navigation params is a function held across a screen that can be
+   * serialized, restored and replayed. An id is a string, and a string
+   * survives everything the navigator does to it.
+   */
+  const chose = route.params?.chose;
+  useEffect(() => {
+    if (!chose) return;
+    if (chose.side === 'from') setFromId(chose.id);
+    else setToId(chose.id);
+    setPhase('compose');
+    /* Cleared so that coming back to this screen a third time, by any route,
+     * does not re-apply a choice somebody has since changed by hand. */
+    navigation.setParams({});
+  }, [chose, navigation]);
+
   const from = swapCoin(fromId)!;
   const to = swapCoin(toId)!;
-
-  /* Everything the destination picker may offer: anything but the coin being
-   * sent. `parsePair` is the authority on what is allowed; this only keeps the
-   * obviously-wrong option off the screen. */
-  const destinations = useMemo(() => SWAP_COINS.filter((coin) => coin.id !== fromId), [fromId]);
 
   const pair = parsePair(fromId, toId);
   const request = pair.ok
@@ -239,10 +251,11 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
         <Gap size={space.snug} />
         <SendReadout amount={amount} asset={from.ours as Asset} />
         <Gap size={space.gap} />
-        <CoinRow
-          coins={OUR_COINS}
-          selected={fromId}
-          onSelect={(id) => { setFromId(id); setPhase('compose'); }}
+        <AssetPill
+          coin={from}
+          onPress={() =>
+            navigation.navigate('CoinPicker', { side: 'from', selected: fromId, exclude: toId })
+          }
         />
         <Gap size={space.step} />
         <View style={styles.presetRow}>
@@ -276,11 +289,12 @@ export function SwapScreen({ navigation }: Nav<'Swap'>) {
         <Gap size={space.snug} />
         <ReceiveReadout quote={best} to={to} phase={phase} />
         <Gap size={space.gap} />
-        <CoinRow
-          coins={destinations}
-          selected={toId}
-          onSelect={(id) => { setToId(id); setPhase('compose'); }}
+        <AssetPill
+          coin={to}
           neutral
+          onPress={() =>
+            navigation.navigate('CoinPicker', { side: 'to', selected: toId, exclude: fromId })
+          }
         />
 
         <Gap size={space.section} />
@@ -453,71 +467,44 @@ function ReceiveReadout({
  * An asset that lives on one chain shows no second row, because there is no
  * decision to make about Bitcoin.
  */
-function CoinRow({
-  coins,
-  selected,
-  onSelect,
+/**
+ * The coin on one side of the trade, and the way to change it.
+ *
+ * This replaced two rows of chips. The chips showed the whole catalog at all
+ * times, which sounds like fewer taps and was not: at 390 points both rows
+ * wrapped, so the target a thumb was travelling to moved whenever the row
+ * above it rewrapped, and picking a chain took a hunt through nine chips
+ * whose order nobody had memorized.
+ *
+ * A pill shows one thing, which is the thing that is true, and opens a list
+ * that can be searched. The chain is on the pill, not behind it, for the same
+ * reason it is on every row of the picker.
+ */
+function AssetPill({
+  coin,
+  onPress,
   neutral = false,
 }: {
-  coins: SwapCoin[];
-  selected: string;
-  onSelect: (id: string) => void;
+  coin: SwapCoin;
+  onPress: () => void;
   neutral?: boolean;
 }) {
-  /* Catalog order, so what a person reads is the order the catalog was written
-   * in rather than whatever order a Set happened to keep. */
-  const tickers = useMemo(() => {
-    const seen: string[] = [];
-    for (const coin of coins) if (!seen.includes(coin.ticker)) seen.push(coin.ticker);
-    return seen;
-  }, [coins]);
-
-  const current = useMemo(() => coins.find((c) => c.id === selected) ?? null, [coins, selected]);
-  const activeTicker = current?.ticker ?? '';
-  const chains = useMemo(() => coins.filter((c) => c.ticker === activeTicker), [coins, activeTicker]);
-
-  const fillFor = (coin: SwapCoin | undefined, active: boolean) =>
-    !active ? 'transparent' : coin?.ours && !neutral ? assetColor(coin.ours) : color.bone;
-
+  const tone = coin.ours && !neutral ? assetColor(coin.ours) : color.bone;
   return (
-    <View>
-      <View style={styles.presetRow}>
-        {tickers.map((ticker) => {
-          const active = ticker === activeTicker;
-          /* Choosing an asset lands on its first chain in catalog order, which
-           * is the one that carries the volume. */
-          const first = coins.find((c) => c.ticker === ticker)!;
-          return (
-            <Chip
-              key={ticker}
-              onPress={() => onSelect(first.id)}
-              tone={active ? color.void : color.slate}
-              fill={fillFor(first, active)}
-            >
-              {ticker.toUpperCase()}
-            </Chip>
-          );
-        })}
-      </View>
-
-      {chains.length > 1 ? (
-        <View style={[styles.presetRow, { marginTop: 8 }]}>
-          {chains.map((coin) => {
-            const active = coin.id === selected;
-            return (
-              <Chip
-                key={coin.id}
-                onPress={() => onSelect(coin.id)}
-                tone={active ? color.void : color.slate}
-                fill={fillFor(coin, active)}
-              >
-                {chainName(coin.chain).toUpperCase()}
-              </Chip>
-            );
-          })}
+    <Press onPress={onPress}>
+      <View style={styles.pill}>
+        <View style={[styles.pillMark, { borderColor: tone }]}>
+          <Label tone={tone} style={{ fontSize: 10 }}>
+            {coin.ticker.slice(0, 4).toUpperCase()}
+          </Label>
         </View>
-      ) : null}
-    </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Strong style={{ fontSize: 16 }}>{coin.label}</Strong>
+          <Small tone={color.slate}>on {chainName(coin.chain)}</Small>
+        </View>
+        <Label tone={color.slate}>CHANGE</Label>
+      </View>
+    </Press>
   );
 }
 
@@ -723,6 +710,25 @@ function PayoutBlock({
 }
 
 const styles = StyleSheet.create({
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: color.well,
+    borderWidth: 1,
+    borderColor: color.rule,
+    borderRadius: radius.soft,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  pillMark: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   presetRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

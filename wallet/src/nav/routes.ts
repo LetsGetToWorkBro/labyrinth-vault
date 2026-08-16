@@ -47,7 +47,20 @@ export type Routes = {
    * from there a swap deposit is an ordinary payment with an ordinary
    * confirmation on the vault. See core/swap.ts.
    */
-  Swap: undefined;
+  Swap: { chose?: { side: 'from' | 'to'; id: string } } | undefined;
+  /**
+   * Picking one coin out of the catalog, for one side of a swap.
+   *
+   * A route rather than a sheet over the swap screen. The amount is
+   * meaningless until the coin is settled, so keeping it visible under a
+   * half-covered screen only invites tapping it; and a route gets the system
+   * back gesture, which is exactly the gesture for cancelling a choice.
+   *
+   * `exclude` is the coin on the other side. An exchange asked to turn a coin
+   * into itself refuses at order time, after somebody has chosen and typed an
+   * amount, so the offer is withdrawn before that rather than after.
+   */
+  CoinPicker: { side: 'from' | 'to'; selected: string; exclude: string };
   /**
    * Where a created swap has got to, on the provider's say-so.
    *

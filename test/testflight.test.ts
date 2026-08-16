@@ -65,6 +65,7 @@ const COMPANION: Record<string, string | null> = {
   Activity: '**Activity.**',
   Asset: '**Asset.**',
   Nodes: '**Nodes.**',
+  CoinPicker: '**Coin picker.**',
   // The list the app opens on. Same reasoning as the vault's Home.
   Home: null,
   // Out of scope on purpose, and the plan says so: these talk to third-party

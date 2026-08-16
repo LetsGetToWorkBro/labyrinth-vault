@@ -507,6 +507,13 @@ in.
   that renders both as an error is a wallet that sends somebody to the wrong
   problem.
 
+- **Coin picker.** From the swap screen, tap the coin on either side. The
+  sending side should offer only what this wallet holds; the receiving side
+  should offer everything, with a search field. Type "base" and expect only
+  coins on Base. **Every row must name its chain.** A row reading just "USDC"
+  is the defect: two chains would read alike, and picking the wrong one sends
+  money somewhere nobody can retrieve it from.
+
 **Swap and its status screen are deliberately out of scope here.** They talk to
 third-party exchanges over the network, which is a different trust question
 from anything else in this document, and mixing it into an airgap test plan
