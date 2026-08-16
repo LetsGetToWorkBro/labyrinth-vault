@@ -261,10 +261,25 @@ the constant and the evidence to move together.
 the exact loop the app drives, `executeMoneroSend`, with the real vault signer
 in process instead of across a QR airgap, because on stagenet the airgap buys
 nothing and the loop is identical either way. Given a seed, a stagenet node, a
-destination, and the funded output to spend, it plans, signs, broadcasts, and
-prints the accepted transaction id. That id and the node that accepted it are
-what fill in the section below, in the same commit that flips the constant. The
-script refuses mainnet; the gate is not its to lift.
+destination and an amount, it finds its own coins, plans, signs, broadcasts,
+and prints the accepted transaction id. That id and the node that accepted it
+are what fill in the section below, in the same commit that flips the constant.
+The script refuses mainnet; the gate is not its to lift.
+
+It used to want one thing more: a `funded.json` naming the global index,
+commitment and transaction public key of a coin already held, copied out of a
+block explorer by hand. Four values, three of them 64 hex characters, every one
+of them silently fatal if mistyped, standing between this project and the only
+evidence that lifts its biggest gate. `wallet/src/core/findcoins.ts` scans for
+them instead, stopping as soon as it has enough to cover the amount and the
+fee, and `LABYRINTH_XMR_BIRTH` is the only hint it needs. The file still works
+as an override.
+
+What it cannot do from a development container is reach a node at all. Every
+public Monero RPC endpoint tried from here, mainnet and stagenet alike, on both
+443 and the usual ports, resets the connection, while ordinary web hosts answer
+normally. So this is a script for a person on a normal network, and re-probing
+from CI is not worth anybody's afternoon.
 
 ## The in-app screens
 

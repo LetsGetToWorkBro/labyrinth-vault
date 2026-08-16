@@ -154,6 +154,13 @@ possible.
   `MONERO_SEND_BROADCAST_VERIFIED` in `wallet/src/core/moneroreadiness.ts` is
   `false` and refuses a mainnet Monero spend while it is.
   `docs/monero-send.md` has the detail and the plan.
+
+  This one is blocked on a network rather than on work. Every public Monero RPC
+  endpoint reachable from a development container here resets the connection,
+  mainnet and stagenet, on 443 and on the usual ports, while ordinary web hosts
+  answer normally. `wallet/scripts/stagenet-send.ts` is written for somebody on
+  a normal network and now finds its own coins, so the remaining human step is
+  a funded stagenet address and one command.
 - **No physical device.** The oracle proves bytes; it cannot prove a Coldcard
   Q's camera resolves a QR on an iPhone's screen, or that a scan finishes in a
   kitchen. `docs/testflight.md` is where that gets written once somebody has
