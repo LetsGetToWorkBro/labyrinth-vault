@@ -18,6 +18,7 @@
       "infoPlist": {
         "UIViewControllerBasedStatusBarAppearance": false,
         "ITSAppUsesNonExemptEncryption": false,
+        "NSFaceIDUsageDescription": "Face ID authorizes a payment this wallet signs itself. Your keys never leave this device, and a signature is refused if it is not you.",
         "NSCameraUsageDescription": "The camera is how this wallet reads a signature back from your vault. It is the only channel between the two halves, and nothing is ever sent anywhere else.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
