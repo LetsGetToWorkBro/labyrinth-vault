@@ -137,9 +137,9 @@ export function NodesScreen({ navigation }: Nav<'Nodes'>) {
         <Gap size={8} />
         <Small>
           On your own network plain http is fine and the address looks like
-          http://192.168.1.20{kind === 'esplora' ? ':3002' : ':18081'}. Anywhere
-          else needs https, because otherwise everyone between here and there
-          sees the same thing the node does.
+          http://192.168.1.20{kind === 'esplora' ? ':3002' : ':18081, or :38081 if that node is on stagenet'}.
+          Anywhere else needs https, because otherwise everyone between here and
+          there sees the same thing the node does.
         </Small>
         <Gap size={8} />
         <Small>
