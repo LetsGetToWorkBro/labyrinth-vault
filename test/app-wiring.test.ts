@@ -383,6 +383,44 @@ describe('the screen can name every refusal the reader makes', () => {
   });
 });
 
+describe('no two files in the app target share a name', () => {
+  /*
+   * Swift refuses to build a target holding two files with the same basename,
+   * whatever directories they sit in:
+   *
+   *     error: Filename "MoneroFile.swift" used twice:
+   *       '.../Screens/MoneroFile.swift' and '.../Model/MoneroFile.swift'
+   *     note: Filenames are used to distinguish private declarations with the
+   *       same name
+   *
+   * `Model/MoneroFile.swift` and `Screens/MoneroFile.swift` shipped in the same
+   * commit, and the commit passed everything. It had to: the whole suite runs
+   * without a Mac, and this is a linker-adjacent rule no regex over the sources
+   * was looking for. Worse, an `.xcodeproj` generated *before* those files
+   * existed builds happily, so the person who discovers it is whoever next runs
+   * `xcodegen generate` — and what they see first is seven cascading "cannot
+   * find type" errors that read like a broken pull rather than a name clash.
+   *
+   * The repository already had the answer in `Model/Refusal.swift` beside
+   * `Screens/RefusalScreen.swift`: the screen takes the suffix. This is that
+   * convention with a test under it.
+   */
+  it('has no duplicate basenames anywhere under the app', () => {
+    const seen = new Map<string, string[]>();
+    for (const { path } of appSources()) {
+      const name = path.slice(path.lastIndexOf('/') + 1);
+      seen.set(name, [...(seen.get(name) ?? []), path]);
+    }
+    const clashes = [...seen.entries()]
+      .filter(([, paths]) => paths.length > 1)
+      .map(([name, paths]) => `${name}: ${paths.join(' and ')}`);
+    expect(
+      clashes,
+      'Swift will not build a target with two files of the same name. Suffix the screen, as RefusalScreen.swift does.',
+    ).toEqual([]);
+  });
+});
+
 describe('the Swift a compiler can actually check', () => {
   /* Package.swift builds the platform-free half of the app — the transaction
    * shapes, the refusal model, the passphrase encoding — as a real SwiftPM
@@ -1288,7 +1326,7 @@ describe('the read-only Monero screen describes and does not sign', () => {
   const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
   const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
   const app = readFileSync('ios/LabyrinthVault/App.swift', 'utf8');
-  const screen = readFileSync('ios/LabyrinthVault/Screens/MoneroFile.swift', 'utf8');
+  const screen = readFileSync('ios/LabyrinthVault/Screens/MoneroFileScreen.swift', 'utf8');
   const model = readFileSync('ios/LabyrinthVault/Model/MoneroFile.swift', 'utf8');
   const envelope = readFileSync('src/airgap/envelope.ts', 'utf8');
 

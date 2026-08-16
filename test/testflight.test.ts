@@ -42,7 +42,7 @@ const VAULT: Record<string, string | null> = {
   Export: 'EXPORT tab',
   Airgap: 'animated QR',
   KeyImages: 'KEY IMAGES on the vault',
-  MoneroFile: 'WHAT THIS FILE',
+  MoneroFileScreen: 'WHAT THIS FILE',
   MoneroReview: 'read the review screen properly',
   Settings: 'SETTINGS on the vault',
   RefusalScreen: 'refusal screen',

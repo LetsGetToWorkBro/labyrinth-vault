@@ -172,7 +172,7 @@ answered every wallet2 file with a blanket refusal. Three things closed that.
   names the file and carries the reason, because "this is a Monero unsigned
   transaction set and it belongs to a different wallet" is more use than a
   blank refusal, and there is no fail-closed decision resting on it.
-- **A screen.** `ios/LabyrinthVault/Screens/MoneroFile.swift`, reached by its
+- **A screen.** `ios/LabyrinthVault/Screens/MoneroFileScreen.swift`, reached by its
   own route. It says what the file is, what it claims, whose claim that is,
   and that the vault will not sign it. The design constraints are written at
   the top of that file and guarded in `test/app-wiring.test.ts`: no lever that

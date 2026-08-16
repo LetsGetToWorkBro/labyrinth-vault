@@ -1,4 +1,4 @@
-//  MoneroFile.swift
+//  MoneroFileScreen.swift
 //  One of Monero's own wallet files, opened and described. Nothing more.
 //
 //  ## What this screen replaced
