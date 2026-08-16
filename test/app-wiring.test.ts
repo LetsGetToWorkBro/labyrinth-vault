@@ -383,6 +383,44 @@ describe('the screen can name every refusal the reader makes', () => {
   });
 });
 
+describe('no Result carries a sentence as its failure', () => {
+  /*
+   * `Result<Success, Failure>` requires `Failure: Error`, and `String` does not
+   * conform. `Result<Engine.KeyImageFileReply, String>` shipped in Vault.swift
+   * and reads perfectly well:
+   *
+   *     error: Type 'String' does not conform to protocol 'Error'
+   *
+   * The suite could not see it. `Package.swift` builds the platform-free half
+   * of the app for real, but Vault.swift is on its `exclude:` list precisely
+   * because it imports SwiftUI, so everything in that file is parsed for syntax
+   * and type-checked by nobody until Xcode opens. This is the cheap half of
+   * that gap closed: one mistake, spelled one way, caught without a Mac.
+   *
+   * The fix is never to wrap the sentence in an error type. Both places that
+   * hit this named their outcomes instead, `BiometricUnlock.Recalled` and
+   * `Vault.FileOutcome`, because a sentence written for a person is not an
+   * `Error`, and making it one to satisfy a generic is how the words end up
+   * behind a `localizedDescription`.
+   */
+  it('never writes Result<_, String>', () => {
+    const offenders: string[] = [];
+    for (const { path, text } of appSources()) {
+      text.split('\n').forEach((line, i) => {
+        /* Comments are skipped: both files that hit this explain it in prose,
+         * and a guard that fires on its own documentation teaches people to
+         * delete the documentation. */
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+        if (/Result\s*<[^>]*,\s*String\s*>/.test(line)) offenders.push(`${path}:${i + 1}`);
+      });
+    }
+    expect(
+      offenders,
+      'Result needs a Failure conforming to Error. Name the outcomes instead, as Vault.FileOutcome does.',
+    ).toEqual([]);
+  });
+});
+
 describe('no two files in the app target share a name', () => {
   /*
    * Swift refuses to build a target holding two files with the same basename,

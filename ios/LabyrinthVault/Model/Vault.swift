@@ -1002,7 +1002,25 @@ final class Vault: ObservableObject {
     /// A failure is a sentence rather than a refusal screen. Nothing has been
     /// signed and nothing is at stake: the other wire is still on the glass,
     /// and the honest outcome is to say why this one is not.
-    func moneroKeyImageFile() -> Result<Engine.KeyImageFileReply, String> {
+    /// What writing the file can come back as.
+    ///
+    /// Not a `Result`, for the same reason `BiometricUnlock.Recalled` is not
+    /// one: Swift's `Result` requires its failure type to conform to `Error`,
+    /// and a sentence meant for a person does not. `Result<_, String>` is a
+    /// thing you can write and not a thing that compiles, and because this
+    /// file is outside the SwiftPM target `npm test` builds, the suite could
+    /// not say so. Only Xcode could, and it did.
+    ///
+    /// Wrapping the sentence in an error type was the alternative and it is
+    /// worse: nothing here is thrown and nothing propagates, and the screen
+    /// wants the words rather than the `localizedDescription` of a box around
+    /// them. The case names match `Result`'s so the call site reads the same.
+    enum FileOutcome {
+        case success(Engine.KeyImageFileReply)
+        case failure(String)
+    }
+
+    func moneroKeyImageFile() -> FileOutcome {
         guard let engine else { return .failure("The vault engine is not loaded.") }
         guard let randomHex = Engine.freshRandomHex(bytes: pendingKeyImageRandomBytes) else {
             return .failure("This device would not produce randomness, so no file was written.")
