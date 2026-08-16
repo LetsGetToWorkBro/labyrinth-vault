@@ -55,6 +55,7 @@ import {
   type SwapRequest,
   type SwapTransport,
   preferredProvider,
+  type SwapQuote,
 } from '../src/core/swap';
 
 /** Addresses this wallet would derive. Fixed so a diff is readable. */

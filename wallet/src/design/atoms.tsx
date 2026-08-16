@@ -13,7 +13,7 @@
  * which are tinted because the tint is the meaning.
  */
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -21,7 +21,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withRepeat, withSpring, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { color, motion, radius, space } from './tokens';
 import { Body, Label, Small, Strong } from './text';
@@ -410,3 +410,49 @@ const styles = StyleSheet.create({
     paddingVertical: space.gap,
   },
 });
+
+/**
+ * A sentence you can have, and the paragraph behind it if you want it.
+ *
+ * This app writes unusually good explanatory prose and puts too much of it in
+ * the primary reading path. The balance on Home carried two sentences about
+ * price relays directly underneath it; the send flow carries about fifteen
+ * such passages. Every clause is true and worth saying somewhere, and directly
+ * under the number is not somewhere.
+ *
+ * Deleting it would be the wrong fix twice over: the writing is the product's
+ * voice, and the facts it carries are the ones that stop somebody
+ * misreading a screen. So the summary stays visible, the argument moves one
+ * tap away, and the control says WHY rather than "more" because the thing
+ * behind it is a reason.
+ *
+ * Closed by default, always. A disclosure that remembers being open is a
+ * paragraph that comes back.
+ */
+export function Disclosure({
+  summary,
+  children,
+  tone,
+}: {
+  summary: string;
+  children: ReactNode;
+  tone?: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View>
+      <Press onPress={() => setOpen((was) => !was)} weight="none">
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.snug }}>
+          <Small tone={tone ?? color.dim} style={{ flex: 1 }}>{summary}</Small>
+          <Label tone={color.slate}>{open ? 'LESS' : 'WHY'}</Label>
+        </View>
+      </Press>
+      {open ? (
+        <Animated.View entering={FadeIn.duration(140)}>
+          <Gap size={space.snug} />
+          {children}
+        </Animated.View>
+      ) : null}
+    </View>
+  );
+}

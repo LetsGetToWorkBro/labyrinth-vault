@@ -30,7 +30,7 @@
 
 import { Dimensions, ScrollView, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { ActionRow, Cell, Chip, Gap, Press, Rule, Screen } from '../design/atoms';
+import { ActionRow, Cell, Chip, Disclosure, Gap, Press, Rule, Screen } from '../design/atoms';
 import { Body, Display, Label, Small } from '../design/text';
 import { SectionHead, VaultStatus, Wordmark } from '../components/chrome';
 import { Amount, AssetLine } from '../components/money';
@@ -107,7 +107,12 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
             readout: two amounts, stacked, full typographic budget. The
             allocation goes with the price, because weighing bitcoin against
             monero needs a common unit and there is none. */}
-        <View style={{ paddingHorizontal: space.gutter, paddingTop: space.section }}>
+        {/* The hero buys its own room. Everything on this screen used to get
+            roughly the same vertical budget, so the balance was bigger than
+            the paragraph under it without feeling more important than it.
+            `tokens.ts` is right to refuse cards; spending the space unevenly
+            is the way to make hierarchy without them. */}
+        <View style={{ paddingHorizontal: space.gutter, paddingTop: space.chapter }}>
           {priced ? (
             <>
               <Label>TOTAL HELD</Label>
@@ -148,15 +153,24 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
                   known at this moment, and when one is known it came through
                   Labyrinth's relay rather than from this phone asking a
                   price service. */}
-              <Small tone={color.dim}>
-                Shown in coin. No price is known right now; one only ever arrives through
-                Labyrinth&apos;s relay, and this phone asks no price service itself.
-              </Small>
+              {/* The summary stays, the argument moves one tap away. This
+                  paragraph sat directly under the balance, which is the one
+                  thing Home exists to show, and a wallet whose headline number
+                  is followed by two sentences about price infrastructure has
+                  buried the number. */}
+              <Disclosure summary="Shown in coin. No price is known right now.">
+                <Small tone={color.dim}>
+                  A price only ever arrives through Labyrinth&apos;s relay, which serves every
+                  client one cached answer so no price service ever sees a phone. This phone asks
+                  none itself, so a wallet running only on your own nodes shows coin and stays
+                  quiet.
+                </Small>
+              </Disclosure>
             </>
           )}
         </View>
 
-        <Gap size={space.section} />
+        <Gap size={space.chapter} />
 
         {/* ------------------------------------------------------ the assets */}
         <View style={{ paddingHorizontal: space.gutter }}>
@@ -178,6 +192,7 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
               <Small tone={color.dim}>{monero.caveat}</Small>
             </>
           ) : null}
+
         </View>
 
         <Gap size={space.section} />

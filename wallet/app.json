@@ -16,7 +16,7 @@
       "bundleIdentifier": "vision.labyrinth.wallet",
       "requireFullScreen": true,
       "infoPlist": {
-        "UIViewControllerBasedStatusBarAppearance": true,
+        "UIViewControllerBasedStatusBarAppearance": false,
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "The camera is how this wallet reads a signature back from your vault. It is the only channel between the two halves, and nothing is ever sent anywhere else.",
         "NSAppTransportSecurity": {

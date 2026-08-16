@@ -507,6 +507,11 @@ in.
   that renders both as an error is a wallet that sends somebody to the wrong
   problem.
 
+- **The status bar, on every screen.** The clock, the signal bars and the
+  battery, at the top of a near-black screen. They should be light. This key
+  was wrong until now and React Native warned about it on every launch, so this
+  is the first build where the setting has ever been right. If they are dark
+  and hard to read, say so: it is one line and it goes back.
 - **Coin picker.** From the swap screen, tap the coin on either side. The
   sending side should offer only what this wallet holds; the receiving side
   should offer everything, with a search field. Type "base" and expect only
