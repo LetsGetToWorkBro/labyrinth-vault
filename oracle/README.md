@@ -39,21 +39,59 @@ answer; this is the working.
 | file | what it is |
 | --- | --- |
 | `PINNED.json` | which Monero, and which fixtures come from it |
-| `build.sh` | shallow-clones that Monero, compiles it, builds both harnesses |
+| `build.sh` | shallow-clones that Monero, compiles it, builds the harnesses |
 | `emit.mjs` | runs the harnesses and writes (or checks) the fixtures |
 | `src/keyimage.cpp` | the key-image export blob, through `wallet2`'s own calls |
+| `src/unsignedtxset.cpp` | a real `unsigned_tx_set`, through Monero's own binary archive |
+| `src/importkeyimages.cpp` | hands our finished file to the real `wallet2::import_key_images` |
 | `src/cryptonight.c` | `cn_slow_hash` at variant 0, from upstream |
 | `src/rng-counter.c` | replaces Monero's RNG with a byte counter |
 | `src/mlock-stub.cpp` | `epee::mlocker`, which only pins pages against swap |
 | `src/unreachable.c` | the CryptonightR JIT and RandomX, which abort if reached |
+| `src/wallet-unreachable.cpp` | the same for the wallet link: RandomX, the JIT, one daemon accessor |
 | `src/shim/boost/…` | fourteen lines, so `warnings.h` resolves |
 | `btc.sh` | clones Electrum and Coinkite's BBQr at their pinned commits |
 | `btc-emit.mjs` | runs both against our code and writes (or checks) the Bitcoin fixtures |
 
-The four stub files are ours and are the only code here that Monero did not
-write. Each one exists so that a piece of upstream that this harness never
-executes does not have to be linked; none of them stands in the path of a
-number that ends up in a fixture.
+The five stub files are ours and are the only code here that Monero did not
+write. Each one exists so that a piece of upstream these harnesses never
+execute does not have to be linked; none of them stands in the path of a
+number that ends up in a fixture. Both `unreachable` files abort rather than
+returning something plausible, so a wrong guess about what is reachable fails
+loudly at the line instead of quietly in a fixture.
+
+## The wallet harness runs in the other direction
+
+Everything else here has Monero write and this repository match. `--check`
+passes when our bytes are Monero's bytes.
+
+`importkeyimages` is the reverse, and it is the one that matches what a person
+actually does with the file. It links `wallet2.cpp` itself, builds a watch-only
+wallet, and hands it a key-image export that **this repository's TypeScript
+wrote**. The judge is `tools::wallet2::import_key_images` and the thing being
+judged is our output.
+
+That closes a claim byte comparison cannot reach. `import_key_images` pairs
+record n with `m_transfers[n + offset]`, by position, and nothing in the file
+names an output. A file whose records are in the wrong order is still well
+formed, still fully signed, and still wrong: every signature in it verifies,
+against outputs the importing wallet is not holding at those positions. The
+fixture records what wallet2 did with the right order and with four wrong ones.
+
+Linking `wallet2.cpp` is a much heavier build than the header-only path the
+other harnesses take: about a hundred translation units and a few minutes, plus
+the host packages `PINNED.json` lists. `build.sh` checks for those and names
+them before it starts. Objects are cached in `.work/wobj`, so a second run is
+quick.
+
+One thing to know about the accepting outcome. Given a file that checks out,
+`import_key_images` gets past every offline gate and then asks a daemon which
+of the images are already spent. There is no daemon, so the call ends in
+`no_connection_to_daemon`, and that is the good result: reaching the network
+means everything decidable offline was decided in the file's favour, and the
+wallet's transfers have already been written. So the fixture records those
+transfers, which is the actual evidence. Not "nothing objected" but "record n
+landed on transfer n plus offset".
 
 ## The RNG stub is not a shortcut
 
@@ -72,9 +110,10 @@ It also means: nothing this harness produces is secret, and no key in
 
 ## Why it does not run in `npm test`
 
-It needs a Monero checkout and a C++ toolchain with boost headers. A suite that
-fetched half a gigabyte of upstream C++ on every run is a suite people learn to
-skip, and a check that gets skipped is worse than one that is honestly manual.
+It needs a Monero checkout and a C++ toolchain with boost headers, and the
+wallet harness needs several minutes on top. A suite that fetched half a
+gigabyte of upstream C++ on every run is a suite people learn to skip, and a
+check that gets skipped is worse than one that is honestly manual.
 
 `test/oracle.test.ts` runs instead, and checks the things that actually drift:
 that `PINNED.json` and `vendor/cryptonight/MANIFEST.json` name the same Monero,
@@ -82,6 +121,12 @@ that every harness file still exists, that each fixture still says where it came
 from, and that the build sets the same `NO_AES` the vendored copy is compiled
 with, because a fixture measured against a code path the app never runs is not
 measuring the app.
+
+It does one thing more for the import fixture. That fixture is a set of
+verdicts about specific bytes, so the suite rewrites those bytes from the
+recorded seed, outputs, order, offset and randomness and requires them to come
+out identical. Without that, a later change to the writer would inherit an
+answer that was given to a different file.
 
 ## The Bitcoin half is not quite the same shape
 
@@ -101,6 +146,13 @@ the reference's frames instead would produce a fixture that tests nothing, and
 ## What still is not covered
 
 Nothing in here reaches a physical device. The oracle proves our bytes match
-what Electrum, Coldcard's reference and Monero compute; it cannot prove a
-Coldcard Q's camera resolves the QR on an iPhone's screen.
-`docs/testflight.md` is where that gets written down once somebody has done it.
+what Electrum, Coldcard's reference and Monero compute, and that Monero's own
+wallet imports our key-image export; it cannot prove a Coldcard Q's camera
+resolves the QR on an iPhone's screen. `docs/testflight.md` is where that gets
+written down once somebody has done it.
+
+Nor does it reach a real wallet's user interface. `importkeyimages` is
+`wallet2`, which is the library Cake, Feather and `monero-wallet-cli` are all
+built on, and it is the code that decides whether an import succeeds. It is not
+those applications, and it is running against transfers this harness put in
+memory rather than transfers a wallet found on the chain.

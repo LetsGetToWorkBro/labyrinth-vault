@@ -293,6 +293,72 @@ view key, because holding it is what makes it a companion, and a compromised
 companion holds it too. The read-only screen says both halves in one paragraph
 so that neither can be read alone.
 
+## Done since: Monero's wallet actually imported one
+
+Everything above compares bytes. Our writer against Monero's writer, our
+verifier against Monero's verifier, our reader against Monero's archive. That
+leaves one claim untouched, and it is not a cryptographic one:
+
+```cpp
+const transfer_details &td = m_transfers[n + offset];
+```
+
+`import_key_images` pairs record n with the importing wallet's transfer at
+`n + offset`. By position. Nothing in the file names an output. A file whose
+records are in the wrong order, or whose offset is wrong by one, is still well
+formed and still fully signed and still wrong: every signature in it verifies,
+against outputs the wallet is not holding at those positions.
+
+Three things in this repository were built around that sentence. The `offset`
+field on a key image request exists because of it. `keyImageFileFor` refuses a
+batch whole rather than exporting it short because of it. The read-back
+pre-flight checks each record against the one-time key at the same index
+because of it. All three rested on my having read `wallet2.cpp`.
+
+`oracle/src/importkeyimages.cpp` links `wallet2.cpp` itself, so the sentence is
+now run rather than read. It builds a watch-only wallet, puts outputs in
+through `import_outputs`, and calls the real
+`tools::wallet2::import_key_images` on files **this repository's TypeScript
+wrote**. Note the direction. The other harnesses have Monero write and us
+match; this one has us write and Monero judge, which is what a person actually
+does with the file.
+
+`test/fixtures/monero-import-key-images.json` records the verdicts:
+
+| the file | what wallet2 did |
+| --- | --- |
+| records in order, offset naming the transfers they belong to | accepted, and wrote record n into transfer n plus offset |
+| the same two records, swapped | `signature check failed` |
+| the right records, offset one too low | `signature check failed` |
+| the right records, offset one too high | `the blockchain is out of date compared to the signed key images` |
+| the same file, a wallet that cannot open the envelope | `failed to authenticate ciphertext` |
+| the same file, a wallet that can open it but is not this account | `are for a different account` |
+
+The first row is the one worth staring at. "Accepted" here means
+`no_connection_to_daemon`: every offline gate passed and the call went on to
+ask a daemon which images were already spent, and there is no daemon. The
+fixture then records the key image sitting in each of the wallet's transfers
+afterwards, which is the actual evidence. Not that nothing objected, but that
+record 0 landed on transfer 7 and record 1 on transfer 8, with the seven
+transfers below them untouched.
+
+The rows under it are what makes the first one mean something. Each of those
+files is valid. Take any of them apart and every ring signature verifies
+against the key it was made for. They fail because the pairing is positional,
+which is the property the offset field, the whole-batch refusal and the
+pre-flight all exist to respect.
+
+`test/oracle.test.ts` reads those verdicts, and also rebuilds every one of the
+files from the recorded seed, outputs, order, offset and randomness, so a later
+change to the writer cannot inherit an answer that was given to different
+bytes.
+
+What this still is not: a real wallet's user interface. `wallet2` is the
+library Cake, Feather and `monero-wallet-cli` are built on, and it is the code
+that decides whether an import succeeds, but it is not those applications, and
+the transfers it was holding were put in memory by a harness rather than found
+on a chain.
+
 ## What is not built
 
 Two layers, in the order they have to be built.
@@ -421,11 +487,15 @@ half-built.
 6. ~~The envelope signature~~. Done, in `checkSignature`, against signatures
    Monero's own `generate_signature` produced. It was named as impossible for
    want of an oracle, and the oracle arrived.
-7. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
+7. ~~Evidence that a real wallet imports the key image file~~. Done, by
+   linking `wallet2.cpp` in the oracle and calling
+   `import_key_images` on files written here. It was the last claim in the
+   export path resting on a reading of upstream rather than a run of it.
+8. CLSAG and Bulletproofs+, tested against the Monero project's own vectors and
    then end to end against a daemon on testnet, then stagenet, before anything
    touches mainnet.
 
-Step 7 also needs the thing the Bitcoin side already has: a confirmation screen
+Step 8 also needs the thing the Bitcoin side already has: a confirmation screen
 that shows what is actually being signed, re-derived from the vault's own keys
 rather than read from the file. That is the security, and it does not come free
 with the signature.

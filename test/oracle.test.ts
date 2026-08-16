@@ -75,6 +75,8 @@ describe('the oracle rig', () => {
       'oracle/src/rng-counter.c',
       'oracle/src/mlock-stub.cpp',
       'oracle/src/unreachable.c',
+      'oracle/src/importkeyimages.cpp',
+      'oracle/src/wallet-unreachable.cpp',
       'oracle/src/shim/boost/preprocessor/stringize.hpp',
       'oracle/btc.sh',
       'oracle/btc-emit.mjs',
@@ -203,5 +205,153 @@ describe('the oracle reports Monero verifying its own output', () => {
     const emit = readFileSync('oracle/emit.mjs', 'utf8');
     expect(emit).toMatch(/ringSignatures: r\.ring_ok/);
     expect(emit).toMatch(/envelope: r\.outer_ok === '1'/);
+  });
+});
+
+describe("Monero's own wallet, importing a file this repository wrote", () => {
+  /* The last claim in the key-image story that was read rather than run.
+   *
+   * `import_key_images` pairs record n with `m_transfers[n + offset]`. Nothing
+   * in the file names an output, so a file whose records are in the wrong
+   * order is still well formed, still fully signed, and still wrong. Every
+   * signature in it verifies; they just verify against outputs the importing
+   * wallet is not holding at those positions.
+   *
+   * `oracle/src/importkeyimages.cpp` links wallet2.cpp and runs the real
+   * `tools::wallet2::import_key_images` against files written here, in the
+   * right order and in several wrong ones. This block reads the verdicts, and
+   * rebuilds the exact bytes those verdicts were given, so a change to the
+   * writer cannot quietly inherit an old answer.
+   */
+  const fixture = JSON.parse(
+    readFileSync('test/fixtures/monero-import-key-images.json', 'utf8'),
+  ) as {
+    pad: number;
+    wallet: { seed: string; chachaKey: string; viewSecret: string; spendPublic: string };
+    outputs: { tx: string; index: number; key: string }[];
+    keyImages: string[];
+    cases: {
+      name: string;
+      order: number[];
+      offset: number;
+      account: string;
+      randomness: string;
+      file: string;
+      outcome: string;
+      detail: string;
+      imported: number | null;
+      transferKeyImages: string[];
+    }[];
+  };
+
+  const named = (name: string) => {
+    const one = fixture.cases.find((each) => each.name === name);
+    expect(one, `the fixture has no ${name} case`).toBeDefined();
+    return one!;
+  };
+
+  /** The identity point, which is what `generate_key_image` gives a watch-only
+   *  wallet: it has no spend secret to multiply by, so the placeholder is
+   *  `0·H(P)`. Every transfer wallet2 did not write to still holds one. */
+  const PLACEHOLDER = '01' + '00'.repeat(31);
+
+  it('accepted the file, and put each record where the offset said', () => {
+    const accepted = named('accepted');
+    /* Reaching the daemon is the accepting outcome. The magic, the envelope
+     * signature, the account match, the offset bound, the record count and
+     * every ring signature were all decided first, and decided in the file's
+     * favour; then it went to ask a daemon which images were already spent,
+     * and there is no daemon. */
+    expect(accepted.outcome).toBe('no_connection_to_daemon');
+
+    /* The part that is not about cryptography at all. Record i is now sitting
+     * in transfer i + pad, and nothing below pad was touched. */
+    expect(accepted.transferKeyImages).toHaveLength(fixture.pad + fixture.outputs.length);
+    for (let i = 0; i < fixture.pad; i++) {
+      expect(accepted.transferKeyImages[i], `transfer ${i} was written to`).toBe(PLACEHOLDER);
+    }
+    for (const [i, image] of fixture.keyImages.entries()) {
+      expect(accepted.transferKeyImages[fixture.pad + i], `record ${i}`).toBe(image);
+    }
+  });
+
+  it('rejected the same records in the wrong order', () => {
+    /* The whole reason the offset is carried and the reason a file is refused
+     * whole rather than exported short. Both of these files are valid: every
+     * signature in them verifies against the key it was made for. */
+    for (const name of ['records-reversed', 'offset-one-short']) {
+      const one = named(name);
+      expect(one.outcome, name).toBe('signature_check_failed');
+      expect(one.detail, name).toMatch(/Signature check failed/);
+      /* And nothing was written. wallet2 checks every record before it stores
+       * any of them, so a rejected file leaves the wallet as it was. */
+      for (const image of one.transferKeyImages) expect(image, name).toBe(PLACEHOLDER);
+    }
+  });
+
+  it('rejected an offset past the end, and files for another account', () => {
+    expect(named('offset-one-long').detail).toMatch(/blockchain is out of date/);
+    /* A different account cannot even open the envelope: the outer signature
+     * is over the ciphertext and made with the view key. */
+    expect(named('another-account').detail).toMatch(/authenticate/);
+    /* And one that can open it is still refused, because the plaintext names
+     * the account's public keys. */
+    expect(named('same-view-key-other-spend-key').detail).toMatch(/for a different account/);
+  });
+
+  it('gave those verdicts to bytes this code still produces', async () => {
+    /* Without this, the fixture is a verdict about a file nobody can rebuild,
+     * and a later change to the writer would inherit an answer that was given
+     * to different bytes. Each case is rewritten from the recorded seed,
+     * outputs, order, offset and randomness, and has to come out identical.
+     *
+     * The CryptoNight the writer needs is the one recorded in the fixture,
+     * which oracle/emit.mjs took from the harness that build.sh holds to
+     * Monero's four official vectors. One call, because the KDF runs one
+     * round. */
+    const { walletFromSeed, fromHex, toHex } = await import('../src/keys/monero');
+    const { keyImageFileFor, KEYIMAGE_VERSION } = await import('../src/keys/keyimages');
+    const { setNativeCnSlowHash } = await import('../src/keys/moneroexport');
+
+    const chachaKey = fromHex(fixture.wallet.chachaKey);
+    setNativeCnSlowHash(() => chachaKey);
+    try {
+      const wallet = walletFromSeed(fromHex(fixture.wallet.seed));
+      expect(toHex(wallet.viewSecret)).toBe(fixture.wallet.viewSecret);
+      expect(wallet.spendPublic).toBe(fixture.wallet.spendPublic);
+
+      for (const each of fixture.cases) {
+        const made = keyImageFileFor(
+          wallet,
+          {
+            v: KEYIMAGE_VERSION,
+            chain: 'xmr',
+            outputs: each.order.map((i) => fixture.outputs[i]!),
+            offset: each.offset,
+          },
+          fromHex(each.randomness),
+        );
+        expect(made.ok, `${each.name}: ${made.problem ?? ''}`).toBe(true);
+        expect(toHex(made.file!), each.name).toBe(each.file);
+      }
+    } finally {
+      setNativeCnSlowHash(null);
+    }
+  });
+
+  it('is produced by a harness that calls import_key_images itself', () => {
+    /* The guard against this whole block becoming a description of something
+     * that no longer happens. `import_key_images` has to be the call, on a
+     * wallet whose outputs went in through `import_outputs`, and the file has
+     * to be one the vault wrote rather than one the harness made for itself. */
+    const harness = readFileSync('oracle/src/importkeyimages.cpp', 'utf8');
+    expect(harness).toMatch(/wallet\.import_key_images\(argv\[6\], spent, unspent\)/);
+    expect(harness).toMatch(/wallet\.import_outputs\(/);
+    expect(harness).toMatch(/wallet\.get_transfers\(after\)/);
+    const emit = readFileSync('oracle/emit.mjs', 'utf8');
+    expect(emit).toMatch(/vault\.keyImageFileFor\(/);
+    expect(emit).toMatch(/expected \$\{each\.expect\} and wallet2 said/);
+    const build = readFileSync('oracle/build.sh', 'utf8');
+    expect(build).toContain('src/wallet/wallet2.cpp');
   });
 });

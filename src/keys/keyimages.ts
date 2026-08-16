@@ -88,6 +88,12 @@ export interface KeyImageRequest {
    * makes shipping this defensible at all — the failure is "signature check
    * failed", not a wrong balance.
    *
+   * Both halves of that are observed rather than reasoned. The oracle links
+   * `wallet2.cpp` and runs the real `import_key_images` over files written
+   * here: with a correct offset it puts record n into transfer n + offset,
+   * and with an offset one too low it throws. See
+   * `test/fixtures/monero-import-key-images.json`.
+   *
    * Absent means zero, which is what `export_key_images(all=true)` means.
    */
   offset?: number;
@@ -487,7 +493,13 @@ export function keyImageFileFor(
      * `checkRingSignatureOfOne` is `crypto::check_ring_signature` transcribed,
      * and `oracle/src/keyimage.cpp` runs Monero's own over the same fixture
      * and records the verdict, so neither verifier is the other's only
-     * witness. */
+     * witness.
+     *
+     * And the failure this block exists to pre-empt is no longer a prediction.
+     * `oracle/src/importkeyimages.cpp` links wallet2.cpp and hands the real
+     * `import_key_images` a file written here with its two records swapped.
+     * `test/fixtures/monero-import-key-images.json` records what came back:
+     * "Signature check failed", and nothing a person could act on. */
     const readBack = readKeyImageBlob(file, wallet.viewSecret);
     if (!readBack || readBack.images.length !== outputs.length) {
       return { ok: false, problem: 'The key image file this vault wrote did not read back. It was not sent.' };

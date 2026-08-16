@@ -28,11 +28,14 @@
  * None of these keys is secret and none should ever be used for anything. They
  * are test vectors.
  */
+import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 const PINNED = JSON.parse(readFileSync('oracle/PINNED.json', 'utf8'));
 const KEYIMAGE = 'oracle/.work/keyimage';
+const CRYPTONIGHT = 'oracle/.work/cryptonight';
 
 if (!existsSync(KEYIMAGE)) {
   console.error('oracle: no harness. Run ./oracle/build.sh first.');
@@ -163,9 +166,264 @@ if (existsSync(UNSIGNED)) {
   process.exit(1);
 }
 
+// ---------------------------------------------------------------------------
+// The import, run by Monero's own wallet
+//
+// Everything above compares bytes: our writer against Monero's writer, our
+// reader against Monero's archive. This section is the other kind of check.
+// It builds a key-image export *with this repository's own code* and hands it
+// to the real `tools::wallet2::import_key_images`, which is the function every
+// wallet on the receiving end actually calls.
+//
+// That closes the one claim the byte comparison cannot reach.
+// `import_key_images` pairs each record with `m_transfers[n + offset]` -- by
+// position, with nothing in the file naming an output -- so a file whose
+// records are in the wrong order, or whose offset is wrong by one, is still
+// well formed and still fully signed and still wrong. Until this ran, the
+// evidence for that was that I had read wallet2.cpp.
+//
+// Note which direction this goes: the TypeScript writes and the C++ judges.
+// The other harnesses have the C++ write and the TypeScript match. Both are
+// worth having, and this is the one that matches what a person does with the
+// file.
+
+const IMPORT = 'oracle/.work/importkeyimages';
+let importFixture = null;
+if (existsSync(IMPORT)) {
+  importFixture = await emitImport();
+} else {
+  console.error('oracle: no importkeyimages harness; run ./oracle/build.sh');
+  process.exit(1);
+}
+
+async function emitImport() {
+  /* One bundle, not three.
+   *
+   * Each esbuild call produces an independent copy of every module, so
+   * installing CryptoNight into one copy of moneroexport.ts and then calling a
+   * writer that closed over a different copy would install nothing, silently.
+   * scripts/emit-swift-fixtures.mjs learned this the same way. */
+  const compiled = await build({
+    stdin: {
+      contents: `
+        export { walletFromSeed, toHex, fromHex } from './src/keys/monero';
+        export { computeKeyImages, keyImageFileFor, keyImageFileRandomBytes,
+                 KEYIMAGE_VERSION } from './src/keys/keyimages';
+        export { setNativeCnSlowHash } from './src/keys/moneroexport';
+      `,
+      resolveDir: process.cwd(),
+      loader: 'ts',
+    },
+    bundle: true,
+    format: 'esm',
+    write: false,
+    platform: 'neutral',
+  });
+  const vault = await import(
+    'data:text/javascript;base64,' +
+      Buffer.from(compiled.outputFiles[0].text).toString('base64')
+  );
+
+  /* CryptoNight from the oracle's own harness, which build.sh has already held
+   * to Monero's four official vectors. The vault normally gets this from
+   * vendor/cryptonight on the phone; both are the same upstream C at the same
+   * pin, and the point here is that wallet2 has to be able to decrypt what
+   * comes out, which it cannot if the KDF is a stub. */
+  vault.setNativeCnSlowHash((data) =>
+    vault.fromHex(execFileSync(CRYPTONIGHT, [vault.toHex(data)], { encoding: 'utf8' }).trim()),
+  );
+
+  const SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+  const STRANGER_SEED = new Uint8Array(32).fill(9);
+  const wallet = vault.walletFromSeed(SEED);
+  const stranger = vault.walletFromSeed(STRANGER_SEED);
+  const viewSecret = vault.toHex(wallet.viewSecret);
+  const spendSecret = vault.toHex(wallet.spendSecret);
+
+  /* Seven outputs of padding in front of two real ones, so the offset in the
+   * file is not zero. Zero is the case where getting the offset wrong is
+   * invisible, which makes it the wrong case to test with. */
+  const COUNT = 2;
+  const PAD = 7;
+
+  const described = harness(['describe', viewSecret, spendSecret, String(COUNT), String(PAD)]);
+  const outputs = [...described.text.matchAll(/^output (\w+) (\d+) (\w+)$/gm)].map((m) => ({
+    tx: m[1],
+    index: Number(m[2]),
+    key: m[3],
+  }));
+  if (outputs.length !== COUNT) {
+    console.error('oracle: the import harness described the wrong number of outputs');
+    process.exit(1);
+  }
+
+  const images = vault.computeKeyImages(wallet, {
+    v: vault.KEYIMAGE_VERSION,
+    chain: 'xmr',
+    outputs,
+  });
+  if (images.refused.length) {
+    /* The vault re-derives every output from its own keys before it will touch
+     * one. If it refuses these, the two sides disagree about the derivation
+     * itself, which is a much bigger finding than anything below. */
+    console.error("oracle: the vault refused outputs Monero's own crypto derived for its account");
+    process.exit(1);
+  }
+
+  /* A fixed path rather than a temporary one, and a relative path rather than
+   * an absolute one, because wallet2 puts the filename it was given into its
+   * error messages. Those messages go in the fixture, so a per-run temporary
+   * directory would make the fixture stop reproducing for a reason that has
+   * nothing to do with Monero. Everything under .work is git-ignored. */
+  const scratch = 'oracle/.work/import';
+  mkdirSync(scratch, { recursive: true });
+
+  /** A file this repository wrote, for these outputs in this order, at this offset. */
+  function fileFor(order, offset) {
+    const chosen = order.map((i) => outputs[i]);
+    const random = Uint8Array.from(
+      { length: vault.keyImageFileRandomBytes(chosen.length) },
+      (_, i) => (i * 3 + 5) & 0xff,
+    );
+    const made = vault.keyImageFileFor(
+      wallet,
+      { v: vault.KEYIMAGE_VERSION, chain: 'xmr', outputs: chosen, offset },
+      random,
+    );
+    if (!made.ok) {
+      console.error(`oracle: the vault would not write the file: ${made.problem}`);
+      process.exit(1);
+    }
+    return { random: vault.toHex(random), bytes: made.file };
+  }
+
+  function harness(args) {
+    const text = execFileSync(IMPORT, args, { encoding: 'utf8' });
+    const one = (key) => (new RegExp(`^${key} (.+)$`, 'm').exec(text) ?? [])[1] ?? null;
+    return {
+      text,
+      outcome: one('outcome'),
+      detail: one('detail'),
+      imported: one('imported'),
+      transferKeyImages: [...text.matchAll(/^transfer_ki (\w+)$/gm)].map((m) => m[1]),
+    };
+  }
+
+  const CASES = [
+    {
+      name: 'accepted',
+      what: 'the file as the vault writes it, aimed at the transfers it names',
+      order: [0, 1],
+      offset: PAD,
+      account: 'wallet',
+      expect: 'no_connection_to_daemon',
+    },
+    {
+      name: 'records-reversed',
+      what: 'the same two records, swapped. Every signature in it is still valid',
+      order: [1, 0],
+      offset: PAD,
+      account: 'wallet',
+      expect: 'signature_check_failed',
+    },
+    {
+      name: 'offset-one-short',
+      what: 'the right records, claiming to start one transfer earlier than they do',
+      order: [0, 1],
+      offset: PAD - 1,
+      account: 'wallet',
+      expect: 'signature_check_failed',
+    },
+    {
+      name: 'offset-one-long',
+      what: 'the right records, claiming to start one transfer later than they do',
+      order: [0, 1],
+      offset: PAD + 1,
+      account: 'wallet',
+      expect: 'wallet_internal_error',
+    },
+    {
+      name: 'another-account',
+      what: "the same file, offered to somebody else's wallet",
+      order: [0, 1],
+      offset: PAD,
+      account: 'stranger',
+      expect: 'wallet_internal_error',
+    },
+    {
+      name: 'same-view-key-other-spend-key',
+      what: 'a wallet that can open the envelope but is not this account',
+      order: [0, 1],
+      offset: PAD,
+      account: 'half-stranger',
+      expect: 'wallet_internal_error',
+    },
+  ];
+
+  const cases = CASES.map((each) => {
+    const { random, bytes } = fileFor(each.order, each.offset);
+    const path = join(scratch, `${each.name}.bin`);
+    writeFileSync(path, bytes);
+    const keys = {
+      wallet: [viewSecret, spendSecret],
+      stranger: [vault.toHex(stranger.viewSecret), vault.toHex(stranger.spendSecret)],
+      'half-stranger': [viewSecret, vault.toHex(stranger.spendSecret)],
+    }[each.account];
+    const run = harness(['import', ...keys, String(COUNT), String(PAD), path]);
+    if (run.outcome !== each.expect) {
+      console.error(
+        `oracle: case ${each.name} expected ${each.expect} and wallet2 said ${run.outcome}: ${run.detail}`,
+      );
+      process.exit(1);
+    }
+    return {
+      name: each.name,
+      what: each.what,
+      order: each.order,
+      offset: each.offset,
+      account: each.account,
+      randomness: random,
+      file: vault.toHex(bytes),
+      outcome: run.outcome,
+      detail: run.detail,
+      imported: run.imported === null ? null : Number(run.imported),
+      transferKeyImages: run.transferKeyImages,
+    };
+  });
+
+  return {
+    note:
+      "Verdicts from Monero's own tools::wallet2::import_key_images, on files this " +
+      'repository wrote. oracle/src/importkeyimages.cpp links wallet2.cpp from the tag ' +
+      'below and hands each file to a watch-only wallet holding the outputs named here. ' +
+      '`outcome` is what wallet2 did with it. no_connection_to_daemon is the accepting ' +
+      'outcome: every offline gate passed and the call went on to ask a daemon which ' +
+      'images were already spent, and there is no daemon. Regenerate with ' +
+      './oracle/build.sh && node oracle/emit.mjs, and check with --check.',
+    source: { repo: PINNED.upstream, tag: PINNED.tag },
+    wallet: {
+      seed: vault.toHex(SEED),
+      strangerSeed: vault.toHex(STRANGER_SEED),
+      viewSecret,
+      spendSecret,
+      viewPublic: wallet.viewPublic,
+      spendPublic: wallet.spendPublic,
+      address: (/^address (.+)$/m.exec(described.text) ?? [])[1],
+      /* The one CryptoNight answer the writer needs, so the TypeScript suite
+       * can rebuild these exact files without a C compiler. */
+      chachaKey: execFileSync(CRYPTONIGHT, [viewSecret], { encoding: 'utf8' }).trim(),
+    },
+    pad: PAD,
+    outputs,
+    keyImages: images.images.map((entry) => entry.image),
+    cases,
+  };
+}
+
 const outputs = [
   ['test/fixtures/monero-keyimages.json', fixture],
   ['test/fixtures/monero-unsigned-tx-set.json', unsignedFixture],
+  ['test/fixtures/monero-import-key-images.json', importFixture],
 ];
 
 let anyDiffered = false;
@@ -193,14 +451,22 @@ for (const [PATH, value] of outputs) {
     console.error(`oracle: ${PATH} does NOT reproduce. Do not re-pin without knowing why.`);
     continue;
   }
-  diffKeyImages(JSON.parse(committed), value, PATH);
+  diffByCase(JSON.parse(committed), value, PATH);
 }
 process.exit(anyDiffered ? 1 : 0);
 
-function diffKeyImages(a, b, PATH) {
+function diffByCase(a, b, PATH) {
 
   /* A field-level diff rather than "they differ", because the useful question
    * is always which value moved. */
+  for (const key of Object.keys(a)) {
+    if (key === 'cases') continue;
+    if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) {
+      console.error(`oracle: ${key} differs`);
+      console.error(`  committed ${JSON.stringify(a[key]).slice(0, 96)}`);
+      console.error(`  oracle    ${JSON.stringify(b[key]).slice(0, 96)}`);
+    }
+  }
   for (const [i, want] of a.cases.entries()) {
     const got = b.cases[i];
     for (const key of Object.keys(want)) {

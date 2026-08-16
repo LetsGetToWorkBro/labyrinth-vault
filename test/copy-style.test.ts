@@ -38,8 +38,13 @@ import { join } from 'node:path';
  * BlueWallet. It is git-ignored, but this walk is over the filesystem and not
  * over the index, so without this line it starts holding BlueWallet's README
  * to our house style — which is meaningless, and was briefly confusing.
+ *
+ * `.work/` is the same thing one directory down: `oracle/build.sh` clones
+ * Monero and rapidjson into `oracle/.work`, and rapidjson's changelog is not
+ * ours to spell. The oracle's own prose lives in `oracle/README.md`, which is
+ * tracked and is still walked.
  */
-const NOT_OURS = new Set(['node_modules', '.git', '.build', 'scratchpad']);
+const NOT_OURS = new Set(['node_modules', '.git', '.build', 'scratchpad', '.work']);
 
 /** Every markdown file that is part of the product, wherever it lives. */
 function markdown(dir = '.', found: string[] = []): string[] {
