@@ -17,6 +17,9 @@ whether a real wallet imports a key-image export.
 
 ## Before you start
 
+- **Start the stagenet faucet request before anything else.** It is the only
+  input with a queue in front of it, and part two cannot begin without it. You
+  do not need the app built to ask. See below.
 - **Set a device passcode.** The vault refuses to create keys without one.
 - **Have a stopwatch.** Test 4 is a measurement, not an observation.
 - **Do not put real money anywhere near this build.** Nothing here is a
@@ -26,6 +29,41 @@ whether a real wallet imports a key-image export.
   radios on for now so TestFlight can hand you the next build.
 
 Write the results down as you go. A test you remember passing is not a result.
+
+### The stagenet faucet request
+
+A faucet wants an address, an address wants a wallet, and the vault that makes
+wallets is the thing you have not built yet. That ordering is the reason the
+faucet step used to sit behind an Xcode build for no good reason, so there is
+now a script for it:
+
+    cd wallet
+    LABYRINTH_XMR_NODE=<a stagenet node> npx tsx scripts/stagenet-wallet.ts
+
+It makes a stagenet wallet from the same `walletFromSeed` the app uses, prints
+the address on stdout and the seed, view key, twenty-five words and birth
+height on stderr. The node is optional and worth passing: it records the chain
+height at the moment of creation, which is where a later scan should start, and
+without it every scan starts from block zero.
+
+Paste the address into a stagenet faucet and keep the output. Then build while
+you wait.
+
+Two things about that wallet. It is a throwaway that exists to hold test coins,
+which is why a script is allowed to print its keys to a terminal and why it
+refuses to run on mainnet at all. And the coins land in *it*, not in the vault
+you have not made yet, so once the vault exists there are two ways to get them
+where test 16 needs them: ask the faucet again with the vault's own stagenet
+address, or forward them with `scripts/stagenet-send.ts`. The forward is worth
+preferring. It is the same `executeMoneroSend` loop test 16 exercises, with the
+signer in process instead of across the airgap, so if it succeeds you already
+have the transaction id that lifts `MONERO_SEND_BROADCAST_VERIFIED` and you
+have it before touching a phone.
+
+Faucet and node addresses are not listed here on purpose. Both are volunteer
+infrastructure that moves, and a stale URL in a document reads as a broken
+build rather than a dead host. Search for a current one, and check that a node
+answers `/get_info` before relying on it.
 
 ---
 

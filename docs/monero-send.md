@@ -257,8 +257,22 @@ the constant and the evidence to move together.
 
 ## How the evidence gets made
 
-`wallet/scripts/stagenet-send.ts` is what a person runs to make it. It drives
-the exact loop the app drives, `executeMoneroSend`, with the real vault signer
+Two scripts, in order.
+
+`wallet/scripts/stagenet-wallet.ts` makes the wallet a faucet pays. It exists
+because the faucet is the long pole and the address it wants was behind an
+Xcode build: a faucet needs an address, an address needs a wallet, and the only
+wallet-maker was the app. It generates one through the same `walletFromSeed`
+the app uses, prints the address on stdout and the seed, view key, words and
+birth height on stderr. The birth height is the chain height at the moment of
+creation, read from a node if one is named, and it is the difference between a
+scan measured in seconds and one that walks stagenet from block zero. It
+refuses mainnet, because a script that prints keys to a terminal has no
+business on a network with money on it.
+
+`wallet/scripts/stagenet-send.ts` is what a person runs to make the evidence
+itself. It drives the exact loop the app drives, `executeMoneroSend`, with the
+real vault signer
 in process instead of across a QR airgap, because on stagenet the airgap buys
 nothing and the loop is identical either way. Given a seed, a stagenet node, a
 destination and an amount, it finds its own coins, plans, signs, broadcasts,
