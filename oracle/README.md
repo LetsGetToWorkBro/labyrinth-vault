@@ -138,6 +138,10 @@ repository has both halves of a format, the tests will be round trips, and
 round trips prove nothing about the format.** The remedy is cheap once an
 oracle exists. Ask upstream.
 
+[docs/verification.md](../docs/verification.md) is the ledger that came out of
+that: every claim this project makes about somebody else's software, whose
+code agreed with it, and what still has no witness.
+
 ## The RNG stub is not a shortcut
 
 It is the thing that makes any of this possible.

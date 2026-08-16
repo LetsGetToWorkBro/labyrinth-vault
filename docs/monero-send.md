@@ -6,13 +6,14 @@ ring signature, a range proof, and a fistful of consensus rules rather than a
 scan.
 
 The short version: the whole path is built and tested, from the unsigned set
-to the raw bytes a node relays, with every piece anchored to the chain where
-an anchor exists: the range proof verifier to real mainnet proofs, the
-serializer to real transaction ids, the prover and the assembly to those
-anchors in turn. The one thing a test environment with no node cannot produce
-is a live node accepting a fresh transaction, so the wallet refuses to
-broadcast a Monero spend with real value on mainnet until a stagenet
-acceptance has been recorded. Nothing about that gate is hidden.
+to the raw bytes a node relays, and a transaction it builds is now put through
+Monero's own consensus verifiers, which accept it. The range proof verifier is
+anchored to real mainnet proofs and the serializer to real transaction ids;
+the prover, the signer and the assembly are judged by Monero's own code rather
+than by ours. What no test environment without a node can produce is a running
+daemon accepting and relaying a fresh transaction, so the wallet refuses to
+broadcast a Monero spend with real value on mainnet until a stagenet acceptance
+has been recorded. Nothing about that gate is hidden.
 
 ## The division of labor
 
@@ -54,11 +55,14 @@ where the online device never touches a spend key.
 
 **Offline (`src/keys/`):**
 
-- `monerosign.ts` is CLSAG, the ring signature. It generates and verifies, it
-  round-trips at every ring position and size, and every adversarial tamper
-  (message, ring key, commitment, pseudo-out, response scalar, key image)
-  breaks verification. Its domain constants are transcribed from Monero's
-  `rctSigs.cpp`.
+- `monerosign.ts` is CLSAG, the ring signature. It round-trips at every ring
+  position and size, and every adversarial tamper (message, ring key,
+  commitment, pseudo-out, response scalar, key image) breaks verification.
+  None of that was worth much on its own: it is all this file agreeing with
+  itself, and it was all passing while the aggregation hash was wrong in two
+  places. What makes the claim now is `rct::proveRctCLSAGSimple`, which it
+  reproduces byte for byte, and `rct::verRctCLSAGSimple`, which accepts what it
+  produces. See below.
 - `bulletproofplus.ts` verifies the range proof, and it is anchored the hard
   way: against three real Bulletproof+ proofs pulled from mainnet transactions,
   in `test/fixtures/bulletproof-plus.json`. It accepts every proof the network
@@ -66,7 +70,10 @@ where the online device never touches a spend key.
   consensus about what a valid range proof is. The same file holds the
   **prover**, and the prover is never checked against itself: every proof it
   makes must satisfy the consensus-anchored verifier, over commitments built
-  by the same `commit` the scan proves amounts with.
+  by the same `commit` the scan proves amounts with. And since the oracle
+  started linking `rctSigs.cpp`, the prover has an outside opinion too:
+  `rct::verRctSemanticsSimple` accepts the range proof inside a transaction
+  this repository built.
 - `monerowire.ts` is the transaction wire format, anchored the same way: the
   serializer reproduces three real mainnet transaction ids byte for byte from
   their parsed fields, in `test/fixtures/monero-raw-tx.json`. The id is the
@@ -186,6 +193,9 @@ transaction's own key offsets through Monero's
 `relative_output_offsets_to_absolute` and looked up in a table standing in for
 the chain, which is how a node does it and the only reason the wrong-decoy case
 can fail at all.
+
+[docs/verification.md](verification.md) is the whole ledger, of which this is
+one row.
 
 ### What that still does not cover
 

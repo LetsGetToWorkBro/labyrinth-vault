@@ -103,6 +103,8 @@ habit. `docs/monero-signing.md` has the detail.
 
 ### The two artifacts a person holds
 
+[docs/verification.md](verification.md) is the ledger this belongs to.
+
 The compatibility that matters most is not a wire format. It is the address on
 the screen and the twenty-five words on the paper, and both are now checked
 against Monero's own encoders rather than against this repository's own

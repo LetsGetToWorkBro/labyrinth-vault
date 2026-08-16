@@ -157,10 +157,17 @@ Early. What exists and is tested:
   different wallet mid-scan is not a restart.
 
 - **The keys** (`src/keys/`). Monero seed phrases, addresses and view keys;
-  Bitcoin BIP84 derivation, addresses and watch-only export. The derivations
-  are ported unchanged from the sibling project, with their tests: they have
-  been checked against the official wallets, and tidying working money code is
-  how you get a well-formed address nobody holds the key for.
+  Bitcoin BIP84 derivation, addresses and watch-only export.
+
+  These two artifacts are the ones a person actually holds, and both are now
+  checked against the encoders that have to read them rather than against this
+  repository's own decoders. Every Monero address, subaddress, integrated
+  address and twenty-five-word phrase is compared against Monero's own
+  `get_account_address_as_str`, `get_subaddress` and
+  `ElectrumWords::bytes_to_words`, on all three networks; the Bitcoin side is
+  held to BIP84's published vector. That distinction is not pedantry: a wrong
+  address is money nobody can spend, a phrase that restores in no other wallet
+  is not a backup, and both failures look perfectly fine from inside.
 
   What did change is where secrets live. Anything secret is a `Uint8Array`,
   because a JavaScript string cannot be overwritten. Every copy the engine made
@@ -441,6 +448,19 @@ geometry and the Swift fixtures, runs vitest, then compiles the platform-free
 Swift and runs its tests. A build whose regenerated artifacts differ from what
 was committed fails CI, because that means the repository is lying about what
 ships.
+
+It proves this repository still produces what upstream said, by reading
+committed fixtures. It does not prove upstream still says it. That is a
+separate, slower check:
+
+```sh
+./oracle/build.sh --check && node oracle/emit.mjs --check    # Monero
+./oracle/btc.sh && node oracle/btc-emit.mjs --check          # Electrum, BBQr
+```
+
+which rebuilds every fixture from upstream's own source at a pinned commit.
+[docs/verification.md](docs/verification.md) is the ledger of which claim rests
+on whose software, what that has caught, and what still has no witness at all.
 
 The wallet has its own package and its own suite:
 
