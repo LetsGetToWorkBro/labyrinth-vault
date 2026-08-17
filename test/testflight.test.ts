@@ -70,6 +70,7 @@ const COMPANION: Record<string, string | null> = {
   /* `Backup.tsx` carries the creation flow as well as the recovery view, so
    * one file is two steps in the plan and the map names the one the guard can
    * find by file name. */
+  Accounts: '**Accounts.**',
   Backup: '**Recovery words.**',
   Restore: '**Restore from words.**',
   // The list the app opens on. Same reasoning as the vault's Home.

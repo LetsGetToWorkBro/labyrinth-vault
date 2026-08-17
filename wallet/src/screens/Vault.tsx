@@ -42,7 +42,7 @@ import type { Nav } from '../nav/routes';
 
 export function VaultScreen({ navigation }: Nav<'Vault'>) {
   const store = useStore();
-  const { vault, now, snapshot } = store;
+  const { vault, now } = store;
   const paired = vault.state !== 'unpaired';
   const [syncNote, setSyncNote] = useState<string | null>(null);
 
@@ -112,36 +112,38 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
                 <Small tone={color.slate}>Nothing scanned yet. Set a Monero node first.</Small>
               )}
               <Gap size={8} />
-              {snapshot.demo ? null : (
+              {/* Offered whenever a vault is paired, which the branch above
+                  already establishes. This used to be hidden while the app was
+                  showing fixture data, a gate that stopped meaning what it
+                  said the moment the fixture went: the screens behind these
+                  levers say for themselves when nothing has been scanned yet,
+                  which is the better place for that sentence anyway. */}
+              <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
+              <Gap size={space.snug} />
+              {/* Read only, and labelled so. This hands the vault a file
+                  another Monero wallet wrote so it can say what is in it;
+                  no signature comes back, because a wallet2 file is the
+                  sending wallet describing itself and a signature has to
+                  be over what the vault re-derived. The screen says the
+                  same thing at more length. */}
+              <Action label="SHOW A MONERO FILE (READ ONLY)" quiet onPress={() => navigation.navigate('MoneroFile')} />
+              <Gap size={space.snug} />
+              {/* The stand-in's lever renders only where the stand-in can
+                  act. In a release build the signer behind this is
+                  compiled out, and a control whose only possible answer
+                  is "this does not exist here" is chrome pretending to be
+                  a feature. Same gate, same reasoning, as the stand-in
+                  vault controls on the send flow. */}
+              {DEMO ? (
                 <>
-                  <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
+                  <Action
+                    label="SYNC WITH THE STAND-IN (DEMO)"
+                    quiet
+                    onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
+                  />
                   <Gap size={space.snug} />
-                  {/* Read only, and labelled so. This hands the vault a file
-                      another Monero wallet wrote so it can say what is in it;
-                      no signature comes back, because a wallet2 file is the
-                      sending wallet describing itself and a signature has to
-                      be over what the vault re-derived. The screen says the
-                      same thing at more length. */}
-                  <Action label="SHOW A MONERO FILE (READ ONLY)" quiet onPress={() => navigation.navigate('MoneroFile')} />
-                  <Gap size={space.snug} />
-                  {/* The stand-in's lever renders only where the stand-in can
-                      act. In a release build the signer behind this is
-                      compiled out, and a control whose only possible answer
-                      is "this does not exist here" is chrome pretending to be
-                      a feature. Same gate, same reasoning, as the stand-in
-                      vault controls on the send flow. */}
-                  {DEMO ? (
-                    <>
-                      <Action
-                        label="SYNC WITH THE STAND-IN (DEMO)"
-                        quiet
-                        onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
-                      />
-                      <Gap size={space.snug} />
-                    </>
-                  ) : null}
                 </>
-              )}
+              ) : null}
               {syncNote ? (
                 <>
                   <Small tone={color.slate}>{syncNote}</Small>
@@ -175,15 +177,11 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
           <SectionHead>WHAT EACH HALF DOES</SectionHead>
           <Halves />
 
-          {snapshot.demo ? (
-            <>
-              <Gap size={space.gap} />
-              <Small tone={color.dim}>
-                This build has no vault to pair with. The state above is a fixture, and the send flow signs
-                for itself with a published test key so the screens after the handoff can be walked.
-              </Small>
-            </>
-          ) : null}
+          {/* The note that used to live here described the fixture: "the state
+              above is a fixture, and the send flow signs for itself with a
+              published test key". There is no fixture any more. What is left of
+              that idea is the stand-in signer, which is gated on DEMO and says
+              so at its own control. */}
         </View>
         <Gap size={space.chapter} />
       </ScrollView>

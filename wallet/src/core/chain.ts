@@ -100,8 +100,6 @@ export interface ChainSnapshot {
   at: number;
   /** True when it is the last one we managed to get, not a fresh one. */
   stale: boolean;
-  /** True while this is fixture data rather than a chain. */
-  demo: boolean;
 }
 
 export interface BroadcastResult {

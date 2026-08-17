@@ -37,6 +37,7 @@ import { MoneroFileScreen } from './src/screens/MoneroFile';
 import { SendScreen } from './src/screens/Send';
 import { ScanScreen } from './src/screens/Scan';
 import { PairScreen, SecurityScreen, VaultScreen } from './src/screens/Vault';
+import { AccountsScreen } from './src/screens/Accounts';
 import { BackupScreen, CreateWalletScreen } from './src/screens/Backup';
 import { RestoreScreen } from './src/screens/Restore';
 import { OnboardingScreen } from './src/screens/Onboarding';
@@ -85,6 +86,7 @@ export default function App() {
               <Stack.Screen name="Activity" component={ActivityScreen} />
               <Stack.Screen name="Transaction" component={TransactionScreen} />
               <Stack.Screen name="Asset" component={AssetScreen} />
+              <Stack.Screen name="Accounts" component={AccountsScreen} />
               <Stack.Screen name="Vault" component={VaultScreen} />
               <Stack.Screen name="Security" component={SecurityScreen} />
 

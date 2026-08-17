@@ -234,10 +234,16 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
           </>
         )}
         <Gap size={space.gap} />
-        {store.snapshot.demo && !done && purpose !== 'address' ? (
+        {/* Gated on whether a vault has ever been paired, which is the fact
+            this sentence is actually about. It used to be gated on the
+            snapshot being a fixture, which was a proxy for the same thing back
+            when an unpaired wallet was necessarily showing fixture data. It is
+            no longer, and a proxy that stops tracking what it stood for is a
+            sentence that appears at the wrong moment. */}
+        {store.vault.state === 'unpaired' && !done && purpose !== 'address' ? (
           <Small tone={color.dim}>
-            There is no vault in this build to point this at. The reader is real; there is simply nothing
-            drawing frames on the other side.
+            No vault has been paired with this phone yet. The reader is real; there is simply nothing
+            drawing frames on the other side until one is.
           </Small>
         ) : null}
       </View>

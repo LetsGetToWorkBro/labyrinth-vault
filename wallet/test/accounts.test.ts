@@ -149,3 +149,65 @@ describe('a vault account is watch-only here even beside a hot one', () => {
     expect(accountsFrom(paired(), later).map((a) => a.id)).toEqual(['vault', 'hot']);
   });
 });
+
+/*
+ * The screen.
+ *
+ * Comments stripped before every check, for the reason this repository keeps
+ * relearning: a guard that fires on the prose explaining its own rule teaches
+ * people to delete the prose.
+ */
+
+/** Comments removed, so a guard never fires on its own documentation. */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+describe('the accounts screen', () => {
+  const screen = readFileSync('src/screens/Accounts.tsx', 'utf8');
+  const home = readFileSync('src/screens/Home.tsx', 'utf8');
+  const app = readFileSync('App.tsx', 'utf8');
+
+  it('exists and is reachable', () => {
+    expect(codeOnly(app)).toMatch(/name="Accounts"/);
+    expect(codeOnly(home)).toMatch(/navigate\('Accounts'\)/);
+  });
+
+  it('says where every account signs, through the one function that words it', () => {
+    /* Not "watch-only", which says what this wallet cannot do without saying
+     * that something else can. One wording, one place. */
+    const code = codeOnly(screen);
+    expect(code).toMatch(/signingNote\(account\)/);
+    expect(code, 'a row must not word this itself').not.toMatch(/WATCH-ONLY/);
+  });
+
+  it('never decides signability in the screen', () => {
+    /* The rule lives in `canSignHere` and reaches the row through
+     * `account.signsHere`. A screen comparing sources itself would be a second
+     * implementation of the one rule the product rests on. */
+    const code = codeOnly(screen);
+    expect(code, 'the screen is deciding for itself').not.toMatch(/canSignHere/);
+  });
+
+  it('offers only the kind of account that is missing', () => {
+    /* Two levers where one is inert is a screen asking somebody to work out
+     * which of them applies to them. */
+    const code = codeOnly(screen);
+    expect(code).toMatch(/accounts\.some\(\(account\) => account\.source === 'vault'\) \? null/);
+    expect(code).toMatch(/accounts\.some\(\(account\) => account\.source === 'hot'\) \? null/);
+  });
+
+  it('has the empty state, and gets its sentence from the module', () => {
+    const code = codeOnly(screen);
+    expect(code).toMatch(/watchingNothing\(accounts\)/);
+    expect(code).toMatch(/\{NOTHING_WATCHED\}/);
+    expect(code, 'the sentence must not be retyped in the screen').not.toMatch(/No accounts yet/);
+  });
+
+  it('leaves the home screen with no way to render a balance it does not have', () => {
+    /* The finding, checked at the screen that used to carry it. */
+    const code = codeOnly(home);
+    expect(code, 'the fixture chip is back').not.toMatch(/DEMO DATA/);
+    expect(code).toMatch(/if \(watchingNothing\(accounts\)\)/);
+  });
+});

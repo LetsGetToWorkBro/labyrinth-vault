@@ -68,7 +68,22 @@ export interface Account {
  * having to print one. It is also stable: a hot wallet created later does not
  * push a vault down a screen somebody has learned the shape of.
  */
-export function accountsFrom(pairing: Pairing | null, hot: HotRecord | null): Account[] {
+export function accountsFrom(
+  pairing: Pairing | null,
+  hot: HotRecord | null,
+  /**
+   * True when this build is watching the published test account.
+   *
+   * A parameter rather than an import of `DEMO`, so this module stays free of
+   * the stand-in and every branch below runs under Node. It exists because the
+   * fallback is real: in a development build with nothing paired, `store.tsx`
+   * still points the watcher at BIP84's own account key, and a list that said
+   * "no accounts yet" over a screen showing that account's balance would be
+   * the same dishonesty this module was written to delete, one build config to
+   * the left. False in a release build, where the fallback does not exist.
+   */
+  standIn = false,
+): Account[] {
   const accounts: Account[] = [];
 
   if (pairing !== null) {
@@ -110,6 +125,23 @@ export function accountsFrom(pairing: Pairing | null, hot: HotRecord | null): Ac
         since: hot.birth,
       });
     }
+  }
+
+  /* Last, and only when nothing real is present. A development build with a
+   * pairing is watching the pairing, and the fallback is not in play. */
+  if (standIn && accounts.length === 0) {
+    accounts.push({
+      id: 'standin',
+      label: 'Published test account',
+      /* `vault`, because it is watch-only here in exactly the way a paired
+       * account is: this build holds no key for it that the whole world does
+       * not also hold, and `canSignHere` refusing it is the correct answer for
+       * the right reason. */
+      source: 'vault',
+      chains: ['BTC', 'XMR'],
+      signsHere: canSignHere('vault'),
+      since: 0,
+    });
   }
 
   return accounts;

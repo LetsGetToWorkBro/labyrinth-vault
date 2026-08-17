@@ -117,6 +117,16 @@ export type Routes = {
    * the path that leads to a signature.
    */
   MoneroFile: undefined;
+  /**
+   * Everything this wallet watches, vault accounts and hot ones alike.
+   *
+   * A route rather than a section of the vault screen, and that is the whole
+   * of section 2 in one sentence: a vault is a row in this list rather than a
+   * mode the application is in. Carries nothing, because the list is derived
+   * from what is stored and a parameter would be a second opinion about what
+   * exists.
+   */
+  Accounts: undefined;
   Vault: undefined;
   Pair: undefined;
   Security: undefined;

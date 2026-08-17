@@ -28,7 +28,7 @@ import { prepareMoneroDraft, verifySignedMonero } from '../core/monerodraft';
 import { readStatus, type SwapOrder, type SwapStatus } from '../core/swap';
 import type { PendingSwap } from '../core/swaptrack';
 import type { ChainSnapshot, FeeOption } from '../core/chain';
-import { DemoWatcher, DEMO_ZPUB } from '../core/demo';
+import { DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
 import { parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
@@ -49,10 +49,9 @@ import { fileStore } from './fileStore';
 import { keychainStore, spendingKeyStore } from './keychainStore';
 import { clearPairing, loadPairing, savePairing } from './persistKeys';
 import { forgetHot, loadHot, saveHot, type HotRecord } from '../core/keyvault';
+import { accountsFrom, type Account } from '../core/accounts';
 import { transmit, Transmission } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
-
-const demoWatcher = new DemoWatcher();
 
 /**
  * There is no node until somebody sets one.
@@ -60,8 +59,9 @@ const demoWatcher = new DemoWatcher();
  * The constant every other wallet ships with an address in it. This one is
  * empty and stays empty: picking a node for everybody is picking who gets to
  * watch everybody's addresses, and it is a decision this app makes on screen
- * rather than in a source file. With nothing set the app shows the fixture and
- * says `DEMO DATA` at the top of the home screen.
+ * rather than in a source file. With nothing set the app watches nothing and
+ * says so: empty views, a stale snapshot, and a home screen that offers the
+ * way out rather than a number.
  */
 const NO_NODES: WatcherNodes = { btc: null, xmr: null };
 
@@ -104,7 +104,7 @@ export interface Store {
   offerSignature(raw: Uint8Array | null): void;
   broadcast(): void;
 
-  /** Which nodes are set. Null on both means the fixture is showing. */
+  /** Which nodes are set. Null on both means nothing can be fetched. */
   nodes: WatcherNodes;
   /** True while a refresh is in flight, for the one spinner in the app. */
   refreshing: boolean;
@@ -184,6 +184,15 @@ export interface Store {
   moneroFileWaiting: { what: string; filename: string; bytes: number } | null;
   /** Write the waiting file and hand it to the share sheet. */
   saveMoneroFile(): Promise<{ ok: boolean; note: string }>;
+
+  /**
+   * Everything this wallet watches, vault accounts and hot ones alike.
+   *
+   * Derived rather than stored, from the pairing and the hot record, so there
+   * is no third place for the truth about what exists to drift. An empty list
+   * is a real state with a screen attached: see `NOTHING_WATCHED`.
+   */
+  accounts: Account[];
 
   /**
    * This wallet's own spending keys, or null when it holds none.
@@ -357,6 +366,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const accountKey = pairing?.btc?.zpub ?? (DEMO ? DEMO_ZPUB : null);
 
+  /* What exists, for every screen that used to ask "is this app paired". The
+   * stand-in flag is passed rather than read inside `accountsFrom`, so that
+   * module stays testable under Node and free of the demo import. It is what
+   * keeps the list honest in a development build, where the watcher really is
+   * pointed at BIP84's published account. */
+  const accounts = useMemo(
+    () => accountsFrom(pairing, hot, DEMO && pairing === null),
+    [pairing, hot],
+  );
+
   /**
    * The account the Monero scan is for: the paired one, else the demo one.
    *
@@ -397,13 +416,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * balance from this one, and showing it while the new one loads would be
    * showing somebody a number from a source they just stopped trusting.
    */
-  const watcher = useMemo(() => {
-    if (!nodes.btc && !nodes.xmr) return demoWatcher;
-    return new NodeWatcher(nodes, accountKey, undefined, Date.now(), moneroWatch);
-  }, [nodes, accountKey, moneroWatch]);
+  const watcher = useMemo(
+    /*
+     * Always the real watcher, including when no node is set.
+     *
+     * This used to return a fixture whenever both nodes were null, which meant
+     * a wallet with nothing configured showed a stranger's balance behind a
+     * chip reading DEMO DATA. People read the number and not the chip. A
+     * `NodeWatcher` with no transports is the honest version of the same
+     * state: every view empty, `stale` true from birth, and nothing on screen
+     * that looks like somebody's money.
+     */
+    () => new NodeWatcher(nodes, accountKey, undefined, Date.now(), moneroWatch),
+    [nodes, accountKey, moneroWatch],
+  );
 
+  /* `NodeWatcher.snapshot` takes no clock: it hands back the value the last
+   * refresh built. `now` stays in the dependency list because the interface
+   * around it renders relative times from the same tick. */
   const snapshot = useMemo(
-    () => watcher.snapshot(now),
+    () => watcher.snapshot(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [watcher, now, fetched],
   );
@@ -845,6 +877,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     syncStandInKeyImages,
     moneroFileWaiting,
     saveMoneroFile,
+    accounts,
     hot,
     keepHot: async (record: HotRecord) => {
       /* Written before the state moves, so a keychain that refuses leaves the

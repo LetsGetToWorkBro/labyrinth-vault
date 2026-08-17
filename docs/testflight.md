@@ -526,6 +526,18 @@ in.
   the same screen plus a PAY FROM THIS WALLET lever. **Do not send anything**;
   this is a reading test, and the order can be abandoned.
 
+- **Accounts.** The list that replaced "is this app paired". On a phone with
+  nothing set up, expect no balance anywhere: no zeroes, no fixture, a sentence
+  saying no accounts yet and two ways out of it. **A large $0.00 would be the
+  defect**, because it reads as money that has gone rather than as a wallet
+  nobody has set up, and those two need to look completely different.
+
+  Then pair a vault and make a wallet on the phone, so both kinds are on screen
+  at once. Expect two rows: the vault first, saying SIGNS ON YOUR VAULT, and the
+  phone saying SIGNS ON THIS PHONE. **That difference is the test.** A phone
+  holding a seed for one wallet must never present the vault's account as
+  something it can sign for, and these two lines are where a person sees that.
+
 - **Recovery words.** SECURITY, then MAKE A WALLET. This is the companion
   holding a spending seed of its own, so read the screen before touching
   anything: it should say the words are the only copy not on the phone, and it
