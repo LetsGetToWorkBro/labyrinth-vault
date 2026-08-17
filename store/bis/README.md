@@ -29,21 +29,32 @@ that `store/vault/review-notes.md` told Apple's reviewer the report "is filed",
 which was not true, and the way to stop a document drifting from the facts is
 usually to make the facts easy to check.
 
-## Why only the vault is listed
+## Why both apps are listed now
 
-The two apps have different true answers, and `docs/shipping.md` argues that
-out at length. In short: the vault encrypts a seed for confidentiality, and
-the wallet is watch only and has no secret in it to protect. The wallet's
-Info.plist answers `ITSAppUsesNonExemptEncryption: false`; the vault answers
-**yes, in App Store Connect rather than in its Info.plist**, because the key
-in the manifest made Apple refuse four uploads and `docs/shipping.md` records
-that retreat. This report has to agree with both answers, because they are the
-same claim made to two agencies.
+They were not always. This section used to explain why only the vault was here:
+the vault encrypts a seed for confidentiality, and the wallet was watch only,
+with an extended public key and a view key and no secret in it to protect. That
+was true and it stopped being true when the wallet grew backup and restore
+screens and started keeping a seed of its own.
 
-If you would rather take the conservative view that any app doing TLS is a
-5D992.c mass market item, add a second row for the wallet with the same
-company fields. That view is defensible and costs nothing but a line. What is
-not defensible is a report that disagrees with the Info.plist.
+The mechanisms still differ. The vault seals its seed with Argon2id and
+XChaCha20-Poly1305 that it carries itself; the wallet puts one in the device
+keychain and leans on the platform for the sealing. That difference decides a
+lot about the threat model and nothing about this form. The classification
+follows what the item does, and both of these items hold a user's key material
+at rest, so both are 5D992.c mass market and both belong on this report.
+
+One report, two rows, one email. There is no separate filing for the second
+product and no second submitter: the company fields are identical on both
+lines, which is what the format expects.
+
+**Both apps now answer YES in App Store Connect and neither carries the key in
+its Info.plist.** The wallet's `false` was removed rather than flipped to
+`true`, because `true` in a manifest is what made Apple refuse four uploads of
+the vault. `docs/shipping.md` records that at length. This report has to agree
+with the answers given to Apple, because they are the same claim made to two
+agencies, and the thing that would be indefensible is a report that disagrees
+with what the store was told.
 
 ## Every field, and why it says what it says
 

@@ -61,11 +61,29 @@ answers in its Info.plist; the vault answers in App Store Connect, per build,
 for the reason set out below. They answer differently, and that is correct
 rather than an inconsistency.
 
-**The wallet answers no.** It is watch only. It holds an extended public key, a
-Monero view key, addresses and balances, and there is no secret in it to
-protect. Its only cryptography is signature-shaped, and the stand-in signer is
-compiled out of a release build. Nothing in it encrypts data for
-confidentiality, so no non-exempt encryption is present.
+**The wallet used to answer no, and now answers yes.** The old answer was
+correct for the app it described: watch only, holding an extended public key, a
+Monero view key, addresses and balances, with no secret in it to protect and
+nothing in it encrypting data for confidentiality.
+
+That app no longer exists. The wallet generates seeds, stores one under the
+device keychain, and signs with it, which is the same category of product the
+vault is even though the mechanism differs: the vault protects its seed with
+its own Argon2id and XChaCha20-Poly1305, the wallet leans on the platform. The
+distinction that matters to BIS is what the item does rather than whose code
+does it, and an application whose function includes holding a user's key
+material at rest is a controlled encryption item.
+
+So the wallet joins the vault under **5D992.c** and is listed on the same
+self-classification report. The two apps now answer the same way for related
+but not identical reasons, and the sentence above about the difference being
+the point no longer applies.
+
+*Both halves of that change have to move together.* The manifest key and this
+paragraph were flipped in the same commit as the first build that stores a
+seed, deliberately and not in a later cleanup, because the window between "the
+app holds keys" and "the form says it does not" is exactly the window in which
+a false statement gets filed.
 
 **The vault answers yes.** It encrypts a seed at rest with Argon2id and
 XChaCha20-Poly1305. That is data confidentiality. It is not authentication, not
@@ -109,6 +127,16 @@ to mismatch. This is a retreat rather than a fix. An answer in a manifest is
 version controlled and one in a form is not, and `test/shipping.test.ts` can
 now only check that the key stayed out and that this paragraph still says YES.
 Put it back the moment Apple's side is understood.
+
+**This now applies to the wallet too, and the mistake to avoid is obvious in
+advance.** The wallet's honest answer became yes the day it started storing a
+seed. The tempting edit is to set `ITSAppUsesNonExemptEncryption: true` in
+`wallet/app.json`, which is truthful and which would walk straight into the
+same four failed uploads described above. So the key was **removed** from the
+wallet's manifest rather than flipped, and the wallet answers YES in App Store
+Connect per build, exactly as the vault does. Removing a key that said `false`
+and adding one that says `true` are very different edits with the same
+intention, and only one of them uploads.
 
 ### Why the manifest-first approach could not have worked, and how to undo the retreat
 
@@ -503,10 +531,14 @@ domain, and carries one review risk the vault does not.
 
 - [x] **Organization enrollment. Done.** The same 3.1.5(b) gate as the vault
       and the same account, so doing it once did it for both.
-- [x] **No BIS report for this app.** The wallet is watch-only and answers the
-      encryption question `no` (see the export-compliance section above), so the
-      5D992.c self-classification the vault needs does not apply here. Nothing
-      to file.
+- [ ] **The wallet is on the BIS report now.** It used to be exempt here, on
+      the grounds that it was watch-only with no secret to protect. It stores a
+      seed as of the backup and restore screens, so it is a 5D992.c mass market
+      item on the same footing as the vault and is listed as a second row in
+      [`store/bis/`](../store/bis). No separate filing and no second email: one
+      report lists both products. The same four fields still need your details,
+      and the same timing applies, which is that nothing is due until 1 February
+      after a calendar year in which something was actually exported.
 - [x] **Host the privacy policy. Done.** `store/wallet/privacy-policy.md` is
       rendered into the built site at `https://labyrinthwallet.com/privacy` by
       `site/scripts/render-policies.mjs`, from the markdown rather than a copy
@@ -541,9 +573,12 @@ domain, and carries one review risk the vault does not.
       notes lead with the two facts that decide the review: the numbers are
       fixtures until a node is set, and the app is the online half of a
       two-device pair.
-- [ ] **Export compliance** is answered in the Info.plist
-      (`ITSAppUsesNonExemptEncryption: false`), so Connect does not re-ask per
-      build.
+- [ ] **Export compliance: answer YES**, per build, in Connect. Same as the
+      vault and for a related reason: this app stores a seed now. There is no
+      plist key any more, so Connect will ask on every upload. Do not add
+      `ITSAppUsesNonExemptEncryption: true` to make it stop asking; that is the
+      edit that failed four uploads in a row on the vault, and the
+      export-compliance section above is the account of it.
 - [ ] **Screenshots**, one required size class (6.9-inch iPhone). From the shot
       list: the home screen with its `DEMO DATA` chip, receive showing an
       address and its derivation path, the send review screen, the **QR
