@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { bitcoinAccount, encodeAccount, moneroAccount } from '@vault/keys/account';
+import { MAX_RESTORE_HEIGHT, bitcoinAccount, encodeAccount, moneroAccount } from '@vault/keys/account';
 import { openWatch } from '@vault/keys/bitcoin';
 import { revealSecretHex, walletFromSeed } from '@vault/keys/monero';
 import { acceptAccount, type Pairing , wouldReplace } from '../src/core/pairing';
@@ -50,6 +50,74 @@ describe('accepting a Bitcoin export', () => {
   it('refuses bytes that are not an export at all', () => {
     for (const bytes of [new Uint8Array([1, 2, 3]), encoder.encode('{}'), encoder.encode('null')]) {
       expect(acceptAccount(bytes).ok).toBe(false);
+    }
+  });
+});
+
+describe('the refusal a person can act on says which one it is', () => {
+  /*
+   * V-M4's second half. `parseAccount` puts a ceiling on the restore height
+   * and returns null past it, which is right and is all a format reader can
+   * do. What reached the person holding two phones was "That is not a
+   * watch-only export this wallet can read", about a QR code that is fine.
+   *
+   * The height is the one refusal in this door an honest vault can produce (a
+   * wrong clock, a height typed rather than read), so it is the one that gets
+   * named. Everything else keeps the generic sentence, because for a
+   * malformed payload that is genuinely the whole of what is known.
+   */
+  const withHeight = (height: number): Uint8Array =>
+    encoder.encode(JSON.stringify({ ...moneroAccount(xmrWallet), height }));
+
+  it('names the height, and what to do about it', () => {
+    const accepted = acceptAccount(withHeight(MAX_RESTORE_HEIGHT + 1));
+    expect(accepted.ok).toBe(false);
+    if (accepted.ok) return;
+    expect(accepted.problem).toContain(String(MAX_RESTORE_HEIGHT + 1));
+    expect(accepted.problem).toContain(String(MAX_RESTORE_HEIGHT));
+    expect(accepted.problem, 'a refusal with nowhere to go next').toMatch(/export the account again/);
+    expect(accepted.problem, 'the generic sentence is still the one shown').not.toMatch(
+      /not a watch-only export/,
+    );
+  });
+
+  it('names a negative height too, which is the other side of the same door', () => {
+    const accepted = acceptAccount(withHeight(-1));
+    expect(accepted.ok).toBe(false);
+    if (!accepted.ok) expect(accepted.problem).toContain('-1');
+  });
+
+  it('accepts the ceiling itself, so the message is not simply always on', () => {
+    /* The degenerate version of this test would refuse everything and pass. */
+    expect(acceptAccount(withHeight(MAX_RESTORE_HEIGHT)).ok).toBe(true);
+    expect(acceptAccount(withHeight(0)).ok).toBe(true);
+  });
+
+  it('says nothing about a height on a chain that has none', () => {
+    /* The Bitcoin export carries no restore height, so a `height` field on
+     * one is a payload somebody has been editing. Describing it with the
+     * Monero sentence would send that person to re-export an account whose
+     * scan start is not the thing that is wrong. */
+    const accepted = acceptAccount(
+      /* Refused by `parseAccount` for its own reason, so `whyNot` is the
+       * thing being asked. An otherwise valid Bitcoin export with a stray
+       * `height` is simply accepted, extra fields being deliberately ignored,
+       * which would make this test report on nothing. */
+      encoder.encode(JSON.stringify({ ...bitcoinAccount(btcWallet), zpub: 'zpubnotakey', height: -5 })),
+    );
+    expect(accepted.ok).toBe(false);
+    if (!accepted.ok) expect(accepted.problem).toMatch(/not a watch-only export/);
+  });
+
+  it('keeps the generic sentence for everything it cannot name', () => {
+    for (const bytes of [
+      new Uint8Array([1, 2, 3]),
+      encoder.encode('{}'),
+      encoder.encode(JSON.stringify({ ...moneroAccount(xmrWallet), view: 'not a view key' })),
+    ]) {
+      const accepted = acceptAccount(bytes);
+      expect(accepted.ok).toBe(false);
+      if (!accepted.ok) expect(accepted.problem).toMatch(/not a watch-only export/);
     }
   });
 });

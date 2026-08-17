@@ -153,7 +153,7 @@ struct ExportView: View {
                             Haptic.tick()
                             withAnimation(.easeOut(duration: 0.3)) { revealed.toggle() }
                         } label: {
-                            Text(revealed ? "CONCEAL KEY TEXT" : "SHOW KEY AS TEXT — FOR ELECTRUM")
+                            Text(revealed ? "CONCEAL KEY TEXT" : "SHOW KEY AS TEXT · FOR ELECTRUM")
                                 .font(Type.mono(10))
                                 .kerning(1.6)
                                 .foregroundStyle(Ink.paperFaint)

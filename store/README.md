@@ -14,5 +14,11 @@ description whose last sentence is missing.
 
 `review-notes.md` is the one nobody thinks of and the one that decides how a
 review goes. Both apps need explaining: one has no network and does nothing on
-its own, the other shows fixture data. A reviewer who has to guess at either
-will reject.
+its own, the other opens on a screen that says it is watching nothing, because
+it would rather show that than a fixture balance. A reviewer who has to guess
+at either will reject.
+
+The listings make claims about custody, and custody changed once already
+without them. `test/store.test.ts` now reads `wallet/src/core/keyvault.ts`
+before it reads the wallet's description, so a sentence here that the code
+stopped supporting fails the suite instead of reaching Apple.

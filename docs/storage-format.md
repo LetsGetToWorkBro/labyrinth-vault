@@ -44,9 +44,18 @@ setting, which lands around a second on decade-old phones. Lanes stay at 1
 because JavaScript runs them sequentially: raising it would cost the owner
 time without costing an attacker anything.
 
-**Calibration on the device** (`calibrateKdf`) rather than constants tuned on
-a laptop: memory is walked upward until unsealing costs about a second on the
-phone that will actually do it.
+**One set of parameters, not a calibrated one.** `calibrateKdf` exists in
+`seal.ts` and walks memory upward from the default until a derivation costs
+about a second, and nothing calls it: the bridge exposes a `calibrate` reply,
+but `seal` takes no parameters across that bridge, so there is no path from a
+measurement to a sealed blob. Every vault is sealed at the default above,
+which is RFC 9106's second recommendation and is a fine answer rather than a
+regression. It is written here because this document described calibration as
+a live property for longer than it was one, and
+`docs/native-primitives.md` carries the argument for what changing it would
+now mean: the derivation is native and fast, so calibrating to a one-second
+target would mean walking the memory parameter *up*, which is a real design
+question and a separate piece of work.
 
 **Floors** (8 MiB, t≥1) because the header being authenticated protects
 against forged weak parameters but not against our own future code sealing

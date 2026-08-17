@@ -22,10 +22,54 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { live, parseJson, recorded } from '../src/net/http';
+import { obliviousFetch } from '../src/net/oblivious';
+import { routedTransport } from '../src/net/nodeproxy';
+import { proxyTransport } from '../src/net/swapproxy';
 import * as esplora from '../src/net/esplora';
 import * as monerod from '../src/net/monerod';
 import { hostOf, isLocalNode, parseNode, privacyNote, SUGGESTIONS } from '../src/core/nodes';
+
+/** Every module in the layer, comments removed, for the guards at the end. */
+function netSources(dir = 'src/net'): { name: string; code: string }[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return netSources(path);
+    if (!entry.name.endsWith('.ts')) return [];
+    const code = readFileSync(path, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    return [{ name: path, code }];
+  });
+}
+
+/**
+ * The text of every call to `fetch` or to an injected `doFetch`, arguments
+ * included.
+ *
+ * Parentheses are balanced rather than the line being read, because every one
+ * of these calls spans a dozen lines and a line-based check would report on
+ * the first line of each and see none of the arguments.
+ */
+function fetchCalls(code: string): string[] {
+  const sites: string[] = [];
+  const opener = /\b(?:doFetch|fetch)\s*\(/g;
+  for (let match = opener.exec(code); match !== null; match = opener.exec(code)) {
+    let depth = 0;
+    let end = match.index + match[0].length - 1;
+    for (; end < code.length; end += 1) {
+      if (code[end] === '(') depth += 1;
+      else if (code[end] === ')') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    sites.push(code.slice(match.index, end + 1));
+  }
+  return sites;
+}
 
 // ---------------------------------------------------------------------------
 // Recorded answers. Shapes as the nodes really send them.
@@ -306,6 +350,69 @@ describe('monerod', () => {
       expect(answer.ok).toBe(false);
     });
   });
+
+  describe('the output distribution, which decides every decoy', () => {
+    /*
+     * W-M20's tail. `base` is added to element 0 and the loop after it is a
+     * monotonic repair, not the base carry-forward its comment used to claim.
+     * The two are the same only when `base` is zero, which is the only case
+     * that has ever run, because the sole caller asks from height zero. The
+     * obvious reason to pass anything else is refreshing the tail of a cached
+     * distribution, and whoever writes that is one wrong assumption away from
+     * an offset applied to every element or to none. This sequence maps an
+     * output's age to its global index, so a shifted one picks decoys from
+     * the wrong stretch of the chain and hands the network a ring whose real
+     * member is the odd one out: a privacy loss with no error message.
+     *
+     * So a partial fetch is refused until somebody settles it against
+     * monerod's own code, the way `docs/verification.md` requires. This pins
+     * the refusal so that removing it is a decision rather than a default.
+     */
+    const served = (body: unknown) =>
+      recorded({ 'POST /json_rpc': JSON.stringify({ jsonrpc: '2.0', id: '0', result: body }) });
+
+    it('reads a whole-chain answer', async () => {
+      const answer = await monerod.outputDistribution(
+        served({ distributions: [{ distribution: [10, 20, 30], start_height: 0, base: 0 }] }),
+        0,
+        2,
+      );
+      expect(answer.ok).toBe(true);
+      if (!answer.ok) return;
+      expect(answer.value.cumulative).toEqual([10, 20, 30]);
+      expect(answer.value.startHeight).toBe(0);
+    });
+
+    it('forces the sequence to climb, whatever the node sent', async () => {
+      /* The repair under its real name. A cumulative count that goes down is
+       * an answer this wallet cannot map an age onto. */
+      const answer = await monerod.outputDistribution(
+        served({ distributions: [{ distribution: [10, 4, 30, 12], start_height: 0, base: 0 }] }),
+        0,
+        3,
+      );
+      expect(answer.ok).toBe(true);
+      if (!answer.ok) return;
+      expect(answer.value.cumulative).toEqual([10, 10, 30, 30]);
+    });
+
+    it('refuses to fetch part of it, without asking the node', async () => {
+      let asked = false;
+      const watching = {
+        base: 'https://node.example',
+        async send() {
+          asked = true;
+          return { ok: true as const, status: 200, text: '{}' };
+        },
+      };
+      const answer = await monerod.outputDistribution(watching, 1_000_000, 3_200_000);
+      expect(answer.ok).toBe(false);
+      expect(asked, 'it went to the node with a question it cannot read the answer to').toBe(false);
+      if (answer.ok) return;
+      expect(answer.problem).toMatch(/start of the chain/);
+      expect(answer.problem, 'a refusal that is a code rather than a sentence').toMatch(/decoys/);
+    });
+  });
 });
 
 describe('choosing a node', () => {
@@ -462,6 +569,45 @@ describe('choosing a node', () => {
   });
 });
 
+describe('what a node request carries, and what it deliberately does not', () => {
+  /*
+   * `credentials: 'omit'` is set through a spread rather than written into
+   * the fetch init, because the Worker bundles this module and typechecks it
+   * against `@cloudflare/workers-types`, whose `RequestInit` has no such
+   * field. That indirection is exactly the kind a later refactor drops
+   * without noticing, so the flag is checked on the init that reaches fetch
+   * rather than in the source. The pair below is the point: a fixture that
+   * only asserted the flag would pass against a transport that had stopped
+   * sending anything at all.
+   */
+  const spying = async (): Promise<RequestInit> => {
+    const original = globalThis.fetch;
+    let seen: RequestInit = {};
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      seen = init ?? {};
+      return Promise.resolve(new Response('7', { status: 200 }));
+    }) as typeof fetch;
+    try {
+      const reply = await live('https://node.example').send({ method: 'GET', path: '/blocks/tip/height' });
+      expect(reply.ok, 'the request did not go through, so the init proves nothing').toBe(true);
+    } finally {
+      globalThis.fetch = original;
+    }
+    return seen;
+  };
+
+  it('omits credentials, so a redirect cannot carry any', async () => {
+    const init = await spying();
+    expect((init as Record<string, unknown>)['credentials']).toBe('omit');
+  });
+
+  it('refuses to follow a redirect at all, and keeps its deadline', async () => {
+    const init = await spying();
+    expect(init.redirect).toBe('error');
+    expect(init.signal, 'the deadline went with the refactor').toBeTruthy();
+  });
+});
+
 describe('what the screen is told a node costs', () => {
   it('says nothing is set when nothing is', () => {
     expect(privacyNote(null)).toMatch(/fixture data/);
@@ -500,6 +646,101 @@ describe('what the screen is told a node costs', () => {
     for (const suggestion of SUGGESTIONS) {
       expect(suggestion.who.length, suggestion.label).toBeGreaterThan(20);
       expect(parseNode(suggestion.kind, suggestion.url).ok, suggestion.url).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The rule at the top of http.ts, held for every transport rather than for one.
+
+describe('everything times out', () => {
+  /* `http.ts` states the rule for the layer: "a wallet that hangs on a dead
+   * node is a wallet whose owner force quits it during a broadcast." For a
+   * long time `live()` was the only transport and the rule was true by
+   * accident. Three more were added, each calling fetch itself, and none of
+   * them passed a signal, so the sentence at the top of the file described one
+   * function out of four. */
+
+  /** A server that accepts the connection and then never says anything. */
+  const hangs = (): typeof fetch =>
+    ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const stopped = new Error('aborted');
+          stopped.name = 'AbortError';
+          reject(stopped);
+        });
+      })) as typeof fetch;
+
+  it('gives the swap proxy a deadline, in words a person can act on', async () => {
+    const proxy = proxyTransport('https://proxy.example', hangs(), 5);
+    await expect(proxy.quote({ provider: 'exolix', from: 'btc', to: 'xmr', amount: 1 })).rejects.toThrow(
+      /did not answer in time/,
+    );
+  });
+
+  it('gives the node relay a deadline, without throwing across its boundary', async () => {
+    const node = parseNode('esplora', 'https://mempool.space/api');
+    expect(node.ok).toBe(true);
+    if (!node.ok) return;
+    const relayed = routedTransport(node.config, live('https://mempool.space/api'), 'https://proxy.example', hangs(), 5);
+    const reply = await relayed.send({ method: 'GET', path: '/blocks/tip/height' });
+    expect(reply.ok).toBe(false);
+    if (reply.ok) return;
+    expect(reply.problem).toMatch(/did not answer in time/);
+  });
+
+  it('gives the oblivious client a deadline on the leg that fetches the keys', async () => {
+    const relay = { operator: 'somebody else', url: 'https://relay.example/x', keysUrl: 'https://relay.example/keys' };
+    const through = obliviousFetch(relay, { doFetch: hangs(), timeoutMs: 5 });
+    await expect(through('https://gateway.example/v1/health')).rejects.toThrow();
+  });
+
+  it('lets the transport above it abandon the relay leg', async () => {
+    /* The layered case, and the reason `deadline` takes an upstream signal at
+     * all. `obliviousFetch` is handed to `proxyTransport` as its fetch, so
+     * without this the relay would keep a request running for its own full
+     * timeout after the swap screen had already told the person nobody
+     * answered. */
+    const seen: (AbortSignal | undefined)[] = [];
+    const watchful = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      return new Promise<Response>((_resolve, reject) => {
+        const stopped = new Error('aborted');
+        stopped.name = 'AbortError';
+        if (init?.signal?.aborted) reject(stopped);
+        else init?.signal?.addEventListener('abort', () => reject(stopped));
+      });
+    }) as typeof fetch;
+
+    const relay = { operator: 'somebody else', url: 'https://relay.example/x', keysUrl: 'https://relay.example/keys' };
+    const through = obliviousFetch(relay, { doFetch: watchful, timeoutMs: 60_000 });
+    const giving = new AbortController();
+    giving.abort();
+    /* The rejection is not what is being checked: an already-aborted caller
+     * could plausibly be refused before a fetch happens at all. What matters
+     * is that the signal handed down was aborted, because that is the thing
+     * that stops the leg. */
+    await through('https://gateway.example/v1/health', { signal: giving.signal }).catch(() => undefined);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]?.aborted, 'the relay leg was started with a live signal').toBe(true);
+  });
+
+  it('passes a signal at every fetch call site under src/net', () => {
+    /* The guard, because the four tests above cover the four transports that
+     * exist today and the fifth is the one that will be written without them.
+     * Comments are stripped first: this rule is argued at length in prose two
+     * files over, and a guard that fires on the paragraph explaining it
+     * teaches people to delete the paragraph. */
+    const files = netSources();
+    expect(files.length, 'the walk found no sources').toBeGreaterThanOrEqual(6);
+    const sites = files.flatMap(({ name, code }) => fetchCalls(code).map((text) => ({ name, text })));
+    /* A `for` loop over an empty list asserts nothing and reports green, which
+     * is how a guard ends up watching a call site its own matcher stopped
+     * finding. Four transports call the network today. */
+    expect(sites.length, 'the matcher found no fetch call sites at all').toBeGreaterThanOrEqual(4);
+    for (const { name, text } of sites) {
+      expect(text, `${name} calls fetch with no deadline: ${text.slice(0, 60)}`).toMatch(/\bsignal\s*:/);
     }
   });
 });

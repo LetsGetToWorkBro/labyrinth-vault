@@ -127,6 +127,13 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
   const { session, asset, snapshot, vault } = store;
   const view = snapshot.assets[asset];
   const [problem, setProblem] = useState<string | null>(null);
+  /* Where this account signs, which is a different question from whether a
+   * vault is paired. This screen used to ask the second one and answer the
+   * first: a phone-only wallet was told "SIGNING NEEDS YOUR VAULT ... it was
+   * built not to be able to", with the path that actually works demoted to a
+   * button reading BUILD IT ANYWAY. */
+  const account = store.accounts.find((entry) => entry.id === store.selectedAccount) ?? null;
+  const signsHere = account?.signsHere === true;
 
   const verdict = useMemo(
     () => (session.compose.recipient ? checkAddress(session.compose.recipient, asset) : null),
@@ -140,7 +147,29 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
   const paste = async () => {
     const text = await Clipboard.getStringAsync();
     const read = readPaymentUri(text);
-    store.send({ type: 'recipient', value: read.address, source: 'pasted' });
+    /* A URI this wallet cannot honor is refused by name. `readPaymentUri`
+     * answers an empty address for one, so without this branch the person
+     * reads "Enter or scan a destination." about a code they have just
+     * pasted, which describes neither what was wrong with it nor what to ask
+     * the payee for instead. */
+    if (read.problem) {
+      setProblem(read.problem);
+      return;
+    }
+    /* The re-encoded spelling, not the pasted one. BIP173 declares uppercase
+     * bech32 valid and recommends it inside QR codes, and `verifySigned`
+     * compares the draft's recipient against an address the transaction
+     * always re-encodes lowercase: a byte-correct signature came back accused
+     * of paying somebody else, at the end of the whole airgap ceremony, with
+     * no text field to correct it in. Scan.tsx has always stored the
+     * canonical form. This path now matches it. */
+    const checked = checkAddress(read.address, asset);
+    setProblem(null);
+    store.send({
+      type: 'recipient',
+      value: checked.ok ? checked.address : read.address,
+      source: 'pasted',
+    });
     if (read.amount) store.send({ type: 'amount', value: read.amount });
   };
 
@@ -241,7 +270,13 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
         value={session.compose.amountText}
         onChange={(value) => store.send({ type: 'amount', value })}
         onMax={() => {
-          const most = asset === 'BTC' ? maxSendable(view.utxos, fee.rate) : view.balance;
+          /* Budgeted against the real destination once there is one. Without
+             it MAX prices the widest standard output, which is the safe
+             direction (it can only leave a little behind, never produce an
+             amount `selectCoins` refuses) but is a few sat short of the
+             sweep somebody pressing MAX is asking for. */
+          const most =
+            asset === 'BTC' ? maxSendable(view.utxos, fee.rate, session.compose.recipient) : view.balance;
           store.send({ type: 'amount', value: formatAvailable(most, asset, false) });
         }}
       />
@@ -290,14 +325,20 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
             <Gap size={space.step} />
           </>
         ) : null}
-        {vault.state === 'unpaired' ? (
+        {vault.state === 'unpaired' && !signsHere ? (
           <>
             {/* Not an error, and not a dead end either. Three quarters of this
                 application works with no vault anywhere near it, and saying so
-                plainly is the difference between a limitation and a fault. */}
+                plainly is the difference between a limitation and a fault.
+
+                Gated on where this account signs rather than on whether a
+                vault is paired, because those stopped being the same question
+                the day this phone could hold keys. A hot account with no vault
+                anywhere reads REVIEW TRANSACTION, like any other account this
+                phone can sign for. */}
             <Notice title="SIGNING NEEDS YOUR VAULT">
-              This wallet can watch your balances, show your history and receive funds without it. It cannot
-              sign, and it was built not to be able to.
+              This wallet can watch your balances, show your history and receive funds without it. This
+              account is signed for on the vault, and this device was built not to be able to sign for it.
             </Notice>
             <Gap size={space.step} />
             <Action label="CONNECT YOUR VAULT" onPress={() => navigation.navigate('Pair')} />
@@ -316,8 +357,14 @@ function Compose({ onBack, navigation }: { onBack: () => void; navigation: Nav<'
               onPress={() => void store.prepareDraft().then(setProblem)}
             />
             <Gap size={space.step} />
+            {/* The line under the button, and the one that had to move with
+                everything else: on a hot account this screen is not the first
+                step of a handoff, it is the step before the only approval
+                there is going to be. */}
             <Body tone={color.slate} style={{ textAlign: 'center' }}>
-              Nothing is signed here. This device builds the transaction; your vault approves it.
+              {signsHere
+                ? 'Nothing is signed here. The next screen is the one that asks, and it is the only screen that will.'
+                : 'Nothing is signed here. This device builds the transaction; your vault approves it.'}
             </Body>
           </>
         )}
@@ -392,14 +439,20 @@ function Review({ onBack }: { onBack: () => void }) {
   const store = useStore();
   const draft = store.session.draft;
 
-  /* The account being paid from, which is the one being looked at.
+  /* The account the draft was built for, which by this step is a different
+   * question from the one on screen.
    *
-   * `some((a) => a.signsHere)` was the earlier version and it asked the wrong
-   * question: whether *any* account signs here. On a phone watching a vault
-   * and a hot wallet at once that answers yes for both, so the vault's own
-   * payment would have been offered a SIGN ON THIS PHONE button. Reading the
-   * selected account is what makes the answer about this payment. */
-  const account = store.accounts.find((entry) => entry.id === store.selectedAccount) ?? null;
+   * Three versions of this line have now been wrong. `some((a) => a.signsHere)`
+   * asked whether *any* account signs here, which on a phone watching a vault
+   * and a hot wallet answers yes for both. Reading the selection fixed that
+   * until the selection could move underneath a live draft: Send is a modal
+   * with `gestureEnabled`, so dismissing it at this step, tapping a hot
+   * account and reopening rendered SIGN ON THIS PHONE over the vault
+   * account's transaction. The store refuses that in a sentence, but an
+   * interface that offers a button it will then refuse has already broken the
+   * promise. The draft's own account is the only one of the three that cannot
+   * drift out from under it. */
+  const account = store.accounts.find((entry) => entry.id === store.session.account) ?? null;
   const signsHere = account?.signsHere === true;
 
   if (!draft) return null;
@@ -477,7 +530,18 @@ function Review({ onBack }: { onBack: () => void }) {
 
         <Gap size={space.section} />
         {signsHere ? (
-          <Action label="SIGN ON THIS PHONE" onPress={() => void store.signOnThisDevice()} />
+          /* A transition, not the signature. `Signing`'s mount effect is the
+             single caller of `signOnThisDevice`, and it says so at length.
+             This button calling it too meant two Face ID prompts on every hot
+             send: the dispatch below commits the step change while the first
+             call is parked on the prompt, the new screen mounts and asks
+             again, and the second prompt cancels the first. The store holds an
+             in-flight ref that makes that harmless now, but a screen with two
+             doors into one action is how it came back. */
+          <Action
+            label="SIGN ON THIS PHONE"
+            onPress={() => store.send({ type: 'sign-here', signsHere, at: Date.now() })}
+          />
         ) : (
           <Action label="SEND TO VAULT" onPress={store.beginTransmit} />
         )}
@@ -496,6 +560,17 @@ function Ready() {
   const { session } = store;
   const draft = session.draft;
   const publishing = session.step === 'broadcasting';
+  /* Who signed it, which the screen was crediting to the vault whatever had
+   * happened. On the hot path no vault was involved at any point, and telling
+   * somebody their offline device signed something it never saw is the same
+   * class of false statement as the custody copy this screen sits under.
+   *
+   * `session.account` rather than the selection, because by this step there is
+   * a draft and the draft's own account is the only one of the two that cannot
+   * move: Send is a modal with a dismissal gesture, so somebody can visit the
+   * accounts list mid-payment and come back. */
+  const account = store.accounts.find((entry) => entry.id === session.account) ?? null;
+  const signsHere = account?.signsHere === true;
   if (!draft || !session.verified?.ok) return null;
 
   return (
@@ -534,8 +609,11 @@ function Ready() {
 
         <Gap size={space.gap} />
         <Notice tone="good" title="NOTHING HAS BEEN PUBLISHED YET">
-          The vault signed this and handed it back. It has no network and did not send it anywhere. This
-          device is the one that broadcasts, and it has not yet.
+          {signsHere
+            ? 'This phone signed it with the keys for this account. A signature is not a payment: nothing ' +
+              'has left this device, and nothing will until you broadcast it.'
+            : 'The vault signed this and handed it back. It has no network and did not send it anywhere. ' +
+              'This device is the one that broadcasts, and it has not yet.'}
         </Notice>
 
         <Gap size={space.section} />
@@ -556,6 +634,9 @@ function Done({ onClose }: { onClose: () => void }) {
   const store = useStore();
   const { session } = store;
   const draft = session.draft;
+  /* The draft's account, not the selection. See `Ready`. */
+  const account = store.accounts.find((entry) => entry.id === session.account) ?? null;
+  const signsHere = account?.signsHere === true;
 
   /* No haptic here. `broadcast()` already fired one when the node accepted it,
    * and a second identical buzz as this screen mounts reads as a stutter
@@ -592,8 +673,11 @@ function Done({ onClose }: { onClose: () => void }) {
 
         <Gap size={space.section} />
         <Notice title="BROADCAST BY THIS DEVICE">
-          Your vault signed it and never touched a network. This wallet published it. In a build with a
-          node behind it, confirmations would start arriving here within the hour.
+          {signsHere
+            ? 'This phone signed it and this phone published it. Confirmations will start arriving here ' +
+              'as the node sees them.'
+            : 'Your vault signed it and never touched a network. This wallet published it. Confirmations ' +
+              'will start arriving here as the node sees them.'}
         </Notice>
 
         <Gap size={space.section} />
@@ -609,13 +693,26 @@ function Done({ onClose }: { onClose: () => void }) {
 function Failed({ onBack }: { onBack: () => void }) {
   const store = useStore();
   const signed = store.session.verified?.ok === true;
+  /* The screen a dismissed Face ID prompt lands on. It sent that person off to
+   * fetch a device that had nothing to do with the failure, which is the worst
+   * possible advice at the one moment somebody is already confused about why
+   * their payment did not go. Read off the draft's account, for the reason
+   * `Ready` gives. */
+  const account = store.accounts.find((entry) => entry.id === store.session.account) ?? null;
+  const signsHere = account?.signsHere === true;
 
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
       <Header overline={signed ? 'NOT PUBLISHED' : 'NO SIGNATURE'} />
       <Gap size={space.gap} />
       <View style={{ paddingHorizontal: space.gutter }}>
-        <Title>{signed ? 'This did not reach a node' : 'The vault did not return a signature'}</Title>
+        <Title>
+          {signed
+            ? 'This did not reach a node'
+            : signsHere
+              ? 'This phone did not sign it'
+              : 'The vault did not return a signature'}
+        </Title>
         <Gap size={space.gap} />
         <Body>{store.session.problem}</Body>
 
@@ -623,7 +720,10 @@ function Failed({ onBack }: { onBack: () => void }) {
         <Notice tone="warn" title={signed ? 'THE TRANSACTION IS STILL GOOD' : 'NOTHING WAS SIGNED'}>
           {signed
             ? 'It is signed and this device still has it. Try broadcasting again. There is no need to go back to the vault.'
-            : 'No signature came back, so nothing can be spent. Show the codes to the vault again when you are ready.'}
+            : signsHere
+              ? 'No signature was made, so nothing can be spent. The transaction is still here: try again ' +
+                'and approve the Face ID prompt.'
+              : 'No signature came back, so nothing can be spent. Show the codes to the vault again when you are ready.'}
         </Notice>
 
         <Gap size={space.section} />

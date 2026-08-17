@@ -2,10 +2,15 @@
 # push. The suites, the typechecks, and the Swift model layer all run by hand
 # in development; this file is what makes them run when nobody remembers to.
 #
-# One job rather than a matrix, deliberately. The vault and the wallet share
-# source through the @vault path alias, so testing them from the same checkout
-# is testing what actually ships, and the whole run is a few minutes, which is
-# under the threshold where splitting buys anything but log-hopping.
+# One job rather than a matrix, deliberately. The vault, the wallet and the
+# Worker share source through the @vault path alias and through the Worker
+# bundling wallet/src/net, so testing them from the same checkout is testing
+# what actually ships, and the whole run is a few minutes, which is under the
+# threshold where splitting buys anything but log-hopping.
+#
+# Three suites, and the third is here because it was missing. This file had
+# one job that stopped after the companion, so every guard under worker/test
+# passed or failed on somebody's laptop and nowhere else.
 #
 # The Swift toolchain comes from scripts/install-swift.sh, the same script a
 # person runs, with the same two non-optional checks: the Swift project's
@@ -34,6 +39,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             wallet/package-lock.json
+            worker/package-lock.json
 
       - name: Swift toolchain (cached against the pin in install-swift.sh)
         id: swift-cache
@@ -65,6 +71,21 @@ jobs:
           npm ci
           npx vitest run
           npx tsc --noEmit
+
+      - name: Worker suite
+        # Nothing else runs this. The Worker is its own package with its own
+        # vitest config, so the root run cannot pick it up, and for as long as
+        # this step did not exist every guard in worker/test was decoration:
+        # the retention walk, the origin pinning, the body caps. The typecheck
+        # is here too, and it had genuinely never been run once. It could not
+        # be: the Worker bundles the wallet's net modules and typechecks them
+        # against @cloudflare/workers-types, and one browser-only fetch option
+        # in wallet/src/net/http.ts failed the whole thing.
+        working-directory: worker
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
 
       - name: The tree is what the pipeline produces
         # A build whose regenerated artifacts differ from what was committed

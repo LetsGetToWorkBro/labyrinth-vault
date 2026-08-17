@@ -21,7 +21,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { parseAccount } from '../src/keys/account';
+import { readFileSync } from 'node:fs';
+import { codeOnly } from './support/source';
+import { MAX_RESTORE_HEIGHT, parseAccount } from '../src/keys/account';
 import { parseKeyImageReply, parseKeyImageRequest } from '../src/keys/keyimages';
 import { parseUnsignedSet } from '../src/keys/monerobuild';
 import { parseUr } from '../src/airgap/ur';
@@ -187,6 +189,48 @@ describe('an account export whose two halves are not the same wallet', () => {
       height: 0,
     };
     expect(parseAccount(bytes(account))).toBeNull();
+  });
+
+  it('refuses a restore height no chain will ever reach', () => {
+    /* The failure this prevents is not a bad scan, it is a pairing that works
+     * and then disappears. The companion stores what it accepted and puts the
+     * stored copy back through a re-validator that caps the height at the same
+     * ceiling, so a height accepted here and refused there is a Monero half
+     * that pairs on camera, survives the session, and is gone after the next
+     * launch with nothing said at either end.
+     *
+     * `Number.isInteger` is not the check: it answers true for 1e300, and
+     * 2^53 + 1 is an integer that cannot be counted to. */
+    const at = (height: unknown) =>
+      parseAccount(
+        bytes({ v: 1, chain: 'xmr', network: 'mainnet', address: wallet.address, view: toHex(wallet.viewSecret), height }),
+      );
+
+    expect(at(1e300), 'a float larger than any block count').toBeNull();
+    expect(at(2 ** 53 + 2), 'past the last integer JavaScript can count to').toBeNull();
+    expect(at(MAX_RESTORE_HEIGHT + 1), 'one block past the ceiling').toBeNull();
+    expect(at(Number.POSITIVE_INFINITY), 'infinity').toBeNull();
+    expect(at(-1), 'before the genesis block').toBeNull();
+
+    /* The other half, so this cannot pass by refusing everything: the ceiling
+     * itself and a height a real wallet actually carries both go through. */
+    expect(at(MAX_RESTORE_HEIGHT), 'the ceiling itself').not.toBeNull();
+    expect(at(3_476_713), 'a height from this year').not.toBeNull();
+  });
+
+  it('agrees with the companion about where the ceiling is', () => {
+    /* Two doors, one number. This reads the far door rather than trusting it,
+     * because the whole defect above is the two of them drifting apart, and
+     * the drift is silent by construction. Either spelling counts: the wallet
+     * may import the constant or write the numeral, but it may not pick a
+     * different number. */
+    const pairing = codeOnly(readFileSync('wallet/src/core/pairing.ts', 'utf8'));
+    const ceiling = /birth <= (MAX_RESTORE_HEIGHT|[\d_]+)/.exec(pairing);
+    expect(ceiling, 'the companion no longer caps the stored restore height').not.toBeNull();
+    const written = ceiling![1]!;
+    if (written !== 'MAX_RESTORE_HEIGHT') {
+      expect(Number(written.replace(/_/g, '')), 'the two doors disagree about the ceiling').toBe(MAX_RESTORE_HEIGHT);
+    }
   });
 });
 

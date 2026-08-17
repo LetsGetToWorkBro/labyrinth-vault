@@ -6,35 +6,81 @@ request was "make sure the wallet has the same state of the art security as
 the vault", and the honest answer to that request begins by disagreeing with
 its premise.
 
-## The premise, first
+## The premise, first, and it has changed since this was written
 
-**The two apps should not have the same security, because they do not hold the
-same thing.** The vault holds keys and the wallet holds public information.
-Every hardening measure that matters to the vault is either irrelevant here or
-already answered by the architecture.
+This review was written against a wallet that held no key, and it said so at
+length: no screen imports one, no field accepts one, so nobody's coins can be
+stolen by compromising this app's storage. **That premise is now false for
+half of the accounts this app can hold**, and the paragraphs that rested on it
+have been rewritten rather than quietly deleted, because the reasoning is what
+a reader needs and the reasoning is what changed.
 
-What the wallet can hold: an extended public key, a Monero view key,
-addresses, balances, unspent outputs, fee estimates, prices, history. Every
-one of those is public information. None can move a coin.
+**There are two kinds of account now, and only one of them is watch-only.**
 
-What it can never hold: a private key. There is no screen that imports one, no
-field that would accept one, and no field in `src/core/model.ts` with anywhere
-to put one. That is not a mitigation, it is the shape of the product, and it
-is why the keys are on the other phone.
+*An account paired from a vault* holds exactly what the old premise described:
+an extended public key, a Monero view key, addresses, balances, unspent
+outputs, fee estimates, prices, history. All public, none of it able to move a
+coin. `canSignHere` takes the account's source and nothing else, so this half
+cannot sign for such an account whatever else the phone happens to be holding.
+That invariant survived every attempt to break it and it is the one thing this
+product cannot survive getting wrong.
 
-So **nobody's tokens can be stolen by compromising this app's storage**, which
-is what "state of the art security" usually means. The things that can go
-wrong here are different, and three of them are real.
+*An account made or restored on this phone* holds a seed, in the iOS keychain
+at `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, and signs here behind a Face ID check per
+signature. `core/keyvault.ts` is the whole of that decision and reads as a
+security document because it is one.
+
+**So the two apps still should not have the same security, but the reason is
+smaller than it was.** It is no longer "there is nothing here to steal". It is
+"what is here is protected by the device rather than by something you know,
+and that is a real reduction, stated on the screen where somebody chooses to
+use it". Anything worth more than a phone belongs on the other half. Every
+measure below that was declined on the grounds that this app holds no secrets
+has been re-argued on that footing.
 
 ## What can actually go wrong
 
-Ranked by how much it would cost the person it happened to.
+Ranked by how much it would cost the person it happened to. The first is new
+and it is first because it is the one that ends with somebody's coins gone.
+
+### 0. The phone is taken while it is unlocked, with a seed on it
+
+This is the whole threat model for an account made on this phone, and it is
+worth stating plainly because the keychain does not address it: the device is
+in exactly the state the keychain is waiting for. `WHEN_UNLOCKED_THIS_DEVICE_ONLY`
+answers a stolen backup, a lifted disk image and a restore onto another phone.
+It does not answer a phone somebody is holding, unlocked.
+
+What answers it is `core/signgate.ts`: a biometric check per signature, never
+per session, because a session-long unlock is a phone that signs anything for
+as long as somebody keeps it awake. The same gate stands in front of the
+screen that displays the recovery words, which is the more valuable of the
+two: a seed read is every future signature, on any device, forever, and a
+gate on signing alone would guard the smaller thing.
+
+**What is honestly not answered:** no passphrase protects that seed. The vault
+takes an Argon2id derivation at 64 MiB because it is opened rarely and
+deliberately; a wallet is opened ten times a day, and friction of that size
+produces four-character passphrases, which look like protection in a
+screenshot and are not. Shipping the vendored Argon2id C into a React Native
+build that `expo prebuild --clean` regenerates is the real upgrade, and it is
+work rather than a wall. Until somebody does it, the honest sentence is the
+one the app itself uses: this is for the balance you carry.
+
+**Status: the gap is named, the mitigation is proportionate, and the product
+says so out loud rather than in a document.** That last part is the part that
+was missing when this feature landed, and it is why the store listing, the
+privacy policy and the marketing site were all corrected in one pass.
 
 ### 1. A payment goes to the wrong place
 
-The wallet builds transactions and broadcasts them. It cannot sign, so it
-cannot pay anyone by itself, and the vault renders every destination in full
-before a human approves it. That is the boundary and it holds.
+The wallet builds transactions and broadcasts them. For an account paired
+from a vault it cannot sign, so it cannot pay anyone by itself, and the vault
+renders every destination in full before a human approves it. That is the
+boundary and it holds. For an account made on this phone there is no second
+screen and no second person: the review screen in this app is the only place
+the destination is read, which is the trade that account kind is, and it is
+why the amounts it is meant for are small.
 
 The gap is the return trip: signed bytes come back through a camera into an
 app that has a network. `verifySigned` in `src/core/build.ts` compares what
@@ -59,7 +105,7 @@ request, returning no order at all rather than a flagged one.
 **Status: the residual risk is real, named on screen, and structural.** It is
 the one place the vault cannot fully cover, and the app says so every time.
 
-### 3. Privacy, which is the thing a watch-only wallet is actually for
+### 3. Privacy, which is what a wallet watching a chain leaks by existing
 
 A light client tells whichever node it uses every address in the account. That
 is inherent to light clients, and the fix is running your own node, which the
@@ -166,17 +212,28 @@ prevent.
 
 ## Checked and found sound
 
-- **Storage.** `keychainStore.ts` uses `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, with
-  both halves of that choice argued in the file. There are no keys in it; the
-  pairing it holds is a public key and a view key. Node addresses and the scan
-  height live in a plain file, correctly, because they are not secret.
+- **Storage, in two items that are not allowed to become one.**
+  `keychainStore.ts` uses `WHEN_UNLOCKED_THIS_DEVICE_ONLY` for both, with each
+  half of that choice argued in the file. `labyrinth-pairing` holds a vault's
+  public key and view key; `labyrinth-spending-keys` holds this wallet's own
+  seed. Separate names, deliberately: sharing an item would make unpairing a
+  vault delete a seed, which is a wipe wearing the word "unpair". Node
+  addresses and the scan height live in a plain file, correctly, because they
+  are not secret.
+- **The seed never becomes a string that outlives its use.** `keyvault.ts`
+  hands out an opened wallet and wipes it, the same discipline `src/keys/`
+  holds itself to, and the screen that shows the words puts the biometric gate
+  in front of deriving them at all rather than in front of drawing them: the
+  sheet that calls `phrasesFor` is not mounted until the gate has answered.
 - **Everything read back is revalidated.** `persist.ts` puts a stored node
   address back through `parseNode`, the same door a typed one comes through,
   and bounds-checks a stored height. A tampered preferences file cannot
   introduce a node that the UI would have refused, which is exactly the bug
   the local-address fix above would otherwise have been re-introducible
   through.
-- **No logging of anything.** Not one `console.log` in `src/`.
+- **No logging of anything.** Not one `console.log` in `src/`. That matters
+  more now than it did when this line was first written: a debug print in the
+  send path would be printing against an account whose key is on the phone.
 - **The stand-in signer is gated on `__DEV__`**, which Metro sets false in a
   release bundle, and `standin.ts` notes that the default falls closed where
   `__DEV__` is undefined.
@@ -187,40 +244,77 @@ prevent.
 
 ## The dependency tree, which is the real residual risk
 
-371 packages, 27 direct. That is React Native, and it is several hundred
-packages before a line of ours runs. It cannot be fixed by adding anything;
-**it is the reason the keys are on the other device**, and it is why the
-wallet lives in its own package rather than under the vault's, whose six
-audited cryptography dependencies have a test walking the transitive closure
-to keep the number at six.
+634 packages, 34 direct, 566 of them in the production tree. That is React
+Native, and it is several hundred packages before a line of ours runs. It
+cannot be fixed by adding anything, and it is why the wallet lives in its own
+package rather than under the vault's, whose six audited cryptography
+dependencies have a test walking the transitive closure to keep the number at
+six.
 
-`npm audit --omit=dev` reports 21 advisories resolving to three roots:
-`image-size` (two denial-of-service parsers) and `uuid` (a missing bounds
-check). All three arrive through `@expo/prebuild-config` and run at build time
-on a developer's machine, not on anybody's phone. They are worth clearing on
-the next Expo bump and they are not a reason to hold a release.
+**This is the argument for the vault, and it did not stop being one when this
+app grew a seed of its own.** A dependency tree this size is an
+unauditable-by-one-person surface, sitting on the same device as an account's
+recovery phrase. That is exactly why the paired account cannot be signed for
+here and why the phone-made one is documented as being for smaller amounts.
+The number above is the reason the sentence "anything worth more than a phone
+belongs on the other half" is a design constraint and not modesty.
+
+Audit the runtime tree, and know what "runtime" means in this package.
+`npm audit --omit=dev` was the command this section quoted, and until this pass
+it skipped `qrcode`, which `src/qr/matrix.ts` imports unconditionally and five
+registered screens render: it was declared in `devDependencies` while running
+on the phone. It is a `dependency` now, so the command and the sentence mean
+the same thing again.
+
+Measured after that move: three advisories, flagging 21 packages, from two
+roots. `image-size` has two denial-of-service parsers and reaches the tree
+through `metro`; `uuid` has a missing buffer bounds check and reaches it
+through `xcode`. Both of those are build tooling that runs on a developer's
+machine rather than code on anybody's phone, which is why they are worth
+clearing on the next Expo bump and are not a reason to hold a release. Rerun
+the command rather than trusting this paragraph: the numbers are a measurement
+with a date on it, and the reason they are written out is so that a changed
+number is visible rather than silent.
 
 ## What was deliberately not added
 
 The request mentioned pulling in security libraries from GitHub. Named here so
 the decision is visible rather than silently skipped.
 
-- **Jailbreak detection.** Defeated by the thing it detects, and every
-  implementation is a list of paths that goes stale. It would mean a new
-  dependency with filesystem access, which is a larger risk than the one it
-  addresses, in an app holding no secrets.
-- **Screenshot and screen-recording blocking.** The wallet displays public
-  information. Blocking screenshots of a receive address mostly stops people
-  saving their own address.
-- **Certificate pinning.** Incoherent here: the person chooses their own node,
-  which is the entire design of the nodes screen. There is no certificate to
-  pin to.
-- **Anti-debugging and obfuscation.** Both work against an attacker who has
-  already got code running on the device, at which point a watch-only app has
-  nothing left to protect. This project is open source; obfuscating it would
-  mean giving up the property that every claim can be checked, in exchange for
-  slowing down somebody reading a bundle that has no secrets in it.
+Each of these was originally declined on one sentence: this app holds no
+secrets, so there is nothing here for the measure to protect. That sentence
+died with the hot account, so each is re-argued below on the footing that half
+the accounts on this phone do have a seed behind them. The conclusions have
+not changed. The reasons have.
 
-The pattern in all four: they are measures for an app that holds keys. This
-app does not hold keys, and the effort is better spent on the node client,
-which is what stands between a tester and a wallet that shows their own money.
+- **Jailbreak detection.** Still no. It is defeated by the thing it detects,
+  every implementation is a list of paths that goes stale, and it would mean a
+  new dependency with filesystem access. What changed is that there is now
+  something to lose, so the honest version of the argument is a comparison
+  rather than a dismissal: a jailbroken phone with a seed on it is genuinely
+  worse than a jailbroken phone without one, and a check the attacker controls
+  the answer to does not make it better. The measure that does is the one
+  already taken, which is that the amounts this account kind is for are small
+  and the app says so.
+- **Screenshot and screen-recording blocking.** Yes, for one screen, and it is
+  the screen this argument used to be able to ignore. A receive address is
+  public and blocking a screenshot of it mostly stops people saving their own
+  address. The recovery words are not public, and a screen recorder running
+  while somebody writes down 25 words is the whole loss. `Backup.tsx` gating
+  the reveal behind Face ID is the answer this repository has; a
+  `screenCaptureDidChange` observer over that screen is a real improvement and
+  is not yet built. Named here rather than declined.
+- **Certificate pinning.** Still incoherent, for the unchanged reason: the
+  person chooses their own node, which is the entire design of the nodes
+  screen, so there is no certificate that is ours to pin.
+- **Anti-debugging and obfuscation.** Still no, and the argument survives
+  intact because it never rested on there being no secrets. Both work against
+  an attacker who already has code running on the device, which is a lost
+  position whatever is in the keychain. This project is open source, and
+  obfuscation would trade the property that every claim can be checked for a
+  delay in reading a bundle whose logic is published anyway.
+
+The pattern that survives: three of the four are measures against an attacker
+who has already won, and buying them with a new dependency or with
+unverifiability is a bad trade at any custody model. The one that changed
+sides is the screen recorder, because there is now a screen worth recording.

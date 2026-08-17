@@ -22,7 +22,19 @@ import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { addressAt, openFromMnemonic } from '@vault/keys/bitcoin';
 import { describePsbt } from '@vault/keys/psbt';
-import { DUST, estimateVsize, feeFor, maxSendable, nextChangeIndex, prepare, selectCoins, verifySigned } from '../src/core/build';
+import {
+  CHANGE_VBYTES,
+  DUST,
+  WIDEST_OUTPUT_VBYTES,
+  estimateVsize,
+  feeFor,
+  maxSendable,
+  nextChangeIndex,
+  outputVbytesFor,
+  prepare,
+  selectCoins,
+  verifySigned,
+} from '../src/core/build';
 import { GAP_LIMIT } from '../src/core/discover';
 import { readFileSync } from 'node:fs';
 import type { Utxo } from '../src/core/chain';
@@ -31,15 +43,20 @@ import { DEMO_ZPUB, DemoWatcher } from '../src/core/demo';
 const WORDS = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const NOW = 1_760_000_000_000;
 const RECIPIENT = 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
+/* Three more destination shapes, because every test in this file used to pay
+ * the same bech32 address and an output's size comes from its script. */
+const TAPROOT = 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr';
+const LEGACY = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2';
+const P2SH = '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy';
 
 const wallet = openFromMnemonic(WORDS);
 const watcher = new DemoWatcher();
 const utxos = watcher.snapshot(NOW).assets.BTC.utxos;
 
-function prepared(amount: bigint, rate = 11) {
+function prepared(amount: bigint, rate = 11, recipient = RECIPIENT) {
   const result = prepare({
     asset: 'BTC',
-    recipient: RECIPIENT,
+    recipient,
     amount,
     rate,
     utxos,
@@ -91,27 +108,27 @@ function signLikeTheVault(psbt: Uint8Array, mutate?: (tx: btc.Transaction) => vo
 describe('what a transaction costs', () => {
   it('sizes a one-in two-out spend the way the network does', () => {
     // 10.5 + 68 + 62 = 140.5, and a fee estimate never rounds down.
-    expect(estimateVsize(1, 2)).toBe(141);
-    expect(feeFor(1, 2, 10)).toBe(1410n);
+    expect(estimateVsize(1, [CHANGE_VBYTES, CHANGE_VBYTES])).toBe(141);
+    expect(feeFor(1, [CHANGE_VBYTES, CHANGE_VBYTES], 10)).toBe(1410n);
   });
 
   it('charges more for every coin it has to spend', () => {
-    expect(feeFor(3, 2, 10)).toBeGreaterThan(feeFor(1, 2, 10));
+    expect(feeFor(3, [CHANGE_VBYTES, CHANGE_VBYTES], 10)).toBeGreaterThan(feeFor(1, [CHANGE_VBYTES, CHANGE_VBYTES], 10));
   });
 });
 
 describe('picking coins', () => {
   it('prefers one coin and no change when a single coin nearly fits', () => {
     const single = utxos.find((utxo) => utxo.value === 15_000_000n)!;
-    const fee = feeFor(1, 1, 11);
-    const selection = selectCoins(utxos, single.value - fee, 11);
+    const fee = feeFor(1, [outputVbytesFor(RECIPIENT)], 11);
+    const selection = selectCoins(utxos, single.value - fee, 11, RECIPIENT);
     expect(selection.chosen).toHaveLength(1);
     expect(selection.change).toBe(0n);
     expect(selection.chosen[0]!.value).toBe(15_000_000n);
   });
 
   it('takes more coins as the amount grows, and always covers the fee', () => {
-    const selection = selectCoins(utxos, 40_000_000n, 11);
+    const selection = selectCoins(utxos, 40_000_000n, 11, RECIPIENT);
     const gathered = selection.chosen.reduce((sum: bigint, utxo: Utxo) => sum + utxo.value, 0n);
     expect(selection.problem).toBeNull();
     expect(selection.chosen.length).toBeGreaterThan(1);
@@ -120,8 +137,8 @@ describe('picking coins', () => {
 
   it('gives dust to the miner rather than making an output nobody can afford to spend', () => {
     const single = utxos.find((utxo) => utxo.value === 25_000_000n)!;
-    const fee = feeFor(1, 2, 11);
-    const selection = selectCoins(utxos, single.value - fee - 200n, 11);
+    const fee = feeFor(1, [outputVbytesFor(RECIPIENT), CHANGE_VBYTES], 11);
+    const selection = selectCoins(utxos, single.value - fee - 200n, 11, RECIPIENT);
     expect(selection.change).toBe(0n);
     expect(selection.changeToFee).toBe(true);
     expect(selection.fee).toBeGreaterThan(fee);
@@ -129,15 +146,128 @@ describe('picking coins', () => {
   });
 
   it('refuses what the wallet cannot cover, and says by how much', () => {
-    const selection = selectCoins(utxos, 90_000_000n, 11);
+    const selection = selectCoins(utxos, 90_000_000n, 11, RECIPIENT);
     expect(selection.problem).toMatch(/more than this wallet holds/);
     expect(selection.chosen).toHaveLength(0);
   });
 
   it('leaves the fee out of the maximum, because the fee has to come from somewhere', () => {
     const total = utxos.reduce((sum: bigint, utxo: Utxo) => sum + utxo.value, 0n);
-    expect(maxSendable(utxos, 11)).toBeLessThan(total);
-    expect(maxSendable(utxos, 11)).toBe(total - feeFor(utxos.length, 1, 11));
+    expect(maxSendable(utxos, 11, RECIPIENT)).toBeLessThan(total);
+    expect(maxSendable(utxos, 11, RECIPIENT)).toBe(total - feeFor(utxos.length, [outputVbytesFor(RECIPIENT)], 11));
+  });
+});
+
+/**
+ * SEND MAX, and the number the wallet must not then refuse.
+ *
+ * `maxSendable` budgets one output, because a sweep leaves no change.
+ * `selectCoins` used to test every multi-coin candidate against a two-output
+ * fee, so for any wallet needing more than one coin it refused the answer by
+ * exactly the width of a change output. Pressing MAX and then REVIEW produced
+ * "That is more than this wallet holds" from the wallet that had just filled
+ * the field in, and there was no way out of it: Send has no text field for the
+ * recipient, so the number could not be edited down by hand.
+ *
+ * The old test asserted `maxSendable` against a restatement of its own
+ * formula, which is why a suite of this size could not see it. This one feeds
+ * the answer back into the function that has to accept it, across a table,
+ * because the defect was invisible at one coin and present at every other
+ * count.
+ */
+describe('the largest sendable amount, fed back to the picker', () => {
+  it('is accepted at every coin count and every rate', () => {
+    /* The fixture has to reach past one coin or it cannot see the defect at
+     * all: the single-coin case was the one that always worked. */
+    expect(utxos.length, 'a one-coin wallet cannot exercise this').toBeGreaterThan(1);
+
+    for (const rate of [1, 11, 200]) {
+      for (let count = 1; count <= utxos.length; count++) {
+        const coins = utxos.slice(0, count);
+        const held = coins.reduce((sum: bigint, utxo: Utxo) => sum + utxo.value, 0n);
+        const most = maxSendable(coins, rate, RECIPIENT);
+        const selection = selectCoins(coins, most, rate, RECIPIENT);
+
+        const where = `${count} coin${count === 1 ? '' : 's'} at ${rate} sat/vB`;
+        expect(selection.problem, where).toBeNull();
+        expect(selection.chosen, where).toHaveLength(count);
+        /* A sweep: no change, and every satoshi accounted for as either the
+         * payment or the fee. */
+        expect(selection.change, where).toBe(0n);
+        expect(most + selection.fee, where).toBe(held);
+      }
+    }
+  });
+
+  it('sweeps to a taproot destination too, where the output is wider', () => {
+    /* The same round trip with an output the old sizing was wrong about, so
+     * the two fixes are exercised together rather than one hiding the other. */
+    const most = maxSendable(utxos, 7, TAPROOT);
+    const selection = selectCoins(utxos, most, 7, TAPROOT);
+    expect(selection.problem).toBeNull();
+    expect(selection.change).toBe(0n);
+  });
+
+  it('says how far short a genuinely unaffordable amount is', () => {
+    /* The refusal still has to exist, or the fix above is "accept everything".
+     * One satoshi over the maximum is the tightest case there is. */
+    const most = maxSendable(utxos, 11, RECIPIENT);
+    const selection = selectCoins(utxos, most + 1n, 11, RECIPIENT);
+    expect(selection.problem).toMatch(/more than this wallet holds, by 1 sat/);
+  });
+});
+
+/**
+ * What an output costs, which is not the same for every kind of address.
+ *
+ * 31 vbytes is right for P2WPKH and wrong for everything else `checkAddress`
+ * accepts and `addOutputAddress` builds: taproot is 43, legacy 34, P2SH 32.
+ * The vault's `psbt.ts` has always summed `9 + script.length`, so the two
+ * halves of one product disagreed about the size of the same transaction, and
+ * the wallet was the wrong one.
+ *
+ * The consequence is not cosmetic. `feeOptionsFrom` floors the economy rate at
+ * 1 sat/vB because that is Core's default `minrelaytxfee`, so a fee quoted for
+ * 141 vbytes against a transaction that is really 153 is 0.92 sat/vB, under
+ * the relay minimum, and no node will forward it.
+ *
+ * Every test in this file used the same bech32 recipient, which is the
+ * degenerate fixture that let it through.
+ */
+describe('sizing an output from its script rather than assuming', () => {
+  it('prices each address kind at what the chain charges for it', () => {
+    expect(outputVbytesFor(RECIPIENT)).toBe(31);
+    expect(outputVbytesFor(TAPROOT)).toBe(43);
+    expect(outputVbytesFor(LEGACY)).toBe(34);
+    expect(outputVbytesFor(P2SH)).toBe(32);
+  });
+
+  it('quotes a fee that really covers a taproot payment at the relay floor', () => {
+    /* Measured against the signed bytes rather than against another formula,
+     * which is the whole point: the transaction is really built, really
+     * signed, and its own vsize is what the quoted fee is divided by. */
+    const rate = 1;
+    const { draft } = prepared(5_000_000n, rate, TAPROOT);
+    const signed = signLikeTheVault(draft.unsigned);
+    const tx = btc.Transaction.fromRaw(signed);
+
+    expect(tx.vsize).toBeGreaterThan(estimateVsize(draft.inputs.length, [CHANGE_VBYTES, CHANGE_VBYTES]));
+    expect(
+      Number(draft.fee) / tx.vsize,
+      `quoted ${draft.fee} sat for ${tx.vsize} vbytes`,
+    ).toBeGreaterThanOrEqual(rate);
+  });
+
+  it('budgets the widest standard output when MAX has no destination yet', () => {
+    /* MAX is reachable before a destination is entered. Guessing low there
+     * would reintroduce the refusal above for any address wider than P2WPKH,
+     * so the guess is high, and the amount it produces stays payable to the
+     * widest destination there is. */
+    expect(WIDEST_OUTPUT_VBYTES).toBe(outputVbytesFor(TAPROOT));
+    const blind = maxSendable(utxos, 11);
+    expect(blind).toBeLessThan(maxSendable(utxos, 11, RECIPIENT));
+    expect(selectCoins(utxos, blind, 11, TAPROOT).problem).toBeNull();
+    expect(selectCoins(utxos, blind, 11, RECIPIENT).problem).toBeNull();
   });
 });
 
@@ -197,6 +327,56 @@ describe('checking what the vault hands back', () => {
       expect(verdict.txid).toMatch(/^[0-9a-f]{64}$/);
       expect(verdict.fee).toBe(draft.fee);
     }
+  });
+
+  /**
+   * The same, with the recipient pasted in upper case.
+   *
+   * BIP173 declares an uppercase bech32 address valid and recommends it inside
+   * QR codes, so senders really do hand one over. `getOutputAddress` always
+   * re-encodes lowercase, so raw string equality on `draft.recipient` refused
+   * a byte-correct signature with two sentences that are both false: "Nothing
+   * in this transaction pays BC1Q..." and "There is an output here that was
+   * not in the transaction you approved."
+   *
+   * It failed closed, so nothing could be misspent. What it cost was a person
+   * completing the whole airgap ceremony and landing on a screen accusing
+   * their own vault of redirecting the payment, with broadcast blocked and no
+   * way back: Send has no text field for the recipient, only PASTE, SCAN and
+   * CLEAR. The swap flow reached it with no user involvement at all.
+   *
+   * Driven end to end rather than asserted on the string, because the property
+   * is that a correct signature is accepted, not that two strings match.
+   */
+  it('accepts a signature for a recipient that arrived in upper case', () => {
+    const upper = RECIPIENT.toUpperCase();
+    /* Not a degenerate fixture: this address has letters, so the two spellings
+     * really are different strings. */
+    expect(upper).not.toBe(RECIPIENT);
+
+    const { draft } = prepared(5_000_000n, 11, upper);
+    /* One spelling on the draft, which is the one the vault renders and the
+     * one the person reads across from the other screen. */
+    expect(draft.recipient).toBe(RECIPIENT);
+
+    const verdict = verifySigned(draft, signLikeTheVault(draft.unsigned));
+    expect(verdict.ok, verdict.ok ? '' : verdict.reasons.join(' / ')).toBe(true);
+    expect(verdict.outputs.some((output) => output.address === RECIPIENT)).toBe(true);
+  });
+
+  it('still refuses a payment to somebody else when the draft was upper case', () => {
+    /* The other half: canonicalizing must not turn the check into "any
+     * address will do". Same uppercase draft, a different destination in the
+     * signed bytes, still refused. */
+    const { draft } = prepared(5_000_000n, 11, RECIPIENT.toUpperCase());
+    const original = btc.Transaction.fromPSBT(draft.unsigned);
+    const hostile = new btc.Transaction();
+    for (let i = 0; i < original.inputsLength; i++) hostile.addInput(original.getInput(i));
+    hostile.addOutputAddress('bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', draft.amount);
+    for (let i = 1; i < original.outputsLength; i++) hostile.addOutput(original.getOutput(i));
+
+    const verdict = verifySigned(draft, signLikeTheVault(hostile.toPSBT(0)));
+    expect(verdict.ok).toBe(false);
   });
 
   it('refuses a different transaction that pays somebody else', () => {
@@ -361,7 +541,7 @@ describe('the fee, checked against what was approved', () => {
    */
   it('accepts a payment with no change, where the fee is the remainder', () => {
     const single = utxos.find((utxo) => utxo.value === 15_000_000n)!;
-    const { draft, selection } = prepared(single.value - feeFor(1, 1, 11));
+    const { draft, selection } = prepared(single.value - feeFor(1, [outputVbytesFor(RECIPIENT)], 11));
     expect(selection.change).toBe(0n);
     expect(draft.changeAddresses).toHaveLength(0);
 

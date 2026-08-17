@@ -73,6 +73,27 @@ export function Gap({ size = space.gap }: { size?: number }) {
  * dark interface feel like an instrument rather than a web page. And it fires
  * one haptic, of one weight, in one place, so the whole application has a
  * single vocabulary of touch instead of each screen inventing its own.
+ *
+ * ## What it owes an assistive reader
+ *
+ * A button trait, and a target big enough to hit. Neither was here, and the
+ * closed prop list meant no caller could supply them: VoiceOver read the text
+ * inside and announced no control, so a person navigating by traits could not
+ * find a single action in this app. The trait belongs on the one pressable
+ * rather than on the twenty call sites, for exactly the reason the haptic
+ * does.
+ *
+ * `hitSlop` for the same reason at the other end. Several targets here are the
+ * bare height of a label: PASTE, SCAN, CLEAR and ANOTHER ACCOUNT wrap a
+ * `Label` and nothing else, and `tokens.ts` sets that line height to 14
+ * against Apple's recommended 44. Fifteen either side is the number that
+ * closes the gap exactly, and slop is how it closes without the layout being
+ * drawn around a finger: these marks are small on purpose.
+ *
+ * `role` is a parameter with a button default because two call sites are not
+ * buttons: the disclosure that opens a paragraph, and a row that selects the
+ * thing it names. Announcing those as buttons is a smaller lie than announcing
+ * nothing, but it is still one.
  */
 export function Press({
   children,
@@ -83,6 +104,9 @@ export function Press({
   style,
   weight = 'light',
   scale = 0.985,
+  label,
+  role = 'button',
+  hitSlop = 15,
 }: {
   children: ReactNode;
     onPress?: (() => void) | undefined;
@@ -101,6 +125,16 @@ export function Press({
     style?: StyleProp<ViewStyle> | undefined;
     weight?: 'light' | 'medium' | 'none' | undefined;
     scale?: number | undefined;
+  /**
+   * What a screen reader says instead of reading what is inside.
+   *
+   * Only for the controls whose meaning is not their text: a glyph, or a row
+   * whose label names an account rather than the action on it. Everywhere
+   * else the text is the better label and leaving this unset uses it.
+   */
+    label?: string | undefined;
+    role?: 'button' | 'link' | 'radio' | undefined;
+    hitSlop?: number | undefined;
 }) {
   const pressed = useSharedValue(0);
   const animated = useAnimatedStyle(() => ({
@@ -110,6 +144,10 @@ export function Press({
 
   return (
     <Pressable
+      accessibilityRole={role}
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: disabled === true }}
+      hitSlop={hitSlop}
       disabled={disabled}
       onPressIn={() => {
         pressed.value = withSpring(1, motion.quick);

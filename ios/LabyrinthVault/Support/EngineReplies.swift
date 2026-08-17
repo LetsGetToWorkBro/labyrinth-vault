@@ -73,13 +73,63 @@ enum EngineError: LocalizedError, Equatable {
     }
 }
 
+/// Which Argon2id a derivation on this build actually runs.
+///
+/// The engine measures this rather than reporting whether a host derivation
+/// was installed, and the distinction is the point: a build where every
+/// `try? Argon2id.deriveKey` returns nil has one installed and runs the
+/// JavaScript. `src/keys/seal.ts` carries the full argument.
+///
+///   - `native`: a host derivation is installed and produced the engine's own
+///     bytes for a reference input. Fast, and its blobs open anywhere.
+///   - `engine`: nothing is installed, or what is installed declined. The
+///     JavaScript runs, which is correct and about a minute a derivation on a
+///     phone with no JIT.
+///   - `mismatch`: something is installed, `deriveKey` will use it because the
+///     length is right, and it is not Argon2id. A vault sealed here opens on
+///     this build and nowhere else.
+///
+/// An unrecognized word reads as `mismatch` rather than `engine`. A bundle
+/// answering something this app has never heard of is a bundle whose
+/// derivation this app cannot account for, and the safe reading of "cannot
+/// account for" is the state that says do not trust a vault sealed here.
+enum KdfSource {
+    case native
+    case engine
+    case mismatch
+
+    init(reported: String?) {
+        /* Absent, not unknown. A bundle built before this field existed
+         * answers nothing at all, and that build is the interpreted one. */
+        guard let reported else {
+            self = .engine
+            return
+        }
+        switch reported {
+        case "native": self = .native
+        case "engine": self = .engine
+        default: self = .mismatch
+        }
+    }
+
+    /// The words the Settings screen prints. Here rather than in the screen
+    /// because the screen is excluded from `Package.swift`'s target and this
+    /// file is not, so the mapping is compiled by something.
+    var label: String {
+        switch self {
+        case .native: return "COMPILED"
+        case .engine: return "INTERPRETED"
+        case .mismatch: return "NOT ARGON2ID"
+        }
+    }
+}
+
 /// Every shape the engine can answer with. One per host function, same name.
 enum EngineReply {
-    /// `kdf` says which implementation a derivation would actually use:
-    /// "native" once the host's Argon2id has been adopted, "engine" when the
-    /// interpreted one is still doing the work. Optional so that a bundle
-    /// built before this existed still decodes rather than failing the launch
-    /// gate over a field nobody had heard of.
+    /// `kdf` says which implementation a derivation would actually use. See
+    /// `KdfSource` above for the three answers and what each costs. Optional
+    /// so that a bundle built before this existed still decodes rather than
+    /// failing the launch gate over a field nobody had heard of.
     ///
     /// It is worth reporting because the failure it catches is silent. A
     /// native derivation that never gets installed is not an error anywhere;

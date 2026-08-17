@@ -92,4 +92,69 @@ describe('the watcher and the price', () => {
     await watcher.refresh(1_700_000_060_000);
     expect(watcher.snapshot().centsPerUnit.BTC).toBe(11_788_013);
   });
+
+  /* W-L3, at the level the contract lives. `Watchers.refreshAll` fetches one
+   * price for the whole set and hands it down, so a phone holding two
+   * accounts stops making two identical calls to the relay from one address
+   * every refresh. That only works if a watcher told the answer does not go
+   * and ask anyway, and the two arguments below are not the same argument:
+   * nothing at all means nobody has asked yet, which is what a lone watcher
+   * wants; `null` means somebody asked and there was no price. */
+  describe('takes a price somebody else already fetched', () => {
+    const counting = (): { transport: Transport; calls: () => number } => {
+      let calls = 0;
+      return {
+        calls: () => calls,
+        transport: {
+          base: 'https://relay.example',
+          async send() {
+            calls += 1;
+            return { ok: true, status: 200, text: GOOD };
+          },
+        },
+      };
+    };
+
+    it('uses the handed-down answer and does not call the relay itself', async () => {
+      const relay = counting();
+      const watcher = new NodeWatcher(
+        nodes,
+        null,
+        { btc: null, xmr: null, prices: relay.transport },
+        1_700_000_000_000,
+      );
+      await watcher.refresh(1_700_000_000_000, { ok: true, centsPerUnit: { BTC: 700, XMR: 8 } });
+      expect(relay.calls(), 'it asked for a price it had already been given').toBe(0);
+      expect(watcher.snapshot().centsPerUnit).toEqual({ BTC: 700, XMR: 8 });
+    });
+
+    it('stays put when it is told there was no price, rather than asking again', async () => {
+      const relay = counting();
+      const watcher = new NodeWatcher(
+        nodes,
+        null,
+        { btc: null, xmr: null, prices: relay.transport },
+        1_700_000_000_000,
+      );
+      await watcher.refresh(1_700_000_000_000, null);
+      expect(relay.calls(), 'null read as "nobody asked", which is the per-account call back').toBe(0);
+      expect(watcher.snapshot().centsPerUnit).toEqual({ BTC: 0, XMR: 0 });
+    });
+
+    it('still asks for itself when nobody has', async () => {
+      /* The lone watcher, which is the case the default is for. Without this
+       * the two above would pass against a watcher that had simply stopped
+       * fetching prices at all. */
+      const relay = counting();
+      const watcher = new NodeWatcher(
+        nodes,
+        null,
+        { btc: null, xmr: null, prices: relay.transport },
+        1_700_000_000_000,
+      );
+      await watcher.refresh(1_700_000_000_000);
+      expect(relay.calls()).toBe(1);
+      expect(watcher.snapshot().centsPerUnit).toEqual({ BTC: 11_788_013, XMR: 26_580 });
+    });
+  });
 });

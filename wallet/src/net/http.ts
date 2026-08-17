@@ -74,7 +74,56 @@ export function parseJson<T>(reply: Reply): Parsed<T> {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 12_000;
+/**
+ * How long anything in this app waits for a network answer.
+ *
+ * Exported because `live()` stopped being the only transport. The swap proxy,
+ * the node relay and the oblivious client each call `fetch` themselves, and a
+ * second number written down in a second file is a number that drifts until
+ * one path gives up in twelve seconds and another waits for whatever the
+ * platform happens to allow. The rule at the top of this file is stated for
+ * the layer, not for one function in it.
+ */
+export const DEFAULT_TIMEOUT_MS = 12_000;
+
+/** A running deadline, and the way to stop it. */
+export interface Deadline {
+  signal: AbortSignal;
+  /** Always in a `finally`. See below for what forgetting it costs. */
+  done: () => void;
+}
+
+/**
+ * The controller-and-timer pair every transport here needs.
+ *
+ * These four lines were about to be copied into three more files, and four
+ * copies of a timer is four chances to forget the `clearTimeout`. A timer
+ * nobody cleared holds its closure, and with it the whole request, until it
+ * fires: on a phone that is a leak which only shows itself on a slow network,
+ * where the wallet is already at its worst.
+ *
+ * `upstream` is the caller's own signal, when it has one. Honoring it is what
+ * keeps a layered transport from outliving the layer above it: the oblivious
+ * client sits underneath the swap proxy, and without this its relay leg would
+ * keep running for its own full timeout after the transport above had already
+ * given up and shown the person a refusal.
+ */
+export function deadline(timeoutMs = DEFAULT_TIMEOUT_MS, upstream?: AbortSignal | null): Deadline {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const follow = (): void => controller.abort();
+  if (upstream) {
+    if (upstream.aborted) controller.abort();
+    else upstream.addEventListener('abort', follow, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    done: (): void => {
+      clearTimeout(timer);
+      upstream?.removeEventListener('abort', follow);
+    },
+  };
+}
 
 /**
  * A transport that really goes to the network.
@@ -84,6 +133,28 @@ const DEFAULT_TIMEOUT_MS = 12_000;
  * cleaned, because a request that was not the one intended should fail loudly
  * and not quietly become a different one.
  */
+/**
+ * `credentials: 'omit'`, spread in rather than written inline.
+ *
+ * The behaviour is about the phone: a node is not a browser origin and this
+ * app has no cookies, so saying so keeps a redirect from carrying anything
+ * and keeps a misconfigured node from being handed credentials it never
+ * asked for.
+ *
+ * The spelling is about a second compiler. The Worker bundles the modules
+ * under `wallet/src/net/` and typechecks them against
+ * `@cloudflare/workers-types`, whose `RequestInit` has no `credentials` at
+ * all: a Worker has no cookie jar to omit, so the field is meaningless there
+ * rather than wrong. Written inline it was one type error, and that one error
+ * was the whole reason `cd worker && npm run typecheck` had never been run
+ * once. An unrun typecheck is how three build errors reached `main` through a
+ * green suite, so one line of indirection to buy a check that runs on every
+ * push is a good trade. Nothing changes at runtime in either place: an
+ * unrecognized key in a fetch init is ignored, which is what the Worker does
+ * with this one today.
+ */
+const NO_CREDENTIALS: object = { credentials: 'omit' };
+
 export function live(base: string, timeoutMs = DEFAULT_TIMEOUT_MS): Transport {
   const root = base.replace(/\/+$/, '');
 
@@ -94,8 +165,7 @@ export function live(base: string, timeoutMs = DEFAULT_TIMEOUT_MS): Transport {
         return { ok: false, status: null, problem: 'That request would leave the configured node.' };
       }
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const clock = deadline(timeoutMs);
       try {
         const headers: Record<string, string> = {};
         let body: string | undefined;
@@ -106,15 +176,11 @@ export function live(base: string, timeoutMs = DEFAULT_TIMEOUT_MS): Transport {
 
         const response = await fetch(root + request.path, {
           method: request.method,
-          signal: controller.signal,
-          /* A node is not a browser origin and this app has no cookies. Saying
-           * so keeps a redirect from carrying anything, and keeps a
-           * misconfigured node from being handed credentials it never asked
-           * for. */
-          credentials: 'omit',
+          signal: clock.signal,
           redirect: 'error',
           ...(Object.keys(headers).length ? { headers } : {}),
           ...(body !== undefined ? { body } : {}),
+          ...NO_CREDENTIALS,
         });
 
         const text = await response.text();
@@ -132,7 +198,7 @@ export function live(base: string, timeoutMs = DEFAULT_TIMEOUT_MS): Transport {
           : 'The node could not be reached.';
         return { ok: false, status: null, problem: message };
       } finally {
-        clearTimeout(timer);
+        clock.done();
       }
     },
   };

@@ -11,21 +11,78 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 import { nodeTarget } from '../src/nodes';
 import { bucketKey, checkLimit } from '../src/ratelimit';
 import { ALLOWED_HOSTS, buildCreate, buildQuote, buildStatus, knownProvider, send } from '../src/upstream';
 
-const sources = readdirSync('src')
-  .filter((name) => name.endsWith('.ts'))
-  .map((name) => ({ name, text: readFileSync(`src/${name}`, 'utf8') }));
+const REPO = resolve('..');
+
+/**
+ * Every first-party module that ends up on Cloudflare, followed rather than
+ * listed.
+ *
+ * `readdirSync('src')` was the obvious thing and it was the wrong set. Two of
+ * this Worker's files reach straight across the repository: `upstream.ts`
+ * builds its requests out of `wallet/src/core/swap.ts`, and `gateway.ts` does
+ * its cryptography in `wallet/src/net/ohttp/`. Those modules are bundled and
+ * run here exactly like the six in this directory, and `swap.ts` on its own is
+ * longer than the whole package and holds the entire shape of a trade, both
+ * addresses included. A retention rule that walked only this directory was a
+ * retention rule with the larger half of the deployed code outside it.
+ *
+ * Followed from the entry point rather than enumerated, because a list is a
+ * thing the next import across the boundary has to remember to join, and the
+ * failure of forgetting is silent. The directory is walked too, so a module
+ * that is present but not yet imported is still held to the rule.
+ *
+ * Type-only imports are followed as well. Telling them apart needs a parser
+ * rather than a regex, and a walk slightly wider than the bundle refuses a
+ * `console.log` in a file that turned out not to ship, which is the harmless
+ * direction to be wrong in.
+ */
+function bundled(entries: string[]): { name: string; text: string }[] {
+  const found = new Map<string, string>();
+  const visit = (file: string): void => {
+    if (found.has(file)) return;
+    const text = readFileSync(file, 'utf8');
+    found.set(file, text);
+    for (const match of text.matchAll(/\bfrom\s+'(\.[^']+)'/g)) {
+      const spec = match[1]!;
+      visit(resolve(dirname(file), spec.endsWith('.ts') ? spec : `${spec}.ts`));
+    }
+  };
+  for (const entry of entries) visit(resolve(entry));
+  return [...found].map(([file, text]) => ({ name: relative(REPO, file), text }));
+}
+
+const sources = bundled(
+  readdirSync('src')
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => `src/${name}`),
+);
+
+/** The half of the deployed code this package actually owns. */
+const ours = sources.filter(({ name }) => name.startsWith('worker/'));
 
 /** Comments are prose about the code, not the code. */
 const codeOnly = (text: string): string =>
   text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 describe('the Worker keeps nothing', () => {
-  it('found its own source to check', () => {
-    expect(sources.length).toBeGreaterThanOrEqual(4);
+  it('found every module that ships, including the ones outside this package', () => {
+    expect(ours.length).toBeGreaterThanOrEqual(6);
+    /* Named, not counted. A count alone would still pass against a walk that
+     * found ten files in `src/` and nothing across the boundary, which is
+     * exactly the hole this replaced. */
+    expect(sources.map((source) => source.name)).toEqual(
+      expect.arrayContaining([
+        'wallet/src/core/swap.ts',
+        'wallet/src/net/ohttp/bhttp.ts',
+        'wallet/src/net/ohttp/hpke.ts',
+        'wallet/src/net/ohttp/ohttp.ts',
+      ]),
+    );
   });
 
   it('logs nothing, anywhere', () => {
@@ -51,7 +108,7 @@ describe('the Worker keeps nothing', () => {
      * number. Anything else writing to storage is a new place a trade could
      * come to rest. */
     const writers = sources.filter(({ text }) => /\.put\s*\(/.test(codeOnly(text)));
-    expect(writers.map((w) => w.name)).toEqual(['ratelimit.ts']);
+    expect(writers.map((w) => w.name)).toEqual(['worker/src/ratelimit.ts']);
   });
 
   it('names only test files that exist when it points at one', () => {
@@ -61,13 +118,44 @@ describe('the Worker keeps nothing', () => {
      * when the guard actually lives in `test/worker.test.ts` is a small
      * version of the exact dishonesty the rest of this file refuses: a claim
      * that does not survive being checked. So the references are checked. */
+    /* This package's own files only. A module over in `wallet/` names a test
+     * in the wallet's suite, which is a promise kept by the wallet's own
+     * guards; resolving those from here would fail on a reference that is
+     * perfectly true where it was written. */
     const present = new Set(readdirSync('test'));
-    for (const { name, text } of sources) {
+    for (const { name, text } of ours) {
       const referenced = text.match(/test\/[\w.-]+\.test\.ts/g) ?? [];
       for (const ref of referenced) {
         expect(present.has(ref.slice('test/'.length)), `${name} points at a missing ${ref}`).toBe(true);
       }
     }
+  });
+
+  it('names only symbols that exist when it points into another file', () => {
+    /* The sibling of the test above, and it was written for a live failure:
+     * this Worker's `nodes.ts` sent readers to `shouldProxy` in
+     * `wallet/src/net/nodeproxy.ts`, and no function by that name has ever
+     * existed there. The rule the comment was explaining is the one rule this
+     * relay has, so a reader who went to check it found nothing and had to
+     * decide whether to believe the paragraph.
+     *
+     * References that cross a package boundary are the ones that rot, because
+     * a rename in the wallet has no reason to make anybody open this
+     * directory. Held to the same standard as the test-file references above:
+     * a pointer is a promise a reader is invited to go verify. */
+    const pointer = /`([A-Za-z_][A-Za-z0-9_]*)`[^`]{0,60}`((?:wallet|worker|src)[\w./-]*\.ts)`/g;
+    let checked = 0;
+    for (const { name, text } of ours) {
+      for (const match of text.matchAll(pointer)) {
+        const [, symbol, file] = match;
+        const target = readFileSync(resolve(REPO, file!), 'utf8');
+        expect(target, `${name} points at ${symbol} in ${file}, which is not there`).toContain(symbol!);
+        checked += 1;
+      }
+    }
+    /* Two today. Zero would mean the pattern stopped matching the way these
+     * comments are written, and a guard over nothing reports green forever. */
+    expect(checked, 'the pattern matched no cross-file references at all').toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -202,7 +290,7 @@ describe('it is not an open proxy', () => {
 
   it('will not open a connection to anywhere else, even if asked', async () => {
     /* The last line of defence: the check sits immediately before the fetch,
-     * so a URL that arrived some other way still cannot be dialled. */
+     * so a URL that arrived some other way still cannot be dialed. */
     await expect(
       send({ method: 'GET', url: 'https://example.com/steal' }, 'exolix', {}, (async () => {
         throw new Error('should never be called');

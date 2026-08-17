@@ -40,6 +40,7 @@
  * goes.
  */
 
+import { deadline, DEFAULT_TIMEOUT_MS } from './http';
 import { decodeResponse, encodeRequest, type BRequest } from './ohttp/bhttp';
 import { decodeKeyList, sealRequest, openResponse, usable, type KeyConfig } from './ohttp/ohttp';
 
@@ -114,6 +115,8 @@ export interface ObliviousOptions {
   now?: () => number;
   /** How long a fetched key configuration is reused. */
   keyLifetimeMs?: number;
+  /** How long either leg waits, per `http.ts`'s rule for this layer. */
+  timeoutMs?: number;
 }
 
 /**
@@ -133,14 +136,36 @@ export function obliviousFetch(relay: Relay, options: ObliviousOptions = {}): ty
   const doFetch = options.doFetch ?? fetch;
   const now = options.now ?? Date.now;
   const lifetime = options.keyLifetimeMs ?? 24 * HOUR;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let cached: Cached | null = null;
 
-  const keyConfig = async (): Promise<KeyConfig> => {
+  /* Both legs carry a deadline. There are two of them, and a relay is a party
+   * this design already declines to trust for confidentiality, so trusting it
+   * to answer at all would be an odd place to start. Each leg also follows the
+   * caller's own signal: this function is handed to `proxyTransport` and
+   * `routedTransport` as their `fetch`, and without that the relay leg would
+   * keep running for its full timeout after the transport above had already
+   * given up and told the person the proxy did not answer. */
+  const keyConfig = async (upstream: AbortSignal): Promise<KeyConfig> => {
     if (cached && now() - cached.at < lifetime) return cached.config;
-    const response = await doFetch(relay.keysUrl, { method: 'GET', headers: { Accept: KEYS_MEDIA_TYPE } });
-    if (!response.ok) throw new Error(`The relay could not supply the gateway keys (${response.status}).`);
-    const configs = decodeKeyList(new Uint8Array(await response.arrayBuffer()));
-    const config = configs.find(usable);
+    const clock = deadline(timeoutMs, upstream);
+    let bytes: Uint8Array;
+    try {
+      const response = await doFetch(relay.keysUrl, {
+        method: 'GET',
+        signal: clock.signal,
+        headers: { Accept: KEYS_MEDIA_TYPE },
+      });
+      if (!response.ok) throw new Error(`The relay could not supply the gateway keys (${response.status}).`);
+      /* Read under the same deadline that fetched it. A timer cleared as soon
+       * as the headers arrive covers nothing: a server that answers 200 and
+       * then trickles the body forever is exactly the shape of hang a deadline
+       * is for, and it is the shape that survives a naive one. */
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } finally {
+      clock.done();
+    }
+    const config = decodeKeyList(bytes).find(usable);
     if (!config) throw new Error('The gateway offers no cipher suite this app can use.');
     cached = { config, at: now() };
     return config;
@@ -166,15 +191,23 @@ export function obliviousFetch(relay: Relay, options: ObliviousOptions = {}): ty
       body,
     };
 
-    const sealed = sealRequest(await keyConfig(), encodeRequest(inner));
-    const answer = await doFetch(relay.url, {
-      method: 'POST',
-      headers: { 'Content-Type': REQUEST_MEDIA_TYPE, Accept: RESPONSE_MEDIA_TYPE },
-      body: sealed.body as BodyInit,
-    });
-    if (!answer.ok) throw new Error(`The relay answered ${answer.status}.`);
+    const sealed = sealRequest(await keyConfig(request.signal), encodeRequest(inner));
+    const clock = deadline(timeoutMs, request.signal);
+    let answered: Uint8Array;
+    try {
+      const answer = await doFetch(relay.url, {
+        method: 'POST',
+        signal: clock.signal,
+        headers: { 'Content-Type': REQUEST_MEDIA_TYPE, Accept: RESPONSE_MEDIA_TYPE },
+        body: sealed.body as BodyInit,
+      });
+      if (!answer.ok) throw new Error(`The relay answered ${answer.status}.`);
+      answered = new Uint8Array(await answer.arrayBuffer());
+    } finally {
+      clock.done();
+    }
 
-    const opened = decodeResponse(openResponse(sealed.context, sealed.enc, new Uint8Array(await answer.arrayBuffer())));
+    const opened = decodeResponse(openResponse(sealed.context, sealed.enc, answered));
     /* A status with no body of its own must not be given one, or the Response
      * constructor throws and a perfectly good answer becomes a crash. */
     const bodyless = opened.status === 204 || opened.status === 205 || opened.status === 304;

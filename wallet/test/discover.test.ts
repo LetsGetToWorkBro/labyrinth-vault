@@ -20,7 +20,7 @@
 import { describe, expect, it } from 'vitest';
 import { openFromMnemonic, addressAt } from '@vault/keys/bitcoin';
 import { recorded } from '../src/net/http';
-import { discover, nextReceiveAddress, GAP_LIMIT } from '../src/core/discover';
+import { discover, nextReceiveAddress, GAP_LIMIT, MAX_ADDRESSES } from '../src/core/discover';
 import { historyFrom, feeOptionsFrom } from '../src/core/watcher';
 
 /** BIP84's published vector. Empty, everybody's, controls nothing. */
@@ -42,10 +42,10 @@ const UNUSED = stats(0, 0);
  * Built from the real derivation rather than from invented strings, so the
  * scan being tested is the scan the app runs against the keys it holds.
  */
-function nodeWith(used: { change: 0 | 1; index: number; value: number }[]) {
+function nodeWith(used: { change: 0 | 1; index: number; value: number }[], depth = 80) {
   const answers: Record<string, string> = {};
   for (const branch of [0, 1] as const) {
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < depth; i++) {
       const { address } = addressAt(wallet, branch, i);
       const hit = used.find((entry) => entry.change === branch && entry.index === i);
       answers[`GET /address/${address}`] = hit ? stats(hit.value, 1) : UNUSED;
@@ -62,6 +62,53 @@ function nodeWith(used: { change: 0 | 1; index: number; value: number }[]) {
     }
   }
   return recorded(answers);
+}
+
+/**
+ * Derived once and shared.
+ *
+ * The cap fixtures below need every address on both branches, and a BIP32
+ * child derivation is not free: deriving them per fixture was most of this
+ * file's runtime.
+ */
+const cache = new Map<string, string>();
+function addressOf(branch: 0 | 1, index: number): string {
+  const key = `${branch}/${index}`;
+  const known = cache.get(key);
+  if (known !== undefined) return known;
+  const { address } = addressAt(wallet, branch, index);
+  cache.set(key, address);
+  return address;
+}
+
+/**
+ * A node where every address on both branches has been paid to, so the gap
+ * never closes and the walk can only end at the cap.
+ *
+ * `MAX_ADDRESSES` deep on each branch, which is exactly as far as the walk can
+ * ask: a fixture that went further would only be describing queries nobody
+ * makes. `value` funds each of them, which is what makes the truncation test
+ * about money rather than about a boolean: a scan that stopped at the cap and
+ * reported what it reached would be publishing a balance short by everything
+ * beyond it.
+ */
+function everyAddressUsed(value = 1000): Record<string, string> {
+  const answers: Record<string, string> = {};
+  for (const branch of [0, 1] as const) {
+    for (let i = 0; i < MAX_ADDRESSES; i++) {
+      const address = addressOf(branch, i);
+      answers[`GET /address/${address}`] = stats(value, 1);
+      answers[`GET /address/${address}/utxo`] = JSON.stringify([
+        {
+          txid: String(branch) + String(i).padStart(3, '0') + 'e'.repeat(60),
+          vout: 0,
+          value,
+          status: { confirmed: true, block_height: 860000 },
+        },
+      ]);
+    }
+  }
+  return answers;
 }
 
 describe('the gap limit', () => {
@@ -103,21 +150,63 @@ describe('the gap limit', () => {
     expect(found.utxos[0]!.path).toEqual({ change: 1, index: 3 });
   });
 
-  it('stops, so a hostile node cannot walk a wallet forever', async () => {
+  it('stops, so a hostile node cannot walk a wallet forever', { timeout: 30_000 }, async () => {
     /* Every address used means the gap never arrives. Without a cap the scan
      * runs until the phone gives up, which is a denial of service dressed as
      * a wallet that will not load. */
-    const everything: Record<string, string> = {};
+    const found = await discover(recorded(everyAddressUsed()), wallet, 860010);
+    expect(found.addresses.length).toBeLessThanOrEqual(2 * MAX_ADDRESSES);
+  });
+
+  /**
+   * Reaching the cap is a refusal, not a balance.
+   *
+   * The two exits from the walk are not the same event. Closing the gap means
+   * the account really does end there. Hitting the cap means the walk stopped
+   * while the account was still in use, so there are addresses past it holding
+   * coins nobody asked the node about. Both used to return `problem: null`,
+   * which made the second one report a confidently short balance under the
+   * word BALANCE, through the very mechanism that exists to bound the scan.
+   *
+   * The fixture funds every address it serves, so the shortfall is real money
+   * rather than a flag: `MAX_ADDRESSES` addresses at 1000 sat each on each
+   * branch is what a passing `ok: true` would have been claiming as the whole
+   * balance of an account holding more.
+   */
+  it('refuses rather than reporting the part of a capped wallet it reached', { timeout: 30_000 }, async () => {
+    const answers = everyAddressUsed(1000);
+    const found = await discover(recorded(answers), wallet, 860010);
+
+    expect(found.ok, 'a capped walk reported itself as a finished one').toBe(false);
+    expect(found.truncated).toBe(true);
+    expect(found.balance, 'it reported the partial total it reached').toBe(0n);
+    expect(found.utxos).toEqual([]);
+    expect(found.problem).toMatch(new RegExp(`more than ${MAX_ADDRESSES}`));
+    /* A sentence, and one that says where the coins are, because the person
+     * reading it has done nothing wrong and their money is not gone. */
+    expect(found.problem).toMatch(/on the chain/);
+  });
+
+  it('does not call an account that ends inside the cap truncated', { timeout: 30_000 }, async () => {
+    /* The other half of the pair, so the refusal above cannot be satisfied by
+     * a function that refuses everything. This account uses an unbroken run of
+     * receive addresses ending far enough below the cap that its gap still
+     * closes, which is the honest stop, and it gets its full balance. */
+    const lastUsed = MAX_ADDRESSES - GAP_LIMIT - 11;
+    const answers = everyAddressUsed(1000);
     for (const branch of [0, 1] as const) {
-      for (let i = 0; i < 600; i++) {
-        const { address } = addressAt(wallet, branch, i);
-        everything[`GET /address/${address}`] = stats(1000, 1);
-        everything[`GET /address/${address}/utxo`] = '[]';
+      for (let i = 0; i < MAX_ADDRESSES; i++) {
+        if (branch === 0 && i <= lastUsed) continue;
+        const address = addressOf(branch, i);
+        answers[`GET /address/${address}`] = UNUSED;
+        answers[`GET /address/${address}/utxo`] = '[]';
       }
     }
-    const found = await discover(recorded(everything), wallet, 860010);
-    expect(found.ok).toBe(true);
-    expect(found.addresses.length).toBeLessThanOrEqual(1000);
+
+    const found = await discover(recorded(answers), wallet, 860010);
+    expect(found.ok, found.problem ?? '').toBe(true);
+    expect(found.truncated).toBe(false);
+    expect(found.balance).toBe(BigInt(lastUsed + 1) * 1000n);
   });
 });
 

@@ -8,8 +8,12 @@
  * differ by chain, and the ones that do not apply are absent rather than
  * showing a dash.
  *
- * What both screens share is the shape of the claim at the bottom: this wallet
- * watches this chain with a key that cannot spend from it.
+ * What both screens share is the shape of the claim at the bottom, and its
+ * shape is now a question rather than a statement: which key this wallet holds
+ * for this chain depends on the account being looked at. A vault account is
+ * watched with a key that cannot spend. An account made on this phone is
+ * watched with keys that can, and printing the first sentence over the second
+ * account is the loudest false claim this app was making.
  */
 
 import { ScrollView, View } from 'react-native';
@@ -31,9 +35,17 @@ export function AssetScreen({ navigation, route }: Nav<'Asset'>) {
   const asset = route.params.asset;
   const view = store.snapshot.assets[asset];
   const history = store.snapshot.transactions.filter((tx) => tx.asset === asset);
-  /* Bitcoin only. On the Monero side `spendable` is deliberately zero, because
-   * this half of the product cannot build a Monero spend at all, and
-   * subtracting that from the balance would label every coin unconfirmed. */
+  /* Which account this screen is about, because where its keys are decides
+   * every custody sentence below. Read from the selection rather than from
+   * whether this phone happens to hold a seed: a phone holding both sees the
+   * vault sentence for the vault's account, which is what `canSignHere` says
+   * and what the interface has to agree with. */
+  const account = store.accounts.find((entry) => entry.id === store.selectedAccount) ?? null;
+  /* Bitcoin only, and still zero for Monero now that a hot Monero account can
+   * spend. On that side the gap between balance and spendable is coins with no
+   * key image covering them, which is an unknown spent status rather than an
+   * unconfirmed payment, and the caveat under the number is where that gets
+   * said. Labeling it UNCONFIRMED would be a different wrong number. */
   const unconfirmed = asset === 'BTC' ? view.balance - view.spendable : 0n;
 
   return (
@@ -120,7 +132,13 @@ export function AssetScreen({ navigation, route }: Nav<'Asset'>) {
               <FactRow label="ADDRESS">
                 <Mono size={13}>{elide(view.addresses[0]?.address ?? '', 8, 8)}</Mono>
               </FactRow>
-              <FactRow label="KEY HELD HERE">VIEW KEY ONLY</FactRow>
+              {/* The Monero row that was false on every hot account: a view
+                  key sees what arrives, and this account's spend secret is in
+                  this phone's keychain. A facts list is the last place to
+                  print a claim that is not one. */}
+              <FactRow label="KEY HELD HERE">
+                {account?.signsHere ? 'VIEW AND SPEND KEYS' : 'VIEW KEY ONLY'}
+              </FactRow>
             </>
           )}
           <FactRow label="SETTLES AT">{`${view.confirmationTarget} blocks`}</FactRow>
@@ -178,11 +196,19 @@ export function AssetScreen({ navigation, route }: Nav<'Asset'>) {
           )}
 
           <Gap size={space.section} />
-          <Notice title="WATCH-ONLY">
-            {asset === 'BTC'
-              ? 'This wallet holds an extended public key. It can derive every address this account will ever use and cannot produce a single signature for any of them.'
-              : 'This wallet holds a view key. It can see what arrives and cannot author anything that leaves.'}
-          </Notice>
+          {account?.signsHere ? (
+            <Notice tone="warn" title="THIS PHONE HOLDS THE KEYS FOR THIS ACCOUNT">
+              {asset === 'BTC'
+                ? 'The twelve words for this account are in this phone\'s keychain, under the device passcode. It can derive every address and it can sign for every one of them, after Face ID. Anything worth more than this phone belongs on an account your vault signs for.'
+                : 'The twenty-five words for this account are in this phone\'s keychain, under the device passcode. It can see what arrives and it can author what leaves, after Face ID. Anything worth more than this phone belongs on an account your vault signs for.'}
+            </Notice>
+          ) : (
+            <Notice title="WATCH-ONLY">
+              {asset === 'BTC'
+                ? 'This wallet holds an extended public key. It can derive every address this account will ever use and cannot produce a single signature for any of them.'
+                : 'This wallet holds a view key. It can see what arrives and cannot author anything that leaves.'}
+            </Notice>
+          )}
 
           <Gap size={space.section} />
           <Action label="SECURITY" quiet onPress={() => navigation.navigate('Security')} />

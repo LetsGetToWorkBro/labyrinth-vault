@@ -303,6 +303,11 @@ describe('the boundary between logic and filesystem', () => {
   });
 });
 
+/** Comments removed, so a guard never fires on its own documentation. */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
 describe('the store wiring', () => {
   const store = readFileSync('src/state/store.tsx', 'utf8');
 
@@ -323,11 +328,39 @@ describe('the store wiring', () => {
      * exactly this reason, and the ref is keyed by account now because two
      * accounts scan two different sets of blocks. */
     expect(store).toMatch(/scanStarts = useRef<Record<string, ScanState>>/);
-    expect(store).toMatch(/\[nodes, accountKeys\]/);
+    expect(store).toMatch(/\[nodes, accountKeys, scanGeneration\]/);
     /* And the watchers must not be rebuilt when the *positions* change, which
      * is the state that advances on every refresh. */
     expect(store, 'a scan position in the watcher deps restarts the scan').not.toMatch(
       /\[nodes, accountKeys, moneroScans\]/,
     );
+  });
+
+  it('can actually restart the scan it offers to restart', () => {
+    /* FORGET EVERYTHING STORED cleared `scanStarts.current`, a ref read only
+     * inside a memo whose dependencies it did not change, so every watcher
+     * kept the position it was built with and the scan carried on. The button
+     * then wiped the node configuration, so the forced next step rebuilt the
+     * watchers, resumed from the stale height and wrote it straight back to
+     * the file that had just been cleared. Only quitting escaped it. */
+    const clearing = codeOnly(/forgetStored: \(\) => \{[\s\S]*?\n    \},/.exec(store)?.[0] ?? '');
+    expect(clearing, 'forgetStored not found').toBeTruthy();
+    expect(clearing).toMatch(/scanStarts\.current = \{\}/);
+    expect(clearing).toMatch(/sessionScans\.current = \{\}/);
+    expect(clearing, 'the memo that holds the positions is never told').toMatch(
+      /setScanGeneration\(\(count\) => count \+ 1\)/,
+    );
+  });
+
+  it('refreshes one account\'s progress without refetching every account', () => {
+    /* `refresh` had `selectedAccount` in its dependency list to write a single
+     * `moneroStatus`, and the effect below it has no guard, so tapping an
+     * account fired a full network pass over every account: tip height,
+     * address walk, per-address history, a Monero scan pass, a key image
+     * query, a fee estimate and prices. */
+    const refresh = codeOnly(/const refresh = useCallback\([\s\S]*?\n  \}, \[[^\]]*\]\);/.exec(store)?.[0] ?? '');
+    expect(refresh, 'refresh not found').toBeTruthy();
+    expect(refresh, 'selecting an account refetches everything again').not.toMatch(/selectedAccount/);
+    expect(refresh, 'two passes can run over one watcher at once').toMatch(/if \(inFlight\.current\) return;/);
   });
 });

@@ -32,12 +32,14 @@ import { DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
 import { elide, parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
+import { forgetOutputDistribution } from '../core/moneroplan';
 import type { OwnAddresses, SwapTransport } from '../core/swap';
 import type { NodeConfig, NodeKind } from '../core/nodes';
 import { openAccount, type ScanState } from '../core/moneroscan';
 import { acceptAccount, wouldReplace, type Pairing } from '../core/pairing';
 import { NodeWatcher, type MoneroStatus, type MoneroWatch, type RefreshResult, type WatcherNodes } from '../core/watcher';
-import { Watchers, emptySnapshot, problemsFrom, selected, type AccountKeys } from '../core/watchers';
+import type { MoneroSource } from '../core/moneroscan';
+import { Watchers, emptySnapshot, problemsFrom, resumeFrom, selected, type AccountKeys } from '../core/watchers';
 import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../core/demo';
 import { proxyTransport, swapConfigured } from '../net/swapproxy';
 import { DEMO, standInAccountExport, standInKeyImages } from '../demo/standin';
@@ -74,14 +76,19 @@ const NO_NODES: WatcherNodes = { btc: null, xmr: null };
  *
  * Two stores, split by sensitivity. Node addresses and the scan height go in
  * a plain JSON file (`state/persist.ts`): they are configuration, readable by
- * the person auditing what this app keeps. The paired watch-only keys go in
- * the device keychain (`state/persistKeys.ts`): they cannot spend, and they
- * are still the watching half of somebody's finances.
+ * the person auditing what this app keeps. The keychain holds two things, and
+ * it is worth naming both rather than only the older one: the paired
+ * watch-only keys (`state/persistKeys.ts`), which cannot spend and are still
+ * the watching half of somebody's finances, and this phone's own spending
+ * keys (`core/keyvault.ts`), which are a seed. Anything that says this app
+ * stores no secret is describing the build before that landed.
  *
  * Not remembered anywhere: the Monero outputs a scan found and the key images
- * the vault computed. Both are lists about the person rather than the chain,
- * both are cheap to recover (resume the scan; rescan one QR), and neither
- * belongs on the networked device's disk.
+ * that cover them. Both are lists about the person rather than the chain, and
+ * neither belongs on the networked device's disk. Recovering them is a scan
+ * from the birth height rather than a resume, which is slow and correct: the
+ * position on disk is not resumed across a launch precisely because the
+ * findings that go with it did not survive one.
  */
 
 export interface Store {
@@ -116,7 +123,10 @@ export interface Store {
   nodeProblems: { asset: Asset; problem: string }[];
   refresh(): Promise<void>;
   setNode(kind: NodeKind, config: NodeConfig | null): void;
-  /** How far the Monero chain scan has got, or null before it has run. */
+  /** How far the selected account's Monero scan has got, or null before it has
+   *  run. Per account, because two accounts scan two different sets of blocks
+   *  and one shared number would report one account's progress under the
+   *  other's name. */
   moneroStatus: MoneroStatus | null;
   /** True once what was stored has been read, so a screen can say so. */
   restored: boolean;
@@ -125,8 +135,12 @@ export interface Store {
    *
    * Wanted for two different reasons that happen to want the same button: a
    * scan that somehow got ahead of itself, and somebody handing the phone on.
-   * Nothing secret is stored, so this is a convenience rather than a wipe, and
-   * it does not claim to be one.
+   *
+   * It clears the file and nothing else, and the difference matters now that
+   * this app can hold a seed: the keychain keeps the spending keys and the
+   * paired watching keys, and neither is touched here. `forgetHotKeys` is the
+   * one that forgets a wallet. Somebody handing the phone on needs both, so
+   * this is not the wipe it used to be able to claim to be.
    */
   forgetStored(): void;
 
@@ -157,8 +171,16 @@ export interface Store {
 
   /** What the vault handed over, or null before any pairing. */
   pairing: Pairing | null;
-  /** The Bitcoin account key in use, for the one screen that shows it. */
-  accountKey: string | null;
+  /**
+   * The Bitcoin account key of the *selected* account.
+   *
+   * Named for the selection because that is what it is. It was called
+   * `accountKey`, and the vault screen read it under the heading THIS
+   * PAIRING, so with a vault paired and the wallet on this phone selected
+   * that row printed this phone's own zpub as though the vault had sent it.
+   * A pairing's key is `pairing.btc.zpub` and nothing else.
+   */
+  selectedAccountKey: string | null;
   /**
    * Accept a payload that arrived over the camera, dispatched by its kind.
    *
@@ -321,11 +343,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const [nodes, setNodes] = useState<WatcherNodes>(NO_NODES);
   const [refreshing, setRefreshing] = useState(false);
+  /* The same fact as `refreshing`, readable inside the callback rather than a
+   * render later. State is what the spinner reads; this is what the re-entry
+   * check reads, because a second call arriving before React commits would see
+   * the old `false`. */
+  const inFlight = useRef(false);
   const [nodeProblems, setNodeProblems] = useState<RefreshResult['problems']>([]);
   const [moneroScans, setMoneroScans] = useState<Persisted['moneroScans']>({});
   const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
   const [swapCheck, setSwapCheck] = useState<{ status: SwapStatus; at: number } | null>(null);
-  const [moneroStatus, setMoneroStatus] = useState<MoneroStatus | null>(null);
+  /* One entry per account rather than one for the app.
+   *
+   * It used to be a single value written for whichever account was selected,
+   * which put `selectedAccount` in `refresh`'s dependency list, which made
+   * tapping an account on the accounts screen fire a full network refresh of
+   * every account: tip height, address walk, per-address history, a Monero
+   * scan pass, a key image query, a fee estimate and prices, for one line of
+   * progress. Keyed here, the selection is a read rather than a fetch. */
+  const [moneroStatuses, setMoneroStatuses] = useState<Record<string, MoneroStatus>>({});
   /* A wallet2 file caught over the camera, and the bytes behind it.
    *
    * Two holders on purpose. The state is what a screen renders and is
@@ -358,10 +393,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * advances: that would throw away the outputs it has found and restart the
    * scan, forever, on every refresh. */
   const scanStarts = useRef<Record<string, ScanState>>({});
-  /* The positions this process actually produced, as opposed to the ones read
+  /*
+   * The positions this process actually produced, as opposed to the ones read
    * off disk. Only these are safe to resume from, because only these have the
-   * findings that go with them still in memory. */
+   * findings that go with them still in memory.
+   *
+   * Keyed by the account's Monero address, and that is the point rather than a
+   * detail. The account ids are role names: `accounts.ts` hard-codes 'hot' and
+   * 'vault', so forgetting a wallet and restoring a different one, or
+   * unpairing and pairing a different vault, puts a second wallet under an id
+   * that already has a position recorded against it. Keyed by id, the new
+   * wallet inherited the old one's height and resumed millions of blocks late
+   * with a progress bar reading caught up. An address cannot be inherited.
+   */
   const sessionScans = useRef<Record<string, ScanState>>({});
+  /* Bumped when the stored scans are thrown away, so the memo that reads them
+   * actually recomputes. Without it FORGET EVERYTHING STORED cleared a ref
+   * that nothing re-read: the same watcher objects carried the same positions,
+   * and the app's own documented remedy for "a scan that got ahead of itself"
+   * did nothing but wipe the node configuration. */
+  const [scanGeneration, setScanGeneration] = useState(0);
 
   /* Which account the interface is looking at, as asked for rather than as
    * resolved. `selected` turns it into one that exists; keeping the raw wish
@@ -459,20 +510,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const accountKeys = useMemo<AccountKeys[]>(() => {
     const openMonero = (
-      source: { address: string; view: string; birth: number | null } | null,
+      keys: { address: string; view: string; birth: number | null } | null,
       id: string,
+      /* Where the spend key for this account is, which is not something the
+       * watcher can work out from a view key: both kinds of account are
+       * watched the same way and only this says which one is being watched.
+       * Every custody sentence under a Monero balance is derived from it. */
+      source: MoneroSource,
     ): MoneroWatch | null => {
-      if (!source) return null;
-      const opened = openAccount(source.address, source.view);
+      if (!keys) return null;
+      const opened = openAccount(keys.address, keys.view);
       if (!opened.ok) return null;
       /* An account with no stated birth starts a week back rather than at the
        * tip. Starting late means silently never seeing payments that arrived
        * first, which reads as money that did not turn up. */
-      const birth = source.birth ?? restoreHeight();
-      const stored = scanStarts.current[id];
+      const birth = keys.birth ?? restoreHeight();
       /*
        * Resume only where the findings survived, which across a launch they do
-       * not.
+       * not, and only where the blocks in between were really walked.
        *
        * `NodeWatcher.found` is in memory by design: a list of somebody's
        * incoming payments on disk is exactly what the view key was protecting.
@@ -482,17 +537,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
        * account also could not recover it, because the key image request is
        * built from the outputs the scan found.
        *
-       * So the position is only honored inside the session that produced it.
-       * `sessionScans` is populated by a refresh in this process; anything
-       * loaded from disk starts at the birth height. Slow and correct, which
-       * is the trade this project makes everywhere else it appears.
+       * `resumeFrom` in `watchers.ts` is both halves of that rule, extracted so
+       * the three cases can be tested without a React tree.
        */
-      const resumable = sessionScans.current[id];
-      const scan =
-        resumable && stored && resumable === stored && stored.birth >= birth
-          ? stored
-          : { birth, height: birth };
-      return { account: opened.account, scan };
+      const stored = scanStarts.current[id];
+      const resumable = sessionScans.current[opened.account.address];
+      return { account: opened.account, scan: resumeFrom(birth, stored, resumable), source };
     };
 
     const out: AccountKeys[] = [];
@@ -504,6 +554,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           pairing.xmr
             ? { address: pairing.xmr.address, view: pairing.xmr.view, birth: pairing.xmr.birth }
             : null,
+          'vault',
           'vault',
         ),
       });
@@ -524,6 +575,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }
             : null,
           'hot',
+          'hot',
         ),
       });
     }
@@ -534,12 +586,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         monero: openMonero(
           { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null },
           'standin',
+          /* The stand-in is a vault, imitated. Its whole purpose is to render
+           * the paired screens in a dev build, so it has to say the paired
+           * sentence. */
+          'vault',
         ),
       });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restored, pairing, hotWatch, hot]);
+  }, [restored, pairing, hotWatch, hot, scanGeneration]);
 
   /**
    * One watcher per account.
@@ -548,11 +604,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * snapshot. That is correct: a balance from a different node is not a
    * balance from this one, and showing it while the new one loads would be
    * showing somebody a number from a source they just stopped trusting.
+   *
+   * An account whose keys are unchanged keeps its watcher across a rebuild of
+   * the list, because the list is one memo over the whole array and making a
+   * wallet on this phone otherwise reset the *vault* account's found outputs
+   * and key image book to empty. Both are memory-only by design, so that was a
+   * vault account's spendable Monero going to zero, and a physical QR round
+   * trip to repeat, for an action about a different account.
    */
-  const watchers = useMemo(
-    () => new Watchers(nodes, accountKeys, Date.now()),
-    [nodes, accountKeys],
-  );
+  const carried = useRef<{ nodes: WatcherNodes; generation: number; watchers: Watchers } | null>(null);
+  const watchers = useMemo(() => {
+    const previous = carried.current;
+    /* Carried only when nothing that invalidates a watcher has changed. A new
+     * node means a new set, for the reason above. A bumped generation means
+     * somebody asked for the scans to be thrown away, and reusing a watcher
+     * would hand them back the position they just cleared. */
+    const carry =
+      previous && previous.nodes === nodes && previous.generation === scanGeneration
+        ? previous.watchers
+        : null;
+    const next = new Watchers(nodes, accountKeys, Date.now(), carry);
+    carried.current = { nodes, generation: scanGeneration, watchers: next };
+    return next;
+  }, [nodes, accountKeys, scanGeneration]);
 
   /* Which account the interface is looking at. Resolved through `selected`
    * rather than read straight out of state, so forgetting the account somebody
@@ -585,6 +659,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const refresh = useCallback(async (): Promise<void> => {
     if (watchers.ids().length === 0) return;
+    /* One pass at a time. Pull to refresh, an arriving key image payload and
+     * the effect below can all ask within a few hundred milliseconds of each
+     * other, and two passes over the same watcher walk the same blocks twice
+     * against somebody's node for one answer. */
+    if (inFlight.current) return;
+    inFlight.current = true;
     setRefreshing(true);
     try {
       const results = await watchers.refreshAll(Date.now());
@@ -597,13 +677,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
        * that did succeed. Kept per account, because two accounts scan two
        * different sets of blocks for two different view keys. */
       const positions: Record<string, ScanState> = {};
-      for (const id of watchers.ids()) {
-        const progress = watchers.watcherFor(id)?.moneroProgress();
-        if (progress) positions[id] = progress.scan;
+      const byAddress: Record<string, ScanState> = {};
+      const statuses: Record<string, MoneroStatus> = {};
+      for (const keys of accountKeys) {
+        const progress = watchers.watcherFor(keys.id)?.moneroProgress();
+        if (!progress) continue;
+        positions[keys.id] = progress.scan;
+        statuses[keys.id] = progress;
+        /* The same object under two keys on purpose: the id is what goes to
+         * disk, the address is what a rebuilt watcher is allowed to resume
+         * from, and `resumeFrom` compares them by identity to establish that
+         * the outputs found alongside this height are still in memory. */
+        const address = keys.monero?.account.address;
+        if (address) byAddress[address] = progress.scan;
       }
       scanStarts.current = { ...scanStarts.current, ...positions };
-      sessionScans.current = { ...sessionScans.current, ...positions };
+      sessionScans.current = { ...sessionScans.current, ...byAddress };
       setMoneroScans((current) => ({ ...current, ...positions }));
+      setMoneroStatuses((current) => ({ ...current, ...statuses }));
       /*
        * A hot account computes its own key images, because its spend key is
        * here. Without this the coins are found and never become spendable:
@@ -626,16 +717,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      setMoneroStatus(watchers.watcherFor(selectedAccount)?.moneroProgress() ?? null);
       /* The scan has now seen whatever the last drafts spent, so the derived
        * change index is authoritative again and the in-session offset would
        * only push new change further past the gap. */
       changeAhead.current = {};
     } finally {
+      inFlight.current = false;
       setRefreshing(false);
       setFetched((count) => count + 1);
     }
-  }, [watchers, accounts, selectedAccount, hot]);
+  }, [watchers, accountKeys, accounts, hot]);
 
   /* One refresh when a node is set, and none on a timer. Polling a node every
    * thirty seconds is a wallet telling somebody's node operator exactly when
@@ -680,7 +771,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         now: Date.now(),
       });
       if (!planned.ok) return planned.problem;
-      dispatch({ type: 'prepared', draft: planned.draft, at: Date.now() });
+      dispatch({ type: 'prepared', draft: planned.draft, account: selectedAccount, at: Date.now() });
       return null;
     }
 
@@ -711,7 +802,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (selectedAccount !== null) {
       changeAhead.current[selectedAccount] = (changeAhead.current[selectedAccount] ?? 0) + 1;
     }
-    dispatch({ type: 'prepared', draft: result.draft, at: Date.now() });
+    dispatch({ type: 'prepared', draft: result.draft, account: selectedAccount, at: Date.now() });
     return null;
   }, [session.compose, asset, snapshot, feeOption, selectedAccount, watcher]);
 
@@ -723,6 +814,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       current.state === 'unpaired' ? current : { ...current, state: 'in-session' },
     );
   }, [session.draft]);
+
+  /* True from the moment this device starts signing until it has finished.
+   * See `signOnThisDevice`: two callers, one prompt. */
+  const signingHere = useRef(false);
 
   const handOver = useCallback(() => dispatch({ type: 'handed-over', at: Date.now() }), []);
   const readBack = useCallback(() => dispatch({ type: 'read-back', at: Date.now() }), []);
@@ -740,10 +835,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setVault((current) => (current.state === 'in-session' ? { ...current, state: 'ready' } : current));
   }, []);
 
-  const offerSignature = useCallback(
-    (raw: Uint8Array | null) => {
+  /**
+   * The one door into a broadcastable state, and the one place a handoff is
+   * recorded.
+   *
+   * `origin` splits two jobs that used to be one function. Verification is the
+   * same for both paths and deliberately so: a signature this phone made goes
+   * through the same `verifySigned` as one that came back over a camera, and
+   * there is exactly one dispatch of `returned` in this file.
+   *
+   * The vault link's audit trail is *not* the same for both. LAST VERIFIED
+   * SESSION on the vault screen reads "the last time a signature came back
+   * from the vault and matched the transaction this device had prepared", and
+   * the hot signer routing through this function stamped that line for
+   * handoffs that never happened. On a phone holding both kinds of account,
+   * which is the arrangement the multi-account work exists for, the only
+   * on-device record of when the airgap was actually exercised moved every
+   * time somebody spent from the hot wallet. So the bookkeeping belongs to the
+   * camera path alone.
+   */
+  const applySignature = useCallback(
+    (raw: Uint8Array | null, origin: 'vault' | 'here') => {
       const draft = session.draft;
       if (!draft) return;
+      /* The account the draft was built for, not the one on screen. The two
+       * differ the moment somebody visits the accounts list mid-payment, and
+       * the key image book resolved off the selection sent a legitimate vault
+       * signature into terminal `mismatch`. */
+      const paying = watchers.watcherFor(session.account);
       if (!raw) {
         refused();
         dispatch({
@@ -754,18 +873,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         /* A handoff that produced nothing is still a handoff that has ended.
          * Leaving the link in `in-session` here was the same bug as leaving it
          * there on a back button, one branch further down. */
-        setVault((current) =>
-          current.state === 'in-session' ? { ...current, state: 'ready', lastSession: Date.now() } : current,
-        );
+        if (origin === 'vault') {
+          setVault((current) =>
+            current.state === 'in-session' ? { ...current, state: 'ready', lastSession: Date.now() } : current,
+          );
+        }
         return;
       }
       const verdict =
-        draft.asset === 'XMR' && watcher instanceof NodeWatcher
-          ? verifySignedMonero(draft, raw, watcher.moneroImagesFor(draft.spentKeys ?? []))
+        draft.asset === 'XMR' && paying instanceof NodeWatcher
+          ? verifySignedMonero(draft, raw, paying.moneroImagesFor(draft.spentKeys ?? []))
           : verifySigned(draft, raw);
       if (verdict.ok) arrived();
       else refused();
       dispatch({ type: 'returned', verified: verdict, at: Date.now() });
+      if (origin !== 'vault') return;
       /* A session happened either way. It was only *verified* if what came
        * back was what went out, and the security screen shows those as two
        * different lines because they are two different facts. */
@@ -780,7 +902,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             },
       );
     },
-    [session.draft, watcher],
+    [session.draft, session.account, watchers],
+  );
+
+  /** Bytes from a camera, or from the stand-in vault. The vault path, so this
+   *  is what moves the link's last-session and last-verified lines. */
+  const offerSignature = useCallback(
+    (raw: Uint8Array | null) => applySignature(raw, 'vault'),
+    [applySignature],
   );
 
   /**
@@ -796,68 +925,144 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!draft || hot === null) return;
 
     /*
-     * The account being looked at, and only that one.
+     * One prompt per payment, however many callers there are.
      *
-     * This used to be `accounts.find((a) => a.signsHere)`, which asks whether
-     * *any* account signs here. That was harmless while the wallet watched one
-     * account and became a hole the moment it watched two: with a vault
-     * selected and a hot wallet also present, it answered yes and would have
-     * carried the hot account's source into a signature over the vault
-     * account's draft. The keys would not have matched and no money would have
-     * moved, and the interface would still have offered to sign for an account
-     * whose whole promise is that this device cannot.
+     * There are two: the review screen's button, and the mount effect of the
+     * screen that button navigates to. The button dispatches `sign-here`
+     * synchronously before its first await, React commits the step change
+     * while this call is parked on the Face ID prompt, and the signing screen
+     * mounts and asks again. Not a race: it happened on every hot send. The
+     * second prompt cancels the first, the first call dispatches `failed`, and
+     * the authorization the person actually gave is dropped at a step that no
+     * longer accepts it, leaving them on "Nothing was signed."
+     *
+     * A ref rather than a step check, because the callback's dependencies hold
+     * the draft reference and the second invocation reads a stale `session`.
+     * Cleared in the `finally` below, so a refused prompt can be retried.
      */
-    const spending = accounts.find((account) => account.id === selectedAccount);
-    if (!spending || !spending.signsHere) return;
+    if (signingHere.current) return;
 
-    dispatch({ type: 'sign-here', signsHere: true, at: Date.now() });
-
-    const signed = await signWithHotKeys({
-      source: spending.source,
-      record: hot,
-      draft,
-      gate: nativeGate(spending.source, `Sign this ${draft.asset} payment`),
-      /* The platform CSPRNG, the same source the decoy selection above draws
-       * from. Passed in rather than reached for inside the signer, so the
-       * signer can be run against a fixed input in a test. */
-      scalars: (count) =>
-        Array.from({ length: count }, () => {
-          const bytes = new Uint8Array(32);
-          crypto.getRandomValues(bytes);
-          return bytes;
-        }),
-    });
-
-    if (!signed.ok) {
-      refused();
-      dispatch({ type: 'failed', problem: signed.problem, at: Date.now() });
+    /*
+     * The account this payment was prepared for, and only that one.
+     *
+     * Two earlier versions of this line were wrong in the same direction.
+     * `accounts.find((a) => a.signsHere)` asks whether *any* account signs
+     * here, which on a phone watching a vault and a hot wallet answers yes for
+     * both. Reading the selection instead fixed that until the selection could
+     * move underneath a live draft: Send is a modal with no focus listener, so
+     * visiting the accounts list mid-payment and coming back offered SIGN ON
+     * THIS PHONE over the vault account's transaction. The draft carries its
+     * account now, and that is what decides.
+     */
+    const spending = accounts.find((account) => account.id === session.account);
+    if (!spending) {
+      dispatch({
+        type: 'failed',
+        problem:
+          'The account this payment was prepared for is no longer on this phone, so nothing here can sign it. ' +
+          'Start the payment again from an account you still have.',
+        at: Date.now(),
+      });
       return;
     }
 
-    /* Through the same door a camera's bytes go through. `offerSignature`
-     * runs `verifySigned`, and a signature this device made gets no more
-     * credit than one that arrived from across a room. */
-    offerSignature(signed.raw);
-  }, [session.draft, hot, accounts, selectedAccount, offerSignature]);
+    /* The real answer, not a literal. The transition table refuses `sign-here`
+     * for an account that does not sign here, and it can only do that if it is
+     * ever told about one: passing `true` from the only dispatcher made the
+     * second, independent check a decoration. */
+    dispatch({ type: 'sign-here', signsHere: spending.signsHere, at: Date.now() });
+    if (!spending.signsHere) {
+      dispatch({
+        type: 'failed',
+        problem:
+          'This payment is from an account paired to your vault, so its keys are not on this phone. ' +
+          'Hand it to your vault to sign.',
+        at: Date.now(),
+      });
+      return;
+    }
+
+    signingHere.current = true;
+    try {
+      const signed = await signWithHotKeys({
+        source: spending.source,
+        record: hot,
+        draft,
+        gate: nativeGate(spending.source, `Sign this ${draft.asset} payment`),
+        /* The platform CSPRNG, the same source the decoy selection above draws
+         * from. Passed in rather than reached for inside the signer, so the
+         * signer can be run against a fixed input in a test. */
+        scalars: (count) =>
+          Array.from({ length: count }, () => {
+            const bytes = new Uint8Array(32);
+            crypto.getRandomValues(bytes);
+            return bytes;
+          }),
+      });
+
+      if (!signed.ok) {
+        refused();
+        dispatch({ type: 'failed', problem: signed.problem, at: Date.now() });
+        return;
+      }
+
+      /* Through the same door a camera's bytes go through. `applySignature`
+       * runs `verifySigned`, and a signature this device made gets no more
+       * credit than one that arrived from across a room: `here` is what keeps
+       * it off the vault link's audit trail. */
+      applySignature(signed.raw, 'here');
+    } finally {
+      signingHere.current = false;
+    }
+  }, [session.draft, session.account, hot, accounts, applySignature]);
 
   const broadcast = useCallback(() => {
     const verified = session.verified;
-    if (!verified || !verified.ok) return;
+    const draft = session.draft;
+    if (!verified || !verified.ok || !draft) return;
+    /*
+     * The chain this payment is on, read from the payment.
+     *
+     * It used to read the app-wide chain chip, which every neighbor in this
+     * file already knew better than to do. Send is a modal with a swipe
+     * gesture, so somebody could leave the ready screen, change the chip on
+     * Home, come back and press BROADCAST: a Monero transaction would go to
+     * the Bitcoin node, and the mainnet Monero gate, which is keyed to the
+     * same chip, would not run at all.
+     */
+    const asset = draft.asset;
+    /* And the account it spends from, for the same reason `applySignature`
+     * resolves one: the selection is not the payment. */
+    const paying = watchers.watcherFor(session.account);
+    if (!paying) {
+      /* Checked before the transition, not after. Dispatching `broadcasting`
+       * and then returning left the session in a step with no `back` and a
+       * disabled button, pinned there until the app was relaunched with a
+       * signed transaction stranded behind it. */
+      refused();
+      dispatch({
+        type: 'failed',
+        problem:
+          'This wallet is not watching the account this payment came from, so it has no node to publish it to. ' +
+          'Set a node for that account and try again.',
+        at: Date.now(),
+      });
+      return;
+    }
     dispatch({ type: 'broadcast', at: Date.now() });
     /* The signed transaction names its network and its id; the chokepoint
      * gates on the first and returns the second, since monerod's reply
      * carries no id of its own. */
     const options =
       asset === 'XMR' ? { network: verified.network ?? 'mainnet', txid: verified.txid } : undefined;
-    if (!watcher) return;
-    void watcher.broadcast(asset, verified.raw, options).then((result) => {
+    void paying.broadcast(asset, verified.raw, options).then((result) => {
       if (result.ok && result.txid) {
         confirmed();
         /* Lock the spent coins until the scan confirms them, so a second
          * payment started before the next refresh cannot double-spend. */
-        const spent = session.draft?.spentKeys;
-        if (asset === 'XMR' && spent && watcher instanceof NodeWatcher) {
-          watcher.markMoneroPending(spent);
+        const spent = draft.spentKeys;
+        if (asset === 'XMR' && spent && paying instanceof NodeWatcher) {
+          paying.markMoneroPending(spent);
         }
         dispatch({ type: 'published', txid: result.txid, at: Date.now() });
       } else {
@@ -869,7 +1074,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       }
     });
-  }, [session.verified, session.draft, asset, watcher]);
+  }, [session.verified, session.draft, session.account, watchers]);
 
   /**
    * Where a swap pays out to.
@@ -1061,6 +1266,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const swapNetwork = useMemo(() => (swapConfigured() ? proxyTransport() : demoSwapTransport), []);
 
+  /**
+   * The session's events, with one thing hung off `reset`.
+   *
+   * `reset` is every way out of a payment: the screen closing, DISCARD, a
+   * finished broadcast. The Monero send path caches the chain's output
+   * distribution, which is about nineteen megabytes of numbers at mainnet
+   * scale, because downloading it again on every Review tap was measured at
+   * 20.6 MB of JSON under a twelve-second abort. The cache is keyed on the
+   * node, so this is not a correctness fix: a node change cannot serve a
+   * stale answer. It is the difference between holding that array while
+   * somebody is paying and holding it until the next block, on a phone.
+   *
+   * `depositForSwap` dispatches its own `reset` and deliberately does not
+   * come through here: it is resetting in order to start a payment, not to
+   * leave one, and dropping the cache there would buy a re-download of the
+   * thing the person is about to review.
+   */
+  const send = useCallback((event: SessionEvent) => {
+    if (event.type === 'reset') forgetOutputDistribution();
+    dispatch(event);
+  }, []);
+
   const depositForSwap = useCallback(
     (order: SwapOrder, from: Asset, toId: string) => {
       setAsset(from);
@@ -1090,6 +1317,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSwapCheck({ status, at: Date.now() });
   }, [pendingSwap]);
 
+  /**
+   * Forget where an account's scan got to, because the account is gone.
+   *
+   * `forgetHotKeys` and `unpairVault` clear keys and pairing and used to touch
+   * neither of the scan maps. The ids are role names, hard-coded in
+   * `accounts.ts` as 'hot' and 'vault', so forget-then-restore and
+   * unpair-then-pair-a-different-vault both put a second wallet under an id
+   * that already had a position recorded against it. `sessionScans` is keyed
+   * by Monero address so it cannot be inherited at all; this clears the rest,
+   * so nothing stale is written back to disk under the new account's name or
+   * shown as its scan progress.
+   */
+  const forgetScanFor = useCallback((id: string, address: string | null) => {
+    const starts = { ...scanStarts.current };
+    delete starts[id];
+    scanStarts.current = starts;
+    if (address !== null) {
+      const live = { ...sessionScans.current };
+      delete live[address];
+      sessionScans.current = live;
+    }
+    setMoneroScans((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setMoneroStatuses((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
   const dismissSwap = useCallback(() => {
     setPendingSwap(null);
     setSwapCheck(null);
@@ -1102,7 +1362,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     session,
     asset,
     setAsset,
-    send: dispatch,
+    send,
     prepareDraft,
     beginTransmit,
     handOver,
@@ -1120,19 +1380,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     refreshing,
     nodeProblems,
     refresh,
-    setNode: (kind: NodeKind, config: NodeConfig | null) =>
-      setNodes((current) => (kind === 'esplora' ? { ...current, btc: config } : { ...current, xmr: config })),
-    moneroStatus,
+    setNode: (kind: NodeKind, config: NodeConfig | null) => {
+      /* The cached output distribution belongs to the node it came from, and
+       * it knows that: a changed node cannot be served a stale answer. What
+       * it cannot do on its own is let go, so a person who tries three Monero
+       * nodes would be holding the first one's twenty megabytes until the
+       * next block. */
+      if (kind === 'monerod') forgetOutputDistribution();
+      setNodes((current) => (kind === 'esplora' ? { ...current, btc: config } : { ...current, xmr: config }));
+    },
+    moneroStatus: selectedAccount === null ? null : moneroStatuses[selectedAccount] ?? null,
     restored,
     forgetStored: () => {
       scanStarts.current = {};
+      sessionScans.current = {};
       setMoneroScans({});
-      setMoneroStatus(null);
+      setMoneroStatuses({});
+      /* The bump is what makes the rest of this line do anything. The memo
+       * that reads `scanStarts` depends on the accounts, not on the ref, so
+       * clearing the ref alone left every watcher holding the position it was
+       * built with and the scan carried on from where it was. */
+      setScanGeneration((count) => count + 1);
       setNodes(NO_NODES);
+      /* Including the twenty megabytes of chain the send path had cached.
+       * FORGET EVERYTHING STORED means the node configuration is gone, so
+       * nothing can ever ask for that answer again. */
+      forgetOutputDistribution();
       void storage.clear();
     },
     pairing,
-    accountKey: accountKeyOf(selectedAccount),
+    selectedAccountKey: accountKeyOf(selectedAccount),
     acceptWirePayload,
     keyImageFrames,
     syncStandInKeyImages,
@@ -1153,6 +1430,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     forgetHotKeys: async () => {
       await forgetHot(spendingStorage);
+      /* Before the record goes, because the Monero address is how this
+       * account's scan position is found. See `forgetScanFor`. */
+      forgetScanFor('hot', hotWatch?.xmr?.address ?? null);
       setHot(null);
     },
 
@@ -1178,6 +1458,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       pairingRef.current = null;
       setPairing(null);
       void clearPairing(keysStorage);
+      forgetScanFor('vault', pairing?.xmr?.address ?? null);
       setVault({ state: 'unpaired' });
     },
     endSession,

@@ -45,7 +45,7 @@ final class FlowContractTests: XCTestCase {
     }
 
     func testReviewComesFromTheReader() {
-        let allowed: Set<RouteKind> = [.scanner, .acquiring, .received, .destination, .review]
+        let allowed: Set<RouteKind> = [.scanner, .acquiring, .destination, .review]
         for from in RouteKind.allCases where Flow.allowed(from: from, to: .review) {
             XCTAssertTrue(allowed.contains(from),
                           "review reachable from \(from), which never read a transaction")
@@ -71,7 +71,7 @@ final class FlowContractTests: XCTestCase {
     // MARK: - The ordinary flow still works
 
     func testTheHappyPathIsWalkable() {
-        let path: [RouteKind] = [.scanner, .acquiring, .received, .review, .destination,
+        let path: [RouteKind] = [.scanner, .acquiring, .review, .destination,
                                  .review, .approve, .signed, .signedQR, .signed, .home]
         for (from, to) in zip(path, path.dropFirst()) {
             XCTAssertTrue(Flow.allowed(from: from, to: to), "\(from) -> \(to) should be allowed")
@@ -79,7 +79,7 @@ final class FlowContractTests: XCTestCase {
     }
 
     func testTheRefusalPathIsWalkable() {
-        XCTAssertTrue(Flow.allowed(from: .received, to: .refused))
+        XCTAssertTrue(Flow.allowed(from: .acquiring, to: .refused))
         XCTAssertTrue(Flow.allowed(from: .refused, to: .scanner))
         XCTAssertTrue(Flow.allowed(from: .approve, to: .refused))
         XCTAssertTrue(Flow.allowed(from: .refused, to: .home))
@@ -88,7 +88,7 @@ final class FlowContractTests: XCTestCase {
     func testKeyImagesComesFromTheReaderToo() {
         /* Same property as review, same reason: a screen full of key image
          * frames exists because a payload just finished assembling. */
-        let allowed: Set<RouteKind> = [.scanner, .acquiring, .received]
+        let allowed: Set<RouteKind> = [.scanner, .acquiring]
         for from in RouteKind.allCases where Flow.allowed(from: from, to: .keyImages) {
             XCTAssertTrue(allowed.contains(from),
                           "keyImages reachable from \(from), which never read a request")
@@ -110,7 +110,7 @@ final class FlowContractTests: XCTestCase {
          * unsafe is a route between the signing path and a screen full of
          * unverified amounts, because adjacency is how two screens come to be
          * read as one flow. */
-        let allowed: Set<RouteKind> = [.scanner, .acquiring, .received]
+        let allowed: Set<RouteKind> = [.scanner, .acquiring]
         for from in RouteKind.allCases where Flow.allowed(from: from, to: .xmrFile) {
             XCTAssertTrue(allowed.contains(from),
                           "xmrFile reachable from \(from), which never read a file")

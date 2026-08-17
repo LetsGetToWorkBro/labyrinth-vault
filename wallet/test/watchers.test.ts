@@ -15,19 +15,119 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { Watchers, emptySnapshot, problemsFrom, selected, type AccountKeys } from '../src/core/watchers';
+import {
+  Watchers,
+  emptySnapshot,
+  problemsFrom,
+  resumeFrom,
+  selected,
+  type AccountKeys,
+} from '../src/core/watchers';
 import { NodeWatcher, type RefreshResult, type WatcherNodes } from '../src/core/watcher';
+import type { Transport } from '../src/net/http';
 
 /* No nodes, so every watcher below builds its transports as null and reaches
  * no network. The keeping is what is under test, not the fetching. */
 const NO_NODES: WatcherNodes = { btc: null, xmr: null };
 
+const NOW = 1_760_000_000_000;
+
 const ZPUB =
   'zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs';
+
+/* A second real account key, from BIP39's "legal winner thank year wave
+ * sausage worth useful legal winner thank yellow". Real rather than a mangled
+ * copy of the one above, because a zpub that fails to open produces a watcher
+ * with no Bitcoin wallet in it, and a test comparing two of those would be
+ * comparing two empty things. */
+const OTHER_ZPUB =
+  'zpub6s3Buz3fYNRSZk9BFYo9RCMkAvSiknUtRVjuYYCZmDJPrxTwYEW6fBXzYwMdT3DaKaE7TxN1QQwU2tjpNzAYS3S9G2xGEPQcMsrgxQNwh47';
+
+/** Comments removed, so a guard never fires on its own documentation. */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
 
 function keys(over: Partial<AccountKeys> = {}): AccountKeys {
   return { id: 'vault', zpub: ZPUB, monero: null, ...over };
 }
+
+/**
+ * A price relay that counts, and answers the way the real one does.
+ *
+ * `fetchPrices` believes a positive integer number of cents under a hundred
+ * million dollars, so these are real figures rather than ones the parser
+ * would reject: a transport whose answer is thrown away could not tell a
+ * fetch that happened from one that did not.
+ */
+function countingPrices(): { transport: Transport; calls: () => number } {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    transport: {
+      base: 'https://relay.example',
+      async send(request) {
+        calls += 1;
+        expect(request.path).toBe('/v1/price');
+        return {
+          ok: true,
+          status: 200,
+          text: JSON.stringify({ ok: true, prices: { BTC: 6_000_000, XMR: 15_000 } }),
+        };
+      },
+    },
+  };
+}
+
+describe('the price is one number for the app, so it is asked for once', () => {
+  /* W-L3. The fetch lived inside `NodeWatcher.refresh`, so a phone watching a
+   * vault account and a hot account made two identical `/v1/price` calls to
+   * the same relay, from the same address, in the same second, every refresh.
+   * The relay is the one hop that sees a request it could correlate, and the
+   * call count per refresh is the number of accounts somebody holds. */
+
+  it('asks once for a set of two accounts, and gives both the answer', async () => {
+    const relay = countingPrices();
+    const watchers = new Watchers(NO_NODES, [keys(), keys({ id: 'hot' })], NOW, null, relay.transport);
+    await watchers.refreshAll(NOW);
+
+    expect(relay.calls(), 'one call per account, which is the account count leaking').toBe(1);
+    for (const id of ['vault', 'hot']) {
+      expect(watchers.watcherFor(id)!.snapshot().centsPerUnit, `${id} did not get the price`).toEqual({
+        BTC: 6_000_000,
+        XMR: 15_000,
+      });
+    }
+  });
+
+  it('asks once whatever the account count is', async () => {
+    /* Three rather than two, because "once" and "once per account" agree at
+     * one and a two-account check cannot tell a fixed two from a per-account
+     * two. */
+    const relay = countingPrices();
+    const watchers = new Watchers(
+      NO_NODES,
+      [keys(), keys({ id: 'hot' }), keys({ id: 'third', zpub: OTHER_ZPUB })],
+      NOW,
+      null,
+      relay.transport,
+    );
+    await watchers.refreshAll(NOW);
+    expect(relay.calls()).toBe(1);
+  });
+
+  it('does not go out at all when there is no relay', async () => {
+    /* Null is not undefined. A watcher told "nobody fetched one" asks for
+     * itself, which is right for a lone watcher and is exactly what must not
+     * happen behind a set that has already looked and found no price source. */
+    const watchers = new Watchers(NO_NODES, [keys(), keys({ id: 'hot' })], NOW, null, null);
+    const results = await watchers.refreshAll(NOW);
+    expect([...results.keys()]).toEqual(['vault', 'hot']);
+    for (const id of ['vault', 'hot']) {
+      expect(watchers.watcherFor(id)!.snapshot().centsPerUnit).toEqual({ BTC: 0, XMR: 0 });
+    }
+  });
+});
 
 describe('keeping a watcher for each account', () => {
   it('builds one per account, in the order given', () => {
@@ -183,13 +283,13 @@ describe('a resumed scan must carry its findings, or it reports zero', () => {
 
   it('only resumes from a position this process produced', () => {
     expect(store).toMatch(/sessionScans = useRef<Record<string, ScanState>>/);
-    expect(store).toMatch(/const resumable = sessionScans\.current\[id\]/);
+    expect(store).toMatch(/const resumable = sessionScans\.current\[opened\.account\.address\]/);
   });
 
-  it('starts a freshly loaded account at its birth height', () => {
-    /* The disk position alone must not be enough. If this comparison goes
-     * back to trusting `stored` on its own, the zero balance returns. */
-    expect(store).toMatch(/resumable && stored && resumable === stored/);
+  it('asks the one resolver rather than deciding inline', () => {
+    /* Inline, this was a ternary with the comparison backwards, and no test
+     * could reach it without a React tree. */
+    expect(store).toMatch(/resumeFrom\(birth, stored, resumable\)/);
     expect(store, 'the disk position is being trusted on its own again').not.toMatch(
       /const scan = stored && stored\.birth >= birth \? stored :/,
     );
@@ -198,10 +298,96 @@ describe('a resumed scan must carry its findings, or it reports zero', () => {
   it('records a position as resumable only after a real refresh', () => {
     /* Written where the outputs that go with it are still in memory, and
      * nowhere else. */
-    expect(store).toMatch(/sessionScans\.current = \{ \.\.\.sessionScans\.current, \.\.\.positions \}/);
+    expect(store).toMatch(/sessionScans\.current = \{ \.\.\.sessionScans\.current, \.\.\.byAddress \}/);
     const loadAt = store.indexOf('scanStarts.current = stored.moneroScans');
     const sessionAt = store.indexOf('sessionScans.current = {');
     expect(loadAt).toBeGreaterThan(0);
     expect(sessionAt).toBeGreaterThan(loadAt);
+  });
+
+  it('drops an account\'s scan when the account is forgotten', () => {
+    /* The ids are role names. Forgetting the hot keys and restoring a
+     * different wallet, or unpairing and pairing a different vault, put a
+     * second wallet under an id that already had a position against it. */
+    const code = codeOnly(store);
+    expect(code).toMatch(/forgetScanFor\('hot', hotWatch\?\.xmr\?\.address \?\? null\)/);
+    expect(code).toMatch(/forgetScanFor\('vault', pairing\?\.xmr\?\.address \?\? null\)/);
+  });
+});
+
+describe('where a rebuilt watcher starts its scan', () => {
+  /* `resumeFrom` is the whole of the rule, and both halves of it have been
+   * wrong in shipped code: the findings half reported a balance of zero after
+   * every relaunch, and the comparison half was inverted, so it reused a
+   * position exactly when doing so skips blocks. */
+
+  const at = (birth: number, height: number) => ({ birth, height });
+
+  it('resumes a position this process produced over blocks it really walked', () => {
+    const position = at(100, 900);
+    expect(resumeFrom(100, position, position)).toBe(position);
+    /* And from a pass that started earlier than this account needs, which has
+     * covered everything from the birth height onward. */
+    const earlier = at(50, 900);
+    expect(resumeFrom(100, earlier, earlier)).toBe(earlier);
+  });
+
+  it('starts at birth when the earlier pass began after it', () => {
+    /* `[birth, stored.birth)` was never walked and nothing will walk it: the
+     * height only moves forward and this wallet has no rescan. The old
+     * comparison kept exactly this case. */
+    const later = at(500, 900);
+    expect(resumeFrom(100, later, later)).toEqual(at(100, 100));
+  });
+
+  it('starts at birth when the findings did not survive', () => {
+    /* A position read off disk with no live pass behind it. The outputs are in
+     * memory by design, so the height alone resumes past every funded block
+     * and reports zero under a caveat saying "this total is what arrived". */
+    expect(resumeFrom(100, at(100, 900), undefined)).toEqual(at(100, 100));
+  });
+
+  it('starts at birth when the live position is for a different wallet', () => {
+    /* Two positions with the same numbers are still two positions. The
+     * identity comparison is what ties a height to the outputs found with it,
+     * so an equal-looking value from somewhere else must not be enough. */
+    expect(resumeFrom(100, at(100, 900), at(100, 900))).toEqual(at(100, 100));
+  });
+
+  it('starts at birth when nothing is stored at all', () => {
+    expect(resumeFrom(2_800_000, undefined, undefined)).toEqual(at(2_800_000, 2_800_000));
+  });
+});
+
+describe('rebuilding the list keeps the watchers whose accounts did not change', () => {
+  /* The defect: `accountKeys` is one memo over the whole array, so making a
+   * wallet on this phone built a fresh `NodeWatcher` for the *vault* account
+   * too. Its found outputs and its key image book are memory-only by design,
+   * so both went, and a vault account's spendable Monero dropped to zero for
+   * an action about a different account. */
+
+  it('carries an unchanged account across a rebuild', () => {
+    const first = new Watchers(NO_NODES, [keys()]);
+    const kept = first.watcherFor('vault');
+    const second = new Watchers(NO_NODES, [keys(), keys({ id: 'hot' })], Date.now(), first);
+    expect(second.watcherFor('vault')).toBe(kept);
+    expect(second.watcherFor('hot')).not.toBe(kept);
+  });
+
+  it('builds a new one when the account key under an id changes', () => {
+    /* The ids are role names, so a different wallet can arrive under one. A
+     * watcher carrying the previous wallet's outputs would report the wrong
+     * account's balance under the right account's name. */
+    const first = new Watchers(NO_NODES, [keys()]);
+    const second = new Watchers(NO_NODES, [keys({ zpub: OTHER_ZPUB })], Date.now(), first);
+    expect(second.watcherFor('vault')).not.toBe(first.watcherFor('vault'));
+  });
+
+  it('builds new ones when the nodes change, which is not the same question', () => {
+    /* A balance from a different node is not a balance from this one. The
+     * store decides this by not passing the previous set at all. */
+    const first = new Watchers(NO_NODES, [keys()]);
+    const second = new Watchers(NO_NODES, [keys()], Date.now(), null);
+    expect(second.watcherFor('vault')).not.toBe(first.watcherFor('vault'));
   });
 });

@@ -65,7 +65,6 @@ struct RootView: View {
         case .export: ExportView()
         case .scanner: ScannerView()
         case .acquiring: AcquiringView()
-        case .received: ReceivedView()
         case .review(let tx): ReviewView(tx: tx)
         case .destination(let tx, let out): DestinationView(tx: tx, output: out)
         case .approve(let tx, let digest): ApproveView(tx: tx, reviewedDigest: digest)
@@ -97,7 +96,6 @@ struct RootView: View {
         case .export: "export"
         case .scanner: "scanner"
         case .acquiring: "acquiring"
-        case .received: "received"
         case .review: "review"
         case .destination: "destination"
         case .approve: "approve"

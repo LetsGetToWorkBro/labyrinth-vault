@@ -13,7 +13,7 @@
  * this wallet at their own machine, the traffic already goes to somebody they
  * trust, over a network they control, and putting Labyrinth in that path
  * would take a private arrangement and route it through a stranger. That is
- * strictly worse, and the wallet decides it (`shouldProxy` in
+ * strictly worse, and the wallet decides it (`routeFor` in
  * `wallet/src/net/nodeproxy.ts`) rather than this file, because the wallet is
  * the side that knows whose machine it is.
  *
@@ -23,6 +23,19 @@
  * The list below is exactly the suggestions the app ships, so the set of
  * hosts this Worker can reach is the set a person could have picked from a
  * screen.
+ *
+ * ## Built, and not switched on
+ *
+ * Everything above is true of this route and none of it is happening yet.
+ * `routedTransport`, the wallet's half, has no production caller: every
+ * address query and every broadcast still goes straight to the node the
+ * person chose, which is what the Nodes screen tells them and is therefore
+ * not a lie anybody is being told. It is written down here because the trap
+ * is small and expensive. Going live is one string, `SWAP_PROXY`, and filling
+ * it in turns on swaps and prices while leaving chain traffic direct, so
+ * somebody reading this file after that deploy would believe their addresses
+ * were behind Cloudflare when they were not. Connecting the two is a change
+ * in the wallet, not in this file.
  */
 
 /**

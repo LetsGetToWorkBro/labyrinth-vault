@@ -3,7 +3,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { SUGGESTIONS } from '../src/core/nodes';
 import type { NodeConfig } from '../src/core/nodes';
 import { RELAYED_HOSTS, ownNodesOnly, routeFor, routeLine, routedTransport } from '../src/net/nodeproxy';
@@ -151,5 +152,54 @@ describe('the routed transport', () => {
     const reply = await t.send({ method: 'GET', path: '/blocks/tip/height' });
     expect(reply.ok).toBe(false);
     expect(reply.ok === false && reply.problem).toMatch(/relay is down/);
+  });
+});
+
+describe('the relay is documented as built and not switched on, and that stays true', () => {
+  /*
+   * W-M19. `routedTransport` and `routeLine` have no production caller: the
+   * watchers build their transports with `live()` directly, so every address
+   * query and every broadcast in the shipped app goes straight to the node
+   * the person chose. Nobody is misled by that today, because `privacyNote`
+   * is what the nodes screen renders and it says "from your IP address".
+   *
+   * Four places now say so in as many words, and a sentence with no guard
+   * behind it is a sentence that goes stale the day somebody wires the
+   * feature up. This is that guard, pointed the unusual way round: it fails
+   * when the relay starts being used, and the failure is the reminder.
+   */
+  const DOCUMENTED = [
+    'wallet/src/net/nodeproxy.ts, the header',
+    'worker/src/nodes.ts, "Built, and not switched on"',
+    'store/wallet/privacy-policy.md, "What we collect"',
+    'docs/SWAP-GOING-LIVE.md',
+  ];
+
+  function walk(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walk(path));
+      else if (/\.tsx?$/.test(entry.name)) out.push(path);
+    }
+    return out;
+  }
+
+  it('finds the wallet source, so a pass is not an empty walk', () => {
+    expect(walk('src').length).toBeGreaterThan(30);
+  });
+
+  it('has no caller outside the module that defines it', () => {
+    const callers = walk('src').filter((path) => {
+      if (path === join('src', 'net', 'nodeproxy.ts')) return false;
+      const code = readFileSync(path, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      return /\brouted[Tt]ransport\(|\brouteLine\(/.test(code);
+    });
+    expect(
+      callers,
+      `the node relay is in use now. Four places say it is not, and they are wrong until somebody updates them: ${DOCUMENTED.join('; ')}. routeFor must also start consulting swapConfigured(), because a relay that is not deployed cannot be the answer for a node that is.`,
+    ).toEqual([]);
   });
 });

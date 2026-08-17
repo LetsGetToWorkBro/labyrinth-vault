@@ -93,11 +93,10 @@ import { demoUnsignedPsbt, describePsbt, signPsbt, type PsbtSummary } from '../k
 import {
   calibrateKdf,
   looksSealed,
-  nativeArgon2idInstalled,
+  kdfSource,
   seal,
   setNativeArgon2id,
   unseal,
-  type KdfParams,
 } from '../keys/seal';
 import { wipe } from '../keys/wipe';
 import { allChecksPass, selfTest } from '../selftest';
@@ -339,11 +338,26 @@ function requireSession(): Session {
  */
 export const HOST_VERSION = 7;
 
+/**
+ * The restore height a vault that does not know its own age must claim.
+ *
+ * Named rather than written as a bare `0` at the call site, because the number
+ * is a decision and the decision is not obvious: it is "scan the whole chain"
+ * rather than "start from nothing", and it is correct only because the
+ * alternative loses money silently. See `exportAccount`.
+ */
+const SCAN_FROM_GENESIS = 0;
+
 export const api = {
   version: guarded('version', () =>
     done({
       version: HOST_VERSION,
-      kdf: nativeArgon2idInstalled() ? 'native' : 'engine',
+      /* What a derivation on this build would actually do, proved rather
+       * than assumed. Three answers, and the third one exists: see
+       * `kdfSource`. This used to report "native" whenever a host had left a
+       * function on the global, which is true of a build whose native calls
+       * all fail, and that is the build a tester most needs told about. */
+      kdf: kdfSource(),
       /* Reported rather than assumed. Without CryptoNight the vault still
        * signs and still computes key images on its own wire; the one thing
        * it cannot do is write the export file other Monero wallets read, and
@@ -485,7 +499,24 @@ export const api = {
   /** The watch-only export, as the frames to animate. */
   exportAccount: guarded('exportAccount', (chain: string) => {
     const open = requireSession();
-    const account = chain === 'xmr' ? moneroAccount(open.xmr) : bitcoinAccount(open.btc);
+    /* The restore height is stated rather than defaulted, and it is zero.
+     *
+     * `moneroAccount` defaults `when` to now, which is right for a wallet
+     * being made this second and wrong for every other case. A session knows
+     * nothing about when its vault was created: the sealed blob carries no
+     * timestamp, so `Date.now()` here means "the day somebody happened to
+     * press EXPORT". Stamp that into an export and the companion starts
+     * scanning past every block the wallet was ever paid in, and reports a
+     * balance of zero for a funded wallet with no error to explain it. For
+     * Monero that is indistinguishable from the coins being gone.
+     *
+     * Zero costs a long first scan and cannot lose a payment, which is the
+     * trade `restoreHeight` argues for in its own header and the one the
+     * companion already makes for a restored seed. When a vault learns its own
+     * creation date, pass it here; the guard in test/bridge.test.ts is there
+     * so that whoever wires a Monero export button has to decide rather than
+     * inherit today's date by omission. */
+    const account = chain === 'xmr' ? moneroAccount(open.xmr, 'mainnet', SCAN_FROM_GENESIS) : bitcoinAccount(open.btc);
     const frames = encodeParts('ACCOUNT' satisfies PayloadKind, encodeAccount(account));
 
     /* ## The other way to be paired with
@@ -1067,5 +1098,3 @@ export type HostApi = typeof api;
  * does not import one. The Swift side reads this name and nothing else.
  */
 (globalThis as unknown as { LabyrinthVault?: HostApi }).LabyrinthVault = api;
-
-export const SEAL_PARAMS_DEFAULT: KdfParams | null = null;

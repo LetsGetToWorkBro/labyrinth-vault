@@ -277,9 +277,61 @@ export const MAX_TXS_PER_REQUEST = 100;
 export const SCAN_COINBASE_NOTE =
   'Coinbase outputs are skipped unless coinbase scanning is turned on, because reading them costs one extra request per block.';
 
-/** The thing a view-only wallet cannot do, in the words the screens use. */
+/**
+ * The thing a view-only wallet cannot do, in the words the screens use.
+ *
+ * Two sentences rather than one, because this phone can now hold either kind
+ * of Monero account and the whole difference between them is where the spend
+ * key is. Telling a hot wallet its key "lives in the vault" names a device
+ * that person may not own; telling a paired account this phone will subtract
+ * its spends promises something that cannot happen here. Both are the same
+ * class of false statement as the custody copy the screens were audited for.
+ *
+ * They sit together, and `spendBlindness` is the only way to reach them, so
+ * that a caller has to say which account it is talking about and a reword of
+ * one is read next to the other. That is the reason `signingNote` is one
+ * function rather than two strings in two screens: the version of this that
+ * lived half in `core` and half in `Nodes.tsx` drifted within a week.
+ */
 export const SPEND_BLINDNESS =
   'A view key finds payments coming in. It cannot tell which of them you have already spent, because that needs the spend key, which lives in the vault. This total is what arrived, not what is left.';
+
+export const SPEND_BLINDNESS_HERE =
+  'A view key finds payments coming in. Working out which of them you have already spent needs the spend key, and for this account that key is on this phone, so the scan can subtract them itself. Until it has, this total is what arrived, not what is left.';
+
+/** Which of the two an account watched from `source` should be shown. */
+export function spendBlindness(source: MoneroSource): string {
+  return source === 'hot' ? SPEND_BLINDNESS_HERE : SPEND_BLINDNESS;
+}
+
+/**
+ * Where the keys for a watched Monero account are.
+ *
+ * Not a boolean, because `signsHere` is a question about a whole account and
+ * this is a question about one chain's spend key: a phone can hold a hot
+ * Bitcoin wallet and watch a vault's Monero at the same time. Every sentence
+ * that names a custody arrangement is derived from this and from nothing the
+ * screen decided for itself.
+ */
+export type MoneroSource = 'vault' | 'hot';
+
+/**
+ * The highest block that exists, from the length of the chain.
+ *
+ * monerod's `get_info.height` is a *count*, so the top block's index is one
+ * below it. A walk that treats the count as an index asks `get_block` for a
+ * block the node does not have, gets TOO_BIG_HEIGHT, and fails the whole pass:
+ * every refresh on a synced wallet then reports a node error, `caughtUp` can
+ * never become true, and the caveat keeps saying payments have not been looked
+ * for when they have. The conversion is one subtraction and it belongs at the
+ * boundary, once, which is why it has a name.
+ *
+ * The counterpart trap is in `moneroplan.ts`, where the chain *length* is the
+ * right number and this must not be applied. The comment there says why.
+ */
+export function topBlock(nodeHeight: number): number {
+  return Math.max(0, Math.floor(nodeHeight) - 1);
+}
 
 // ---------------------------------------------------------------------------
 // The walk
@@ -292,12 +344,16 @@ export const SPEND_BLINDNESS =
  * is what makes this resumable without bookkeeping: a failed request in the
  * middle of a block throws away that block's partial findings and leaves the
  * height pointing at it, so the next call redoes it whole.
+ *
+ * `topHeight` is the index of the highest block that exists, not the chain's
+ * length. Callers holding monerod's `get_info.height` pass it through
+ * `topBlock` first, because asking for one block past the end fails the pass.
  */
 export async function scan(
   transport: Transport,
   account: MoneroAccount,
   from: ScanState,
-  tip: number,
+  topHeight: number,
   options: ScanOptions = {},
 ): Promise<ScanOutcome> {
   const budget = Math.max(1, options.budget ?? DEFAULT_BUDGET);
@@ -320,12 +376,12 @@ export async function scan(
     /* Caught up means there is nothing left below the tip. A pass that stopped
      * because it ran out of budget is not caught up even though it did not
      * fail, and the screen shows those two states differently. */
-    caughtUp: problem === null && height > tip,
+    caughtUp: problem === null && height > topHeight,
   });
 
-  if (tip < height) return done(null);
+  if (topHeight < height) return done(null);
 
-  const last = Math.min(tip, height + budget - 1);
+  const last = Math.min(topHeight, height + budget - 1);
   while (height <= last) {
     if (options.stop?.()) return done(null);
 
@@ -341,8 +397,36 @@ export async function scan(
     const spendsInBlock: SpendEvent[] = [];
     for (let at = 0; at < hashes.length; at += MAX_TXS_PER_REQUEST) {
       requests += 1;
-      const batch = await transactions(transport, hashes.slice(at, at + MAX_TXS_PER_REQUEST));
-      if (!batch.ok) return done(batch.problem);
+      const wanted = hashes.slice(at, at + MAX_TXS_PER_REQUEST);
+      const batch = await transactions(transport, wanted);
+      /* The block, which `transactions()` has no way to know, joined to what
+       * it found wrong, which the scan has no way to know. A scan that stalls
+       * without saying where is a percentage that stopped climbing, and one
+       * that says where without saying why sends somebody to the wrong node. */
+      if (!batch.ok) {
+        return done(
+          `Block ${height} could not be read in full. ${batch.problem} The scan is staying on that block ` +
+          'rather than passing over a payment that may be in it.',
+        );
+      }
+      /* A short answer is not a finished block. monerod drops hashes it cannot
+       * serve into `missed_tx`, and `transactions()` drops any entry it cannot
+       * parse, so either way the reply can be missing a transaction that paid
+       * this wallet. Recording the block as walked would advance the height
+       * over it, and nothing in this app ever walks backwards, so the payment
+       * would be gone from the balance permanently and silently. Refusing here
+       * leaves the height on the block, which is the same resumption the
+       * failed-request path above already relies on. */
+      if (batch.value.length !== wanted.length) {
+        const answered = new Set(batch.value.map((tx) => tx.hash.toLowerCase()));
+        const missing = wanted.filter((hash) => !answered.has(hash.toLowerCase()));
+        return done(
+          `Block ${height} holds ${wanted.length} transactions and the node answered for ` +
+          `${batch.value.length}, leaving out ${missing[0] ?? 'one of them'}. The scan is ` +
+          'staying on that block rather than passing over a payment that may be in it. ' +
+          'Refresh to ask again, or set a different Monero node.',
+        );
+      }
       for (const tx of batch.value) {
         inBlock.push(...scanOne(account, tx, height, block.value.timestamp));
         if (options.watch?.size) {
@@ -558,8 +642,8 @@ export function toSpendable(
  * is not one percent synced and saying so would tell somebody to expect hours
  * of work that is really a minute.
  */
-export function progressFraction(state: ScanState, tip: number): number {
-  const span = tip - state.birth;
+export function progressFraction(state: ScanState, topHeight: number): number {
+  const span = topHeight - state.birth;
   if (span <= 0) return 1;
   const walked = Math.min(Math.max(state.height - state.birth, 0), span);
   return walked / span;

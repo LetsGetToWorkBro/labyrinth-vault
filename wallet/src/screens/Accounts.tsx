@@ -117,6 +117,18 @@ export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
  * The chains are chips rather than prose because a person scanning this list
  * is looking for "where is my Monero", and the signing note is the loud half
  * of the row for the reason the whole screen exists.
+ *
+ * ## Two controls, side by side rather than one inside the other
+ *
+ * The link used to be a `Press` nested inside the row's `Press`. That reads
+ * fine and is unreachable: the outer pressable becomes an accessibility
+ * container, and an element inside a container is not reliably focusable, so
+ * the only way to a vault's own screen or to the recovery words was a gesture
+ * VoiceOver would not offer. They are siblings now, which costs nothing
+ * visually because the row was never drawing a box around itself.
+ *
+ * Both carry an explicit label, because neither one's text is the action: the
+ * row's loud text is an account name, and the link's is a destination.
  */
 function AccountRow({
   account,
@@ -129,39 +141,51 @@ function AccountRow({
   onPress: () => void;
   onOpen: () => void;
 }) {
+  const destination = account.source === 'vault' ? 'THE VAULT' : 'THE RECOVERY WORDS';
+
   return (
-    <Press onPress={onPress}>
-      <View style={{ paddingVertical: space.gap, gap: space.snug }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.step }}>
-          <Strong style={{ flex: 1 }}>{account.label}</Strong>
-          <Label tone={account.signsHere ? color.warn : color.good}>{signingNote(account)}</Label>
-        </View>
-        {looking ? <Label tone={color.bone}>LOOKING AT THIS ONE</Label> : null}
-        <View style={{ flexDirection: 'row', gap: space.snug }}>
-          {account.chains.map((chain) => (
-            <Chip key={chain} tone={assetColor(chain)}>
-              {chain}
-            </Chip>
-          ))}
-        </View>
-        {account.source === 'hot' ? (
-          <Small tone={color.dim}>
-            The words that restore this are the only backup of it. Tap to read them.
-          </Small>
-        ) : (
-          <Small tone={color.dim}>
-            Paired from a vault. This phone holds the watching half and nothing that can spend.
-          </Small>
-        )}
-        <Press onPress={onOpen} weight="none">
-          <View style={{ paddingTop: space.snug }}>
-            <Label tone={color.slate}>
-              {account.source === 'vault' ? 'THE VAULT' : 'THE RECOVERY WORDS'}
-            </Label>
+    <View>
+      <Press
+        onPress={onPress}
+        label={`Look at ${account.label}, ${signingNote(account).toLowerCase()}${
+          looking ? ', currently selected' : ''
+        }`}
+      >
+        <View style={{ paddingVertical: space.gap, gap: space.snug }}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.step }}>
+            <Strong style={{ flex: 1 }}>{account.label}</Strong>
+            <Label tone={account.signsHere ? color.warn : color.good}>{signingNote(account)}</Label>
           </View>
-        </Press>
-      </View>
+          {looking ? <Label tone={color.bone}>LOOKING AT THIS ONE</Label> : null}
+          <View style={{ flexDirection: 'row', gap: space.snug }}>
+            {account.chains.map((chain) => (
+              <Chip key={chain} tone={assetColor(chain)}>
+                {chain}
+              </Chip>
+            ))}
+          </View>
+          {account.source === 'hot' ? (
+            <Small tone={color.dim}>
+              The words that restore this are the only backup of it. Open it to read them.
+            </Small>
+          ) : (
+            <Small tone={color.dim}>
+              Paired from a vault. This phone holds the watching half and nothing that can spend.
+            </Small>
+          )}
+        </View>
+      </Press>
+      <Press
+        onPress={onOpen}
+        weight="none"
+        role="link"
+        label={`${destination} for ${account.label}`}
+      >
+        <View style={{ paddingBottom: space.gap }}>
+          <Label tone={color.slate}>{destination}</Label>
+        </View>
+      </Press>
       <Rule />
-    </Press>
+    </View>
   );
 }

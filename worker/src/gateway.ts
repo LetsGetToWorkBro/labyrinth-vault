@@ -149,8 +149,20 @@ export function openEncapsulated(keys: GatewayKey[], body: Uint8Array, origin: s
    * destination. Only its path and method are used, against this Worker's own
    * origin, so an encapsulated request cannot be a way to make the gateway
    * fetch somewhere of the sender's choosing. The relay in front of it is not
-   * a party this design trusts, and neither is whoever wrote the plaintext. */
+   * a party this design trusts, and neither is whoever wrote the plaintext.
+   *
+   * Handing the base to `new URL` does not accomplish that on its own, which
+   * is the trap: WHATWG throws the base away the moment the first argument
+   * parses as absolute, so `https://evil.example/v1/quote` in the plaintext
+   * would come back out as that origin. For a special scheme a backslash is
+   * also a slash, so `/\evil.example` is `//evil.example` by the time the
+   * parser is done with it. The path is therefore checked for the shape of a
+   * path before it is joined, the same rule `nodes.ts` applies to the host
+   * relay's path, and the origin is compared afterwards so the guarantee is
+   * a comparison rather than a list of the tricks somebody thought of. */
+  if (!inner.path.startsWith('/') || /^[/\\]/.test(inner.path.slice(1))) throw new Error('not a path');
   const url = new URL(inner.path, origin);
+  if (url.origin !== new URL(origin).origin) throw new Error('not a path');
   const headers = new Headers();
   for (const [name, value] of inner.headers) {
     /* Hop-by-hop and length fields belong to the outer connection, not to a

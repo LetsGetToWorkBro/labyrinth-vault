@@ -159,17 +159,47 @@ describe('a wallet with no chain behind it says so, everywhere it shows a number
 
   it('says what is remembered, and lists nothing more than is', () => {
     /* The claim on the screen and the code behind it have to agree, and the
-     * failure that matters is the screen understating what it keeps. */
-    expect(nodes).toMatch(/WHAT IS REMEMBERED/);
-    expect(nodes).toMatch(/No keys and no payment history/);
+     * failure that matters is the screen understating what it keeps.
+     *
+     * It understated it for the whole of the hot-spending work. This assertion
+     * used to require the sentence "No keys and no payment history", pinning it
+     * in place on a build whose keychain holds a seed, and this test's own
+     * comment named the failure it was letting through. So the requirement is
+     * inverted: the denial is forbidden, and the screen has to name the
+     * keychain wherever a seed is actually in it. */
+    const code = codeOnly(nodes);
+    expect(code).toMatch(/WHAT IS REMEMBERED/);
+    expect(code, 'the screen denies holding keys again').not.toMatch(/No keys and/);
+    expect(code).toMatch(/store\.hot === null \? null :/);
+    expect(code).toMatch(/keychain/);
     const persisted = readFileSync('src/state/persist.ts', 'utf8');
     expect(persisted).toMatch(/nodes: \{ btc: NodeConfig \| null; xmr: NodeConfig \| null \}/);
     expect(persisted).toMatch(/moneroScans: Record<string, ScanPosition>/);
     expect(persisted).toMatch(/height: number;\n  birth: number;/);
   });
 
-  it('offers a way to throw the stored file away', () => {
-    expect(nodes).toMatch(/FORGET EVERYTHING STORED/);
+  it('offers a way to throw the stored file away, named for what it throws away', () => {
+    /* FORGET EVERYTHING STORED cleared the node file and neither keychain
+     * item, one notice below a claim that no keys were kept. Two wrong things
+     * agreeing: a person reading both would conclude they had wiped a phone
+     * they had not. A button is allowed to promise only what it does. */
+    const code = codeOnly(nodes);
+    expect(code).toMatch(/FORGET THE NODES AND THE SCAN/);
+    expect(code, 'a button that clears two of four things may not say everything').not.toMatch(
+      /FORGET EVERYTHING STORED/,
+    );
+  });
+
+  it('has one control that actually forgets the keys, and says what that costs', () => {
+    /* W-H12. `forgetHotKeys` was written, documented, exported and called by
+     * nothing, while two screens told people to use it. A store function with
+     * no caller is not a feature, and a refusal naming one is a dead end. */
+    const security = codeOnly(readFileSync('src/screens/Vault.tsx', 'utf8'));
+    expect(security).toMatch(/forgetHotKeys\(\)/);
+    /* Two taps, with the cost between them. A single destructive tap on the
+     * only copy of a spending key is the one place this app should be slow. */
+    expect(security).toMatch(/THE WORDS ARE THE ONLY WAY BACK/);
+    expect(security).toMatch(/setAsking\(true\)/);
   });
 
   it('says what a view key cannot see, on the screen that shows the number', () => {
@@ -177,7 +207,11 @@ describe('a wallet with no chain behind it says so, everywhere it shows a number
      * a received total under the word BALANCE would tell somebody who has
      * spent money that they still have it. */
     const watcher = readFileSync('src/core/watcher.ts', 'utf8');
-    expect(watcher).toMatch(/SPEND_BLINDNESS/);
+    /* Through the selector, because there are two of these sentences now and
+     * the whole point of the pair is that a caller has to say which account
+     * it is talking about. A watcher that reached for either constant
+     * directly would be one that had stopped asking. */
+    expect(watcher).toMatch(/spendBlindness\(source\)/);
     const home = readFileSync('src/screens/Home.tsx', 'utf8');
     expect(home).toMatch(/monero\.caveat/);
     const asset = readFileSync('src/screens/Asset.tsx', 'utf8');

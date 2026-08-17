@@ -44,9 +44,17 @@ final class Engine {
 
     private let context: JSContext
     private let api: JSValue
-    /// Whether the engine adopted the native derivation at boot. Surfaced on
+    /// Which Argon2id a derivation on this build actually runs. Surfaced on
     /// the Settings screen next to the bundle digest.
-    private(set) var kdfIsNative = false
+    ///
+    /// Three states rather than two, because the engine reports three and the
+    /// one this used to lose is the one that matters. `mismatch` means a host
+    /// derivation is installed, `deriveKey` will use it because the length is
+    /// right, and it is not Argon2id: a vault sealed on that build opens on
+    /// that build and nowhere else. Collapsed into a boolean it rendered as
+    /// INTERPRETED, which describes the slow-but-correct build and understates
+    /// this one by the whole of the difference.
+    private(set) var kdfSource: KdfSource = .engine
     /// Whether the vendored CryptoNight reached the engine. False means the
     /// Monero key-image export other wallets read cannot be produced, and the
     /// engine refuses it rather than encrypting under a substitute.
@@ -156,7 +164,7 @@ final class Engine {
          * failed to install still works — it is the app people have been using
          * — it is just a minute slower per unlock, and that is a difference
          * worth being able to see rather than guess at. */
-        self.kdfIsNative = version.kdf == "native"
+        self.kdfSource = KdfSource(reported: version.kdf)
         /* Same treatment: recorded, not enforced. A build without it signs and
          * computes key images exactly as before; the one thing it cannot do is
          * write the file Cake and Feather import, and the screen that offers

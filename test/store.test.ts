@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { codeOnly } from './support/source';
 
 const read = (path: string) => readFileSync(path, 'utf8').trim();
 
@@ -113,11 +114,39 @@ describe('the listings say what the code does', () => {
   });
 
   it('the wallet says its numbers are fixtures, in the listing and on screen', () => {
+    /* This guard read `Home.tsx` raw, and by the time anybody looked the only
+     * two occurrences of DEMO DATA in that file were a block comment and a JSX
+     * comment, both explaining that the chip had been deleted. It is the
+     * strip-comments-first failure running in the direction nobody checks for:
+     * green instead of red, a guard reporting that a notice is on a screen by
+     * reading the sentence that says it was taken off one.
+     *
+     * So the on-screen half is now asked of the screens as a set, over code,
+     * and it names where the notice ended up rather than where it used to be.
+     * The listing promises a person will be told when a number is a fixture;
+     * the check is that some screen still tells them. */
     const description = read('store/wallet/description.txt');
     expect(description).toMatch(/DEMO DATA/);
-    expect(description).toMatch(/no (chain client|node)/i);
-    // And the screen it promises says it too.
-    expect(readFileSync('wallet/src/screens/Home.tsx', 'utf8')).toMatch(/DEMO DATA/);
+
+    const screens = readdirSync('wallet/src/screens')
+      .filter((name) => name.endsWith('.tsx'))
+      .map((name) => ({ name, code: codeOnly(readFileSync(`wallet/src/screens/${name}`, 'utf8')) }));
+    expect(screens.length, 'the screens directory moved').toBeGreaterThan(5);
+
+    const showing = screens.filter((screen) => /DEMO DATA/.test(screen.code)).map((s) => s.name);
+    expect(showing, 'the listing promises a DEMO DATA notice and no screen renders one').not.toEqual([]);
+  });
+
+  it('a wallet watching nothing says so rather than dressing a fixture up as a balance', () => {
+    /* The other half of the same decision, and the reason the chip left. A
+     * warning label over a balance loses to the balance, and a screenshot of
+     * the pair is indistinguishable from a screenshot of money. Home now
+     * returns early into its own screen. If that early return goes and a
+     * fixture comes back to the hero, the listing's account of what a person
+     * sees before they set a node is wrong again. */
+    const home = codeOnly(readFileSync('wallet/src/screens/Home.tsx', 'utf8'));
+    expect(home, 'Home no longer branches on watching nothing').toMatch(/watchingNothing\(/);
+    expect(home, 'the empty state screen is gone from Home').toMatch(/<NothingYet\b/);
   });
 
   it('the wallet claims a Monero scan only while the scanner exists', () => {
@@ -286,10 +315,33 @@ describe('the listings say what the code does', () => {
   });
 
   it('neither listing promises something the other app does', () => {
-    /* They are two apps and they will be read side by side. The vault holds
-     * keys and the wallet does not, and that is the sentence a person needs
-     * to come away with. */
-    expect(read('store/wallet/description.txt')).toMatch(/never seen a private key/i);
+    /* They are two apps and they will be read side by side, and this guard
+     * spent the hot-spending work pointing the wrong way.
+     *
+     * It required the wallet's listing to say it had "never seen a private
+     * key". That sentence stopped being true when `keyvault.ts` started
+     * storing an `xmrSeed` and a `btcMnemonic` and `Restore.tsx` became the
+     * screen that accepts one. The suite therefore failed for anybody who
+     * corrected the copy and passed while the copy was false, about a document
+     * rendered to labyrinthwallet.com/privacy and handed to App Store Connect.
+     * A guard that has to be defeated to tell the truth is worse than no
+     * guard.
+     *
+     * What is true is the distinction, not the denial: a vault-paired account
+     * is watch-only on the phone forever, an account made on the phone keeps
+     * its seed in the keychain, and the vault does not watch the chain. So the
+     * listing has to draw that line, and it may not redraw the old one. */
+    const wallet = read('store/wallet/description.txt');
+    expect(wallet, 'the wallet listing does not say a paired account is watch-only').toMatch(
+      /watch-only here, forever|watch-only[^.]{0,40}forever/i,
+    );
+    expect(wallet, 'the wallet listing does not admit a seed is kept on the phone').toMatch(
+      /recovery phrase is kept|keychain/i,
+    );
+    expect(
+      wallet,
+      'the wallet listing is denying it holds a key again; it holds one, and two federal filings say so',
+    ).not.toMatch(/never seen a private key|holds no (private )?keys?\b|no seed phrase/i);
     expect(read('store/vault/description.txt')).toMatch(/does not watch the chain/i);
   });
 });
@@ -390,17 +442,37 @@ describe('the export self-classification report is shaped the way the regulation
     }
   });
 
-  it('says the same thing about encryption that the app tells Apple', () => {
-    /* The Info.plist answers Apple's export question and this file answers
-     * BIS's. They are the same claim made to two agencies, and the way they
-     * come apart is that one of them gets revised. The vault says yes and is
-     * listed here as mass market; the wallet says no and is deliberately not
-     * listed at all. */
-    const project = read('ios/project.yml');
-    expect(project).toMatch(/ITSAppUsesNonExemptEncryption:\s*true/);
+  it('says the same thing about encryption that the apps tell Apple', () => {
+    /* This guard was two sentences of stale comment over an assertion that
+     * could only ever pass.
+     *
+     * It read `ios/project.yml` raw and required
+     * `ITSAppUsesNonExemptEncryption: true` to be in it. That key has not been
+     * in the manifest for some time: it is quoted inside the `#` block
+     * explaining why it was taken out, after four uploads were rejected
+     * against it. So the only thing satisfying this assertion was the prose
+     * about its own removal, and rewording that paragraph would have failed a
+     * test about a federal filing. `test/shipping.test.ts` holds the manifest
+     * half correctly, over stripped comments and in the other direction.
+     *
+     * The comment was stale in the other direction too: it said the wallet
+     * "is deliberately not listed at all", which stopped being true when the
+     * companion started storing a seed and grew its own row.
+     *
+     * What is left here is the half this file can actually check: both apps
+     * hold key material, so both are in the report, and every row claims mass
+     * market. */
     const named = rows.map((row) => row[0]);
     expect(named, 'the vault is not in the report it is the reason for').toContain('Labyrinth Vault');
+    expect(named, 'the companion stores a seed and is not in the report').toContain('Labyrinth Wallet');
     expect(rows.every((row) => row[4] === 'MMKT'), 'a row claims something other than mass market').toBe(true);
+
+    /* And the manifest guard this one used to duplicate badly still exists,
+     * so deleting it does not silently leave the plist unchecked. */
+    expect(
+      readFileSync('test/shipping.test.ts', 'utf8'),
+      'nothing checks the export compliance key in the manifest any more',
+    ).toMatch(/ITSAppUsesNonExemptEncryption/);
   });
 
   it('does not claim to be filed while it still has blanks in it', () => {

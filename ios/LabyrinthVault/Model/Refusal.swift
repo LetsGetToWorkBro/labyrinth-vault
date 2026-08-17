@@ -49,6 +49,17 @@ enum Refusal: Equatable {
     case moneroFile
     /// The approval digest or wallet check in `signPsbt`.
     case digestMismatch
+    /// The signer threw with a sentence rather than a code.
+    ///
+    /// It exists because the alternative was worse: both signing paths used to
+    /// end in a bare `catch` that routed every engine failure to
+    /// `digestMismatch`, which threw the engine's own words away and put a
+    /// specific, false accusation in their place. `foreign-input` is the
+    /// reachable one, since it is deliberately not fatal at describe time, so
+    /// a PSBT with no input belonging to this vault was reported as bytes that
+    /// changed between two screens, with advice ("scan it again") that can
+    /// never work.
+    case engineRefused(String)
     /// A fatal code this build does not have a case for. Refuses anyway.
     case unrecognised(String)
 
@@ -82,6 +93,7 @@ enum Refusal: Equatable {
         case .unreadable: ["CANNOT", "READ", "TRANSACTION"]
         case .moneroFile: ["NOT SIGNED", "FROM A FILE"]
         case .digestMismatch: ["CANNOT", "SIGN"]
+        case .engineRefused: ["SIGNER", "STOPPED"]
         case .unrecognised: ["CANNOT", "SIGN"]
         }
     }
@@ -96,6 +108,7 @@ enum Refusal: Equatable {
         case .unreadable: ["THESE BYTES ARE NOT", "A TRANSACTION THIS", "DEVICE CAN READ."]
         case .moneroFile: ["THIS IS A MONERO", "WALLET FILE, AND A", "SIGNER CANNOT USE ONE."]
         case .digestMismatch: ["TRANSACTION DIGEST", "DOES NOT MATCH", "APPROVED SUMMARY."]
+        case .engineRefused: ["THE SIGNER STOPPED", "AND SAID WHY.", "ITS WORDS FOLLOW."]
         case .unrecognised: ["THE READER REFUSED", "FOR A REASON THIS", "SCREEN CANNOT NAME."]
         }
     }
@@ -140,32 +153,72 @@ enum Refusal: Equatable {
             "The bytes in front of the signer are not the bytes that were reviewed on the " +
             "previous screen. Whatever happened between the two steps, a signature over " +
             "something nobody read is not going to be produced."
+        case .engineRefused(let why):
+            "The signer stopped before producing a signature, and these are its own words: " +
+            "\(why) Nothing was changed. The reader had already accepted these bytes, so " +
+            "what went wrong is in what the signing step was asked to do rather than in " +
+            "the transaction being unreadable, and scanning it again will do the same thing."
         case .unrecognised(let code):
             "The transaction reader refused this with a condition (\(code)) that this version of " +
             "the screen has no words for. It is still a refusal: an unrecognized reason to stop is " +
             "a reason to stop. Update the app."
         }
     }
+
+    /// The attestation rows under the explanation.
+    ///
+    /// ## Nothing here may name a number this enum did not see
+    ///
+    /// These rows used to number the offending input and output, and the
+    /// digest screen used to print a pair of eight-character digests as if it
+    /// had compared them. Every one of those was invented. The positions
+    /// belong to no transaction; the approved digest was the leading
+    /// characters of the demo fixture in Vault.swift, and the presented one
+    /// matched nothing that has ever existed. (Deliberately not quoted here:
+    /// a guard that fails on hex in this file would otherwise fail on the
+    /// paragraph explaining why there is none.)
+    ///
+    /// It matters more here than it would anywhere else in the app, because
+    /// this is the screen where the training gets used. `Review.swift` prints
+    /// the digest in full under "The signature will be taken over these bytes
+    /// and no others" and `Signed.swift` prints its first eight characters, so
+    /// a person arriving here has been taught to compare exactly these strings
+    /// and has no way to know that this pair is scenery. A refusal screen that
+    /// states one false fact costs the true ones their standing.
+    ///
+    /// So the rows say what the case itself knows and no more. `Refusal` is
+    /// constructed from a code or from nothing at all: it never receives the
+    /// transaction, so it cannot honestly count inputs, number outputs or
+    /// quote a digest, and the wording is general because the knowledge is.
+    /// The only rows that print a specific string are the ones on a case that
+    /// carries it: `unrecognised` prints the code it was handed, and
+    /// `engineRefused` leaves its sentence to `detail`, where a paragraph
+    /// belongs.
+    ///
+    /// Keep a row under about forty characters. `Attestation` sets no line
+    /// limit and no `fixedSize`, so a longer row inside its `HStack` truncates
+    /// rather than wraps, and the only machine that can see that is a phone.
+    /// Thirty-nine is what shipped and rendered; that is the budget.
     var findings: [(String, Bool)] {
         switch self {
         case .changeMismatch: [
-            ("OUTPUT 1 CLAIMED AS CHANGE", false),
+            ("AN OUTPUT CLAIMS TO BE YOUR CHANGE", false),
             ("RE-DERIVED SCRIPT DIFFERS", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .unknowableFee: [
-            ("INPUT 2 · PREVIOUS OUTPUT MISSING", false),
+            ("AN INPUT'S PREVIOUS OUTPUT IS MISSING", false),
             ("FEE NOT COMPUTABLE", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .sighashFlags: [
-            ("INPUT 1 · SIGHASH NOT ALL", false),
+            ("AN INPUT'S SIGHASH IS NOT ALL", false),
             ("SIGNATURE WOULD NOT BIND OUTPUTS", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .duplicateInput: [
-            ("INPUT 2 REPEATS INPUT 1", false),
+            ("ONE COIN APPEARS AS TWO INPUTS", false),
             ("STATED TOTALS EXCEED REALITY", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .opaqueOutput: [
-            ("OUTPUT 1 · SCRIPT DECODES TO NO ADDRESS", false),
+            ("A SCRIPT DECODES TO NO ADDRESS", false),
             ("DESTINATION NOT REVIEWABLE", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .noKeys: [
@@ -181,8 +234,15 @@ enum Refusal: Equatable {
             ("FILE DESCRIBES ITSELF · NOT CHECKABLE", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .digestMismatch: [
-            ("APPROVED SUMMARY DIGEST 9F2A1C04", false),
-            ("PRESENTED BYTES DIGEST 71D3E80B", false),
+            ("APPROVED AND PRESENTED DIGESTS DIFFER", false),
+            ("NEITHER SET OF BYTES WAS SIGNED", false),
+            ("NO SIGNATURE PRODUCED", true)]
+        case .engineRefused: [
+            /* No fourth row quoting the sentence. It is already printed in
+             * full above, and an attestation is a short fact rather than a
+             * second copy of the paragraph. */
+            ("THE READER ACCEPTED THESE BYTES", true),
+            ("THE SIGNER REFUSED, IN ITS WORDS ABOVE", false),
             ("NO SIGNATURE PRODUCED", true)]
         case .unrecognised(let code): [
             ("READER REFUSED: \(code.uppercased())", false),

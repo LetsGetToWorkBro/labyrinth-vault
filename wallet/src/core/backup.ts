@@ -174,6 +174,24 @@ export function creationHint(state: Creation): string {
 // ----------------------------------------------------------------- restoring
 
 /**
+ * Whether this restore overwrites key material that is already here.
+ *
+ * A predicate rather than a sentence, because the screen needs the fact and
+ * not the prose. `Restore.tsx` decided how loud to be by reading its own
+ * warning back: `effect.includes('replaces')`. That makes the tone of the only
+ * destructive control in the flow depend on the wording of a sentence in this
+ * file, so rewording it, which is a copy edit, silently downgrades the warning
+ * in front of somebody about to overwrite a seed.
+ *
+ * `restoreEffect` asks this too, so the two cannot disagree about which case
+ * is the dangerous one.
+ */
+export function restoreReplacesKeys(existing: HotRecord | null, chain: 'xmr' | 'btc'): boolean {
+  if (existing === null) return false;
+  return (chain === 'xmr' ? existing.xmrSeed : existing.btcMnemonic) !== null;
+}
+
+/**
  * What a restore is about to do to what is already stored.
  *
  * Read before the restore rather than reported after it, because the case that
@@ -189,12 +207,11 @@ export function restoreEffect(existing: HotRecord | null, chain: 'xmr' | 'btc'):
       : 'This phone holds no spending keys. It will hold a Bitcoin wallet.';
   }
 
-  const held = chain === 'xmr' ? existing.xmrSeed : existing.btcMnemonic;
   const other = chain === 'xmr' ? existing.btcMnemonic : existing.xmrSeed;
   const thisChain = chain === 'xmr' ? 'Monero' : 'Bitcoin';
   const otherChain = chain === 'xmr' ? 'Bitcoin' : 'Monero';
 
-  if (held !== null) {
+  if (restoreReplacesKeys(existing, chain)) {
     /* The one genuinely destructive case in this flow, and the only place this
      * app overwrites key material. Naming the chain twice is deliberate: a
      * person who misread which phrase they pasted needs the sentence to

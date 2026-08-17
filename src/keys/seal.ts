@@ -197,11 +197,70 @@ let nativeArgon2id: NativeArgon2id | null = null;
  */
 export function setNativeArgon2id(fn: NativeArgon2id | null): void {
   nativeArgon2id = typeof fn === 'function' ? fn : null;
+  measuredKdfSource = null;
 }
 
-/** Whether a derivation right now would go native. For the version reply. */
+/** Whether a host left a derivation here. Not whether it works: see `kdfSource`. */
 export function nativeArgon2idInstalled(): boolean {
   return nativeArgon2id !== null;
+}
+
+/**
+ * Which Argon2id a derivation on this build actually runs, and whether it is
+ * the right one.
+ *
+ *   - `native`: a host derivation is installed and it produced the same bytes
+ *     as the engine's for a reference input. Fast, and the blobs it seals open
+ *     anywhere.
+ *   - `engine`: nothing is installed, or what is installed declined. Either
+ *     way the JavaScript runs, which is correct and, on a phone with no JIT,
+ *     about a minute a derivation.
+ *   - `mismatch`: a host derivation is installed, `deriveKey` will use it
+ *     because the length is right, and it is not Argon2id. A vault sealed here
+ *     opens on this build and nowhere else. Nothing in this file can tell that
+ *     from the outside at seal time, so it is reported.
+ *
+ * This replaces "is one installed", which was the question the version reply
+ * used to ask. A build where every `try? Argon2id.deriveKey` returns nil
+ * answered "native" to that question while running the JavaScript, which
+ * inverts the one diagnostic docs/handoff.md hands a tester.
+ *
+ * The probe runs at m=8 KiB rather than the vault's 8 MiB floor. The floor is
+ * policy about what a *vault* may be sealed with; this seals nothing, and the
+ * reference C and the Swift wrapper both accept 8 KiB, so a host that answers
+ * at all answers here. Memoized, because the JavaScript half of the comparison
+ * is the thing that costs, and cleared whenever the seam is reinstalled.
+ */
+export type KdfSource = 'native' | 'engine' | 'mismatch';
+
+let measuredKdfSource: KdfSource | null = null;
+
+export function kdfSource(): KdfSource {
+  if (measuredKdfSource) return measuredKdfSource;
+  measuredKdfSource = (() => {
+    if (!nativeArgon2id) return 'engine';
+    const probeParams: KdfParams = { t: 1, m: 8, p: 1 };
+    const probePass = new TextEncoder().encode('labyrinth kdf probe');
+    const probeSalt = new Uint8Array(SALT_BYTES).map((_, i) => (i * 17 + 5) & 0xff);
+    let theirs: Uint8Array | null | undefined;
+    try {
+      theirs = nativeArgon2id(probePass, probeSalt, probeParams, KEY_BYTES);
+    } catch {
+      /* Caught here and nowhere else in this file. `deriveKey` does not wrap
+       * its call, so a host that throws turns a seal into a refusal from the
+       * bridge's outer net rather than into a fallback. That is a real build
+       * fault and not this function's to fix; what it can honestly say is
+       * which derivation would produce the bytes, and the answer is the
+       * JavaScript one. */
+      return 'engine';
+    }
+    if (!(theirs instanceof Uint8Array) || theirs.length !== KEY_BYTES) return 'engine';
+    const ours = argon2id(probePass, probeSalt, { ...probeParams, dkLen: KEY_BYTES });
+    let diff = 0;
+    for (let i = 0; i < KEY_BYTES; i++) diff |= theirs[i]! ^ ours[i]!;
+    return diff === 0 ? 'native' : 'mismatch';
+  })();
+  return measuredKdfSource;
 }
 
 function deriveKey(passphrase: Uint8Array, salt: Uint8Array, params: KdfParams): Uint8Array {

@@ -70,6 +70,12 @@ function payment(amount: bigint, tag: number): { hash: string; json: string } {
 
 interface Chain {
   blocks: Record<number, { hash: string; json: string }[]>;
+  /**
+   * The highest block this chain has. `get_info` reports `tip + 1`, because
+   * monerod answers with the chain's length, and `get_block` above `tip` fails
+   * the way a real node fails. A walk that took the reported height for an
+   * index would ask for a block past the end, which is what these tests catch.
+   */
   tip: number;
   /** Heights whose `get_block` fails, for the mid-walk failure case. */
   broken?: number[];
@@ -93,7 +99,7 @@ function fakeNode(chain: Chain): Transport & { blocksAsked: number[] } {
         return {
           ok: true, status: 200,
           text: JSON.stringify({ id: '0', jsonrpc: '2.0', result: {
-            height: chain.tip, target_height: 0, synchronized: true,
+            height: chain.tip + 1, target_height: 0, synchronized: true,
             mainnet: true, nettype: 'mainnet', status: 'OK' } }),
         };
       }
@@ -103,6 +109,13 @@ function fakeNode(chain: Chain): Transport & { blocksAsked: number[] } {
         blocksAsked.push(height);
         if (chain.broken?.includes(height)) {
           return { ok: false, status: 500, problem: 'the node fell over' };
+        }
+        if (height > chain.tip) {
+          return {
+            ok: true, status: 200,
+            text: JSON.stringify({ id: '0', jsonrpc: '2.0',
+              error: { code: -2, message: 'Requested block height: too big.' } }),
+          };
         }
         return {
           ok: true, status: 200,
@@ -277,7 +290,10 @@ describe('finding coins to spend', () => {
       from: 0, budget: 50, onProgress: (p) => seen.push(p.height),
     });
     expect(seen.length).toBeGreaterThan(1);
-    expect(seen[seen.length - 1]).toBe(250);
+    /* One past the top block, not the top block: a scan position is the next
+     * block to walk, and this walk finished. Reporting 250 here would mean
+     * block 250 was still owed, and the loop would keep asking for it. */
+    expect(seen[seen.length - 1]).toBe(251);
   });
 
   it('has a ceiling that is generous rather than tight', () => {

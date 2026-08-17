@@ -25,6 +25,7 @@ import {
   withChecksum,
 } from '../src/keys/descriptor';
 import { ZPUB_VERSIONS, openFromMnemonic } from '../src/keys/bitcoin';
+import { codeOnly } from './support/source';
 
 const fixture: {
   mnemonic: string;
@@ -140,10 +141,10 @@ describe('the vault’s own descriptors', () => {
      * in the course of explaining why it will not emit one, which is exactly
      * the sentence a reader needs and exactly the sentence a naive grep
      * mistakes for the thing itself. */
-    const code = readFileSync('src/keys/descriptor.ts', 'utf8')
-      .split('\n')
-      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
-      .join('\n');
+    /* `codeOnly` rather than a line filter written here: a line filter drops
+     * lines that *start* with a comment marker and keeps a comment that starts
+     * after code, which is the half of the problem that bites later. */
+    const code = codeOnly(readFileSync('src/keys/descriptor.ts', 'utf8'));
     expect(code).not.toMatch(/sortedmulti|\bmulti\(/);
     const made = bip84Descriptors(wallet.zpub, ZPUB_VERSIONS, wallet.masterFingerprint)!;
     for (const d of Object.values(made)) expect(d.startsWith('wpkh(')).toBe(true);

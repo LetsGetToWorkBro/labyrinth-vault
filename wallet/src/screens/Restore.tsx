@@ -43,7 +43,7 @@ import { Header } from '../components/chrome';
 import { color, radius, space } from '../design/tokens';
 import { useStore } from '../state/store';
 import { readPhrase, withRestored } from '../core/keyvault';
-import { restoreEffect } from '../core/backup';
+import { restoreEffect, restoreReplacesKeys } from '../core/backup';
 import type { Nav } from '../nav/routes';
 
 export function RestoreScreen({ navigation }: Nav<'Restore'>) {
@@ -64,6 +64,12 @@ export function RestoreScreen({ navigation }: Nav<'Restore'>) {
   const reading = useMemo(() => (text.trim() === '' ? null : readPhrase(text)), [text]);
 
   const effect = reading?.ok === true ? restoreEffect(hot, reading.chain) : null;
+  /* Whether this restore overwrites key material, asked of the function that
+   * decides it rather than read out of the sentence it wrote. The tone of the
+   * one destructive action in this flow used to be `effect.includes('replaces')`,
+   * so rewording a sentence in `core/backup.ts` silently downgraded the
+   * warning on the only screen in the app that overwrites a seed. */
+  const destructive = reading?.ok === true && restoreReplacesKeys(hot, reading.chain);
 
   const restore = async () => {
     if (reading === null || !reading.ok) return;
@@ -155,7 +161,7 @@ export function RestoreScreen({ navigation }: Nav<'Restore'>) {
             </Notice>
           ) : null}
           {effect !== null ? (
-            <Notice tone={effect.includes('replaces') ? 'warn' : 'plain'} title="WHAT THIS WILL DO">
+            <Notice tone={destructive ? 'warn' : 'plain'} title="WHAT THIS WILL DO">
               {effect}
             </Notice>
           ) : null}

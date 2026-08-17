@@ -63,6 +63,17 @@ export function ScanScreen({ navigation, route }: Nav<'Scan'>) {
        * landing in the recipient field looking like one. */
       if (purpose === 'address' && formatOf(data) === null) {
         const read = readPaymentUri(data);
+        /* A code this wallet cannot honor is named, not reduced to "Enter or
+         * scan a destination." A `monero:` URI carrying a loose payment ID is
+         * the case: the address it hands back is deliberately empty, and
+         * without this branch the camera refuses it with a sentence about an
+         * empty field rather than the one that says to ask for an integrated
+         * address instead. */
+        if (read.problem) {
+          refused();
+          setProblem(read.problem);
+          return;
+        }
         const verdict = checkAddress(read.address, store.asset);
         if (!verdict.ok) {
           refused();

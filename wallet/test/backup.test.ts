@@ -28,6 +28,7 @@ import {
   mayKeep,
   phrasesFor,
   restoreEffect,
+  restoreReplacesKeys,
   wordCount,
   type Creation,
   type CreationEvent,
@@ -276,6 +277,38 @@ describe('what a restore is about to do', () => {
       expect(restoreEffect(existing, 'btc')).toMatch(/Bitcoin/);
     }
   });
+
+  it('answers "is this destructive" as a fact rather than as prose', () => {
+    /*
+     * `Restore.tsx` decided how loud to be by reading the warning back:
+     * `effect.includes('replaces')`. That makes the tone of the only
+     * destructive control in the flow depend on the wording of a sentence in
+     * another file, so a copy edit silently downgrades the warning in front of
+     * somebody about to overwrite a seed. The screen asks this instead.
+     *
+     * The two must agree, so they are checked against each other across the
+     * whole matrix rather than asserted separately: a predicate that drifts
+     * from the sentence is the same defect with an extra step.
+     */
+    const shapes: (HotRecord | null)[] = [
+      null,
+      record,
+      { ...record, xmrSeed: null },
+      { ...record, btcMnemonic: null },
+    ];
+    let destructive = 0;
+    for (const existing of shapes) {
+      for (const chain of ['xmr', 'btc'] as const) {
+        const replaces = restoreReplacesKeys(existing, chain);
+        if (replaces) destructive += 1;
+        expect(restoreEffect(existing, chain).includes('replaces'), `${chain} over ${JSON.stringify(existing?.xmrSeed)}`).toBe(replaces);
+      }
+    }
+    /* Both answers are really produced by this matrix. A predicate that
+     * returned false everywhere would agree with a sentence that never says
+     * "replaces", and the pair would pass while saying nothing. */
+    expect(destructive).toBe(4);
+  });
 });
 
 /*
@@ -394,7 +427,13 @@ describe('the screens that show and take a phrase', () => {
     /* This screen's strongest sentence was true until there was a key store,
      * and a security screen that keeps printing a claim the app has outgrown
      * is the worst copy in the product. It is conditional on what is actually
-     * stored now. */
+     * stored now.
+     *
+     * This reads one screen, which is the whole of its coverage and was the
+     * reason six others went on saying the opposite for a release: the guard
+     * was written for the screen that had been fixed. The version that walks
+     * every screen is in `screens.test.ts`, and this one stays because it
+     * pins the two specific strings that fix produced. */
     const code = codeOnly(security);
     expect(code, 'the unconditional claim is back').not.toMatch(/never been generated/);
     expect(code).toMatch(/hot === null \?/);

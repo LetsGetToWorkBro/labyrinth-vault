@@ -56,6 +56,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as btc from '@scure/btc-signer';
 import { addressAt, openWatch, type BtcWallet } from '@vault/keys/bitcoin';
+import { canonicalBtcAddress, scriptForAddress } from './addresses';
 import type { Utxo } from './chain';
 import type { Asset, Atoms, Draft } from './model';
 import { toHex } from './units';
@@ -63,18 +64,58 @@ import { toHex } from './units';
 // ------------------------------------------------------------- fee estimates
 
 /**
- * Virtual size of a native-segwit spend, in vbytes.
+ * Vbytes one output adds: 8 for the value, 1 for the script's length prefix,
+ * and the script.
  *
- * Overhead 10.5, each P2WPKH input 68, each P2WPKH output 31. Rounded up,
- * always: a fee estimate that rounds down produces a transaction that is
- * cheaper than it should be and sits unconfirmed, which is a worse outcome
- * than paying for half a vbyte.
+ * The vault's `psbt.ts` sums exactly this, and the two halves have to agree.
+ * They did not: this side charged 31 vbytes for every output, which is right
+ * for P2WPKH and wrong for everything else the wallet will happily pay. A
+ * taproot destination is 43, a legacy one 34. At the economy rate, which
+ * `feeOptionsFrom` floors at 1 sat/vB because that is Core's own
+ * `minrelaytxfee`, a 12-vbyte underestimate is a transaction quoted at 0.92
+ * sat/vB, which is under the relay minimum and never reaches a mempool at all.
  */
-export function estimateVsize(inputs: number, outputs: number): number {
-  return Math.ceil(10.5 + 68 * inputs + 31 * outputs);
+export function outputVbytes(script: Uint8Array): number {
+  return 9 + script.length;
 }
 
-export function feeFor(inputs: number, outputs: number, rate: number): Atoms {
+/** A P2WPKH output. This wallet's own change is always this shape, because
+ *  BIP84 is the only descriptor here. */
+export const CHANGE_VBYTES = 31;
+
+/**
+ * The widest standard output, used when the destination is not known yet.
+ *
+ * P2TR and P2WSH both carry a 34-byte script, so 43. Overbudgeting is the safe
+ * direction and it is not symmetrical: a budget that is too small makes SEND
+ * MAX produce an amount this file's own `selectCoins` refuses, while a budget
+ * that is too large sends a few sat to a miner and says so on the review
+ * screen.
+ */
+export const WIDEST_OUTPUT_VBYTES = 43;
+
+/** What an output for this destination costs, or the widest standard one when
+ *  the destination cannot be decoded. `prepare` refuses such a destination a
+ *  few lines later; this only has to avoid guessing low in the meantime. */
+export function outputVbytesFor(address: string): number {
+  const script = scriptForAddress(address);
+  return script === null ? WIDEST_OUTPUT_VBYTES : outputVbytes(script);
+}
+
+/**
+ * Virtual size of a native-segwit spend, in vbytes.
+ *
+ * Overhead 10.5, each P2WPKH input 68, and each output priced from its own
+ * script rather than assumed. Rounded up, always: a fee estimate that rounds
+ * down produces a transaction that is cheaper than it should be and sits
+ * unconfirmed, which is a worse outcome than paying for half a vbyte.
+ */
+export function estimateVsize(inputs: number, outputs: readonly number[]): number {
+  const outs = outputs.reduce((sum, vbytes) => sum + vbytes, 0);
+  return Math.ceil(10.5 + 68 * inputs + outs);
+}
+
+export function feeFor(inputs: number, outputs: readonly number[], rate: number): Atoms {
   return BigInt(Math.ceil(estimateVsize(inputs, outputs) * rate));
 }
 
@@ -94,26 +135,6 @@ export interface Selection {
   problem: string | null;
 }
 
-/**
- * Pick coins to cover an amount.
- *
- * The strategy is stated plainly because it has consequences a user cannot
- * see: first look for a single coin that covers the payment with the least
- * left over, and use it if there is one. Otherwise take the largest coins
- * until the total covers amount plus fee.
- *
- * **What this costs, honestly.** Largest-first is not a privacy-preserving
- * selection. It reveals more about the wallet's holdings than a branch-and-
- * bound search would, and it consolidates coins that a careful user may have
- * deliberately kept apart. A serious implementation does better, and this one
- * should be replaced before anyone's savings depend on it. It is written this
- * way now because it is short enough to read in one sitting and its failure
- * mode is "an inelegant transaction" rather than "the wrong amount".
- *
- * Preferring a no-change spend is not only elegance: an exact-ish single-coin
- * payment produces a two-output-free transaction that leaks nothing about
- * change at all, and it is smaller, so it is cheaper.
- */
 /**
  * Where the next change output should go, read from the scan.
  *
@@ -158,9 +179,52 @@ export function nextChangeIndex(
   return Math.max(0, base) + Math.max(0, ahead);
 }
 
-export function selectCoins(utxos: readonly Utxo[], amount: Atoms, rate: number): Selection {
+/**
+ * Pick coins to cover an amount.
+ *
+ * The strategy is stated plainly because it has consequences a user cannot
+ * see: first look for a single coin that covers the payment with the least
+ * left over, and use it if there is one. Otherwise take the largest coins
+ * until the total covers amount plus fee.
+ *
+ * **What this costs, honestly.** Largest-first is not a privacy-preserving
+ * selection. It reveals more about the wallet's holdings than a branch-and-
+ * bound search would, and it consolidates coins that a careful user may have
+ * deliberately kept apart. A serious implementation does better, and this one
+ * should be replaced before anyone's savings depend on it. It is written this
+ * way now because it is short enough to read in one sitting and its failure
+ * mode is "an inelegant transaction" rather than "the wrong amount".
+ *
+ * Preferring a no-change spend is not only elegance: an exact-ish single-coin
+ * payment produces a two-output-free transaction that leaks nothing about
+ * change at all, and it is smaller, so it is cheaper.
+ *
+ * **The no-change window, and why it is not only the single-coin case.** For
+ * one commit the no-change spend existed only for a wallet whose payment fit
+ * in one coin. Every other wallet fell through to a loop that tested against a
+ * two-output fee and refused anything it could not leave change from, which
+ * meant that `maxSendable`, which budgets one output because a sweep has no
+ * change, produced a number this function rejected by exactly the width of the
+ * change output. Pressing MAX and then REVIEW got a refusal from the wallet
+ * that had computed the number. So the loop tests both shapes: cover the
+ * payment with change, or cover it without one and let the remainder go to the
+ * fee.
+ */
+export function selectCoins(
+  utxos: readonly Utxo[],
+  amount: Atoms,
+  rate: number,
+  /** Where the money is going, which decides what its output costs. Required
+   *  rather than defaulted: a default is how every output came to be priced as
+   *  P2WPKH, and a wrong fee here is a transaction that does not relay. */
+  recipient: string,
+): Selection {
   const none: Selection = { chosen: [], fee: 0n, change: 0n, changeToFee: false, problem: null };
   if (amount <= 0n) return { ...none, problem: 'Enter an amount.' };
+
+  const paying = outputVbytesFor(recipient);
+  const withChange = [paying, CHANGE_VBYTES];
+  const withoutChange = [paying];
 
   const spendable = [...utxos].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
   const total = spendable.reduce((sum, utxo) => sum + utxo.value, 0n);
@@ -168,7 +232,7 @@ export function selectCoins(utxos: readonly Utxo[], amount: Atoms, rate: number)
 
   /* One coin, no change, if any single coin lands in the window between "pays
    * the amount and its fee" and "leaves less than dust behind". */
-  const singleFee = feeFor(1, 1, rate);
+  const singleFee = feeFor(1, withoutChange, rate);
   const exact = [...spendable]
     .filter((utxo) => utxo.value >= amount + singleFee && utxo.value - amount - singleFee < DUST)
     .sort((a, b) => (a.value > b.value ? 1 : -1))[0];
@@ -187,7 +251,8 @@ export function selectCoins(utxos: readonly Utxo[], amount: Atoms, rate: number)
   for (const utxo of spendable) {
     chosen.push(utxo);
     gathered += utxo.value;
-    const fee = feeFor(chosen.length, 2, rate);
+    const fee = feeFor(chosen.length, withChange, rate);
+    const leanFee = feeFor(chosen.length, withoutChange, rate);
     if (gathered >= amount + fee) {
       const change = gathered - amount - fee;
       if (change < DUST) {
@@ -196,7 +261,6 @@ export function selectCoins(utxos: readonly Utxo[], amount: Atoms, rate: number)
          * the review screen shows a fee larger than the one quoted, and an
          * unexplained number on a confirmation screen is how people learn to
          * stop reading them. */
-        const leanFee = feeFor(chosen.length, 1, rate);
         return {
           chosen,
           fee: gathered - amount,
@@ -207,20 +271,48 @@ export function selectCoins(utxos: readonly Utxo[], amount: Atoms, rate: number)
       }
       return { chosen, fee, change, problem: null, changeToFee: false };
     }
+    if (gathered >= amount + leanFee) {
+      /* Enough for the payment but not for a change output on top of it, which
+       * is the sweep: every coin in, one output out, and the few sat between
+       * what is left and the lean fee go to the miner because there is nowhere
+       * else for them to go. Taking it here rather than gathering another coin
+       * is also the cheaper answer, since another input costs 68 vbytes and the
+       * change output it would fund costs 31. */
+      return {
+        chosen,
+        fee: gathered - amount,
+        change: 0n,
+        changeToFee: gathered - amount > leanFee,
+        problem: null,
+      };
+    }
   }
 
-  const shortfall = amount + feeFor(chosen.length, 2, rate) - gathered;
+  /* Quoted against the shape the wallet would actually have to build, which is
+   * the no-change one: at this point every coin is in and there is still not
+   * enough, so a change output was never on the table and charging for one
+   * would overstate the shortfall. */
+  const shortfall = amount + feeFor(chosen.length, withoutChange, rate) - gathered;
   return {
     ...none,
     problem: `That is more than this wallet holds, by ${shortfall} sat once the fee is counted.`,
   };
 }
 
-/** The largest amount that can be sent, which is not the balance: the fee
- *  comes out of it, and it is the number the SEND MAX control needs. */
-export function maxSendable(utxos: readonly Utxo[], rate: number): Atoms {
+/**
+ * The largest amount that can be sent, which is not the balance: the fee comes
+ * out of it, and it is the number the SEND MAX control needs.
+ *
+ * `recipient` is optional because MAX is reachable before a destination has
+ * been entered, and absent one the widest standard output is budgeted. That is
+ * the safe direction: overbudgeting leaves a few sat that `selectCoins` hands
+ * to the miner, while underbudgeting produces an amount `selectCoins` refuses,
+ * which is a refusal from the wallet that computed the number.
+ */
+export function maxSendable(utxos: readonly Utxo[], rate: number, recipient?: string): Atoms {
+  const paying = recipient === undefined || recipient === '' ? WIDEST_OUTPUT_VBYTES : outputVbytesFor(recipient);
   const total = utxos.reduce((sum, utxo) => sum + utxo.value, 0n);
-  const fee = feeFor(utxos.length, 1, rate);
+  const fee = feeFor(utxos.length, [paying], rate);
   return total > fee ? total - fee : 0n;
 }
 
@@ -274,11 +366,21 @@ export function digestOf(bytes: Uint8Array): string {
  * derivation path would be sending a claim the vault is right to ignore.
  */
 export function prepare(params: PrepareParams): Prepared {
-  const { asset, recipient, amount, rate, utxos, now } = params;
+  const { asset, amount, rate, utxos, now } = params;
 
   if (asset === 'XMR') return prepareMonero(params);
 
-  const selection = selectCoins(utxos, amount, rate);
+  /* One spelling of the destination from here to the broadcast button. An
+   * uppercase bech32 address is valid, is what BIP173 recommends inside a QR,
+   * and is what several senders hand over, but every re-encoding of it is
+   * lowercase, including `getOutputAddress` on the transaction that comes back
+   * from the vault. Recording the pasted form on the draft made `verifySigned`
+   * refuse a byte-correct signature and accuse the vault of redirecting the
+   * payment. Canonicalizing here fixes it for every caller, including the swap
+   * flow, which fills the recipient in with no user involvement at all. */
+  const recipient = canonicalBtcAddress(params.recipient);
+
+  const selection = selectCoins(utxos, amount, rate, recipient);
   if (selection.problem) return { ok: false, problem: selection.problem };
 
   const opened = openWatch(params.zpub);
@@ -441,12 +543,21 @@ export function verifySigned(draft: Draft, raw: Uint8Array): Verified {
     reasons.push(`This leaves out ${missing.length} coin${missing.length === 1 ? '' : 's'} that the transaction you approved was spending.`);
   }
 
+  /* The comparison is on meaning, not on spelling, for the same reason the
+   * header gives for comparing meaning rather than bytes. `getOutputAddress`
+   * re-encodes every address lowercase, and BIP173 makes an uppercase bech32
+   * address valid, so a draft holding the pasted form failed this check on a
+   * transaction that was correct in every respect. `prepare` already stores
+   * the canonical form; this is here so a draft built anywhere else cannot
+   * reintroduce a refusal that blames the vault for the wallet's spelling. */
+  const recipient = canonicalBtcAddress(draft.recipient);
+
   const toRecipient = outputs
-    .filter((output) => output.address === draft.recipient)
+    .filter((output) => output.address === recipient)
     .reduce((sum, output) => sum + output.value, 0n);
 
   if (toRecipient === 0n) {
-    reasons.push(`Nothing in this transaction pays ${draft.recipient}.`);
+    reasons.push(`Nothing in this transaction pays ${recipient}.`);
   } else if (toRecipient !== draft.amount) {
     reasons.push(`This pays ${toRecipient} where ${draft.amount} was approved.`);
   }
@@ -454,7 +565,7 @@ export function verifySigned(draft: Draft, raw: Uint8Array): Verified {
   /* Any output that is neither the recipient nor our own change is somebody
    * else being paid out of this transaction, which is precisely the attack the
    * whole design exists to catch. */
-  const strangers = outputs.filter((output) => output.address !== draft.recipient && !isOurs(output.address, draft));
+  const strangers = outputs.filter((output) => output.address !== recipient && !isOurs(output.address, draft));
   if (strangers.length > 0) {
     reasons.push(
       strangers.length === 1

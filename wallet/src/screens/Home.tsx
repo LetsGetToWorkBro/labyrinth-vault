@@ -266,7 +266,12 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
             />
           </ActionRow>
 
-          {vault.state === 'unpaired' ? (
+          {/* The line under the actions, which said "sending needs your vault"
+              to every wallet with no pairing, including the ones holding their
+              own keys. It is a statement about the account being looked at, so
+              it is read off that account rather than off whether a pairing
+              exists at all. */}
+          {vault.state === 'unpaired' && looking?.signsHere !== true ? (
             <>
               <Gap size={space.step} />
               <Body tone={color.slate}>

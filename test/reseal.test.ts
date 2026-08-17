@@ -49,9 +49,15 @@ const load = (): Api => {
   const context: Record<string, unknown> = { __labyrinthArgon2id: cheapKdf };
   runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
   const api = context.LabyrinthVault as Api;
-  // If the seam ever stops working, these tests must not silently start
-  // taking ninety seconds a vault instead.
-  expect(JSON.parse(api.version!()).kdf).toBe('native');
+  /* If the seam ever stops working, these tests must not silently start
+   * taking ninety seconds a vault instead.
+   *
+   * "mismatch" is the right word and it is not a failure here. The reply says
+   * which derivation this build would actually run and whether it is Argon2id,
+   * and `cheapKdf` is deliberately neither: the seam is live, and the function
+   * on the far side of it is a stand-in. "engine" would mean the stand-in was
+   * never adopted, which is the regression this line is watching for. */
+  expect(JSON.parse(api.version!()).kdf).toBe('mismatch');
   return api;
 };
 

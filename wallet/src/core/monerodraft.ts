@@ -42,7 +42,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import type { Atoms, Draft } from './model';
 import type { OutputFact, Verified } from './build';
 import { planMoneroSpend, type PlanParams } from './moneroplan';
-import { encodeUnsigned, parseSignedTx, type SpendableOutput } from './monerospend';
+import { encodeUnsigned, parseSignedTx, parseUnsigned, type SpendableOutput } from './monerospend';
 import type { Transport } from '../net/http';
 
 /** What planning a spend needs from the platform, gathered by the watcher. */
@@ -136,6 +136,28 @@ export function verifySignedMonero(
   if (BigInt(tx.fee) !== draft.fee) {
     reasons.push(
       `This pays a fee of ${tx.fee} piconero and the approved draft said ${draft.fee}.`,
+    );
+  }
+
+  /* The third of the three checks this file's header promises, and the one
+   * that was being taken on the returned payload's word. `network` was read
+   * off the signed set and copied into the verdict, and `store.tsx` hands that
+   * field straight to the mainnet broadcast gate, so editing one word in what
+   * came back opened a gate `moneroreadiness.ts` deliberately implements as a
+   * source constant so it could not be flipped. The approved bytes are the
+   * authority, and they are read with the strict parser rather than trusted,
+   * even though this app wrote them: the parse is the only place the wire
+   * format is checked, and a path that skipped it is where a format bug would
+   * live. */
+  const approved = parseUnsigned(draft.unsigned);
+  if (!approved.ok) {
+    reasons.push(
+      'The payment you approved could not be read back to check which network it was for, ' +
+      'so this signature cannot be matched to it. Build the payment again.',
+    );
+  } else if (approved.set.network !== tx.network) {
+    reasons.push(
+      `You approved a ${approved.set.network} payment and this came back signed for ${tx.network}.`,
     );
   }
 

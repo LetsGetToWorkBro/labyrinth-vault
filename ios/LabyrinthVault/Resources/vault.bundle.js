@@ -18560,9 +18560,29 @@ zoo`.split("\n"));
   var nativeArgon2id = null;
   function setNativeArgon2id(fn) {
     nativeArgon2id = typeof fn === "function" ? fn : null;
+    measuredKdfSource = null;
   }
-  function nativeArgon2idInstalled() {
-    return nativeArgon2id !== null;
+  var measuredKdfSource = null;
+  function kdfSource() {
+    if (measuredKdfSource) return measuredKdfSource;
+    measuredKdfSource = (() => {
+      if (!nativeArgon2id) return "engine";
+      const probeParams = { t: 1, m: 8, p: 1 };
+      const probePass = new TextEncoder().encode("labyrinth kdf probe");
+      const probeSalt = new Uint8Array(SALT_BYTES).map((_, i) => i * 17 + 5 & 255);
+      let theirs;
+      try {
+        theirs = nativeArgon2id(probePass, probeSalt, probeParams, KEY_BYTES);
+      } catch {
+        return "engine";
+      }
+      if (!(theirs instanceof Uint8Array) || theirs.length !== KEY_BYTES) return "engine";
+      const ours = argon2id(probePass, probeSalt, { ...probeParams, dkLen: KEY_BYTES });
+      let diff = 0;
+      for (let i = 0; i < KEY_BYTES; i++) diff |= theirs[i] ^ ours[i];
+      return diff === 0 ? "native" : "mismatch";
+    })();
+    return measuredKdfSource;
   }
   function deriveKey(passphrase, salt, params) {
     if (nativeArgon2id) {
@@ -18903,10 +18923,16 @@ zoo`.split("\n"));
     return session;
   }
   var HOST_VERSION = 7;
+  var SCAN_FROM_GENESIS = 0;
   var api = {
     version: guarded("version", () => done({
       version: HOST_VERSION,
-      kdf: nativeArgon2idInstalled() ? "native" : "engine",
+      /* What a derivation on this build would actually do, proved rather
+       * than assumed. Three answers, and the third one exists: see
+       * `kdfSource`. This used to report "native" whenever a host had left a
+       * function on the global, which is true of a build whose native calls
+       * all fail, and that is the build a tester most needs told about. */
+      kdf: kdfSource(),
       /* Reported rather than assumed. Without CryptoNight the vault still
        * signs and still computes key images on its own wire; the one thing
        * it cannot do is write the export file other Monero wallets read, and
@@ -19038,7 +19064,7 @@ zoo`.split("\n"));
     /** The watch-only export, as the frames to animate. */
     exportAccount: guarded("exportAccount", (chain2) => {
       const open = requireSession();
-      const account = chain2 === "xmr" ? moneroAccount(open.xmr) : bitcoinAccount(open.btc);
+      const account = chain2 === "xmr" ? moneroAccount(open.xmr, "mainnet", SCAN_FROM_GENESIS) : bitcoinAccount(open.btc);
       const frames = encodeParts("ACCOUNT", encodeAccount(account));
       let urFrames = null;
       const btc = open.btc;
@@ -19422,5 +19448,4 @@ zoo`.split("\n"));
   adoptNativeArgon2id();
   adoptNativeCnSlowHash();
   globalThis.LabyrinthVault = api;
-  var SEAL_PARAMS_DEFAULT = null;
 })();

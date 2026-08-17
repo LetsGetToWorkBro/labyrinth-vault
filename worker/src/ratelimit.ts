@@ -26,6 +26,26 @@
  *
  * Rotating the secret forgets every bucket. That is harmless, and it is the
  * cheapest possible incident response.
+ *
+ * ## The ceiling is approximate, and by how much
+ *
+ * `checkLimit` reads a counter, decides, and writes the counter back. KV is
+ * eventually consistent and there is no compare-and-set, so requests that
+ * arrive together all read the same number and all write one more than it: a
+ * burst of concurrency `c` gets through at roughly `limit + c` rather than
+ * `limit`. Written down because the next person sizing
+ * `OHTTP_CREATE_LIMIT_PER_MINUTE` will otherwise size against a number this
+ * file does not enforce, and finding that out from an exchange is expensive.
+ *
+ * It is left this way rather than fixed because of what is being protected.
+ * This limiter guards an affiliate key's request quota, not anybody's money,
+ * and it already declares itself expendable one function down by failing open
+ * when the store is missing. Per-address bucketing hands a distributed
+ * adversary fresh buckets by design, so an exact counter would not stop the
+ * attack the overshoot suggests it might. Cloudflare's own RateLimit binding
+ * would count atomically and is the fix if this ever has to be tight; the
+ * honest state today is a ceiling that is a ceiling to within a burst, and a
+ * sizing decision made with that in view.
  */
 
 const WINDOW_SECONDS = 60;

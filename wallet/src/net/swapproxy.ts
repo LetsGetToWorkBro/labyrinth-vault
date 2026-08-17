@@ -26,6 +26,7 @@
  * behalf could lie about the answer; this one is never asked.
  */
 
+import { deadline, DEFAULT_TIMEOUT_MS } from './http';
 import type { HttpRequest, ProviderId, SwapIntent, SwapTransport } from '../core/swap';
 
 /**
@@ -80,20 +81,41 @@ interface ProxyReply {
  * second place the wire format is written down, and the second one is always
  * the one that goes stale.
  */
-export function proxyTransport(base: string = SWAP_PROXY, doFetch: typeof fetch = fetch): ProxyTransport {
+export function proxyTransport(
+  base: string = SWAP_PROXY,
+  doFetch: typeof fetch = fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): ProxyTransport {
   const call = async (path: string, init: RequestInit): Promise<unknown> => {
-    const response = await doFetch(`${base}${path}`, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    });
-    let body: ProxyReply;
+    /* `http.ts` states "everything times out" as a rule for this layer, and
+     * this transport is in the layer. Without it the swap screen has no cancel
+     * and no timer of its own, so a proxy that accepts the connection and then
+     * says nothing leaves a person looking at a spinner for however long the
+     * platform happens to allow, in the middle of moving money. */
+    const clock = deadline(timeoutMs);
     try {
-      body = (await response.json()) as ProxyReply;
-    } catch {
-      throw new Error('The proxy answered with something unreadable.');
+      const response = await doFetch(`${base}${path}`, {
+        ...init,
+        signal: clock.signal,
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      });
+      let body: ProxyReply;
+      try {
+        body = (await response.json()) as ProxyReply;
+      } catch {
+        throw new Error('The proxy answered with something unreadable.');
+      }
+      if (!body.ok) throw new Error(body.problem ?? 'The proxy refused.');
+      return body.upstream;
+    } catch (error) {
+      /* Named rather than passed through, because an AbortError reaches the
+       * swap screen as "signal is aborted without reason", which tells a
+       * person nothing about what to do next. */
+      if ((error as Error)?.name === 'AbortError') throw new Error('The proxy did not answer in time.');
+      throw error;
+    } finally {
+      clock.done();
     }
-    if (!body.ok) throw new Error(body.problem ?? 'The proxy refused.');
-    return body.upstream;
   };
 
   return {

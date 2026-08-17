@@ -171,6 +171,7 @@ export function parseHotRecord(text: string | null): ReadResult {
   }
   const xmrSeed = typeof rawXmr === 'string' ? rawXmr : null;
 
+  let btcMnemonic: string | null = null;
   const rawBtc = record['btcMnemonic'];
   if (rawBtc !== null && rawBtc !== undefined) {
     if (typeof rawBtc !== 'string') {
@@ -180,8 +181,26 @@ export function parseHotRecord(text: string | null): ReadResult {
     if (!phrase.ok) {
       return { ok: false, problem: `The stored Bitcoin phrase is not valid: ${phrase.problem ?? 'unknown'}` };
     }
+    /*
+     * What was checked is what is kept, which is not what this used to do.
+     *
+     * `checkMnemonic` trims, lowercases and collapses whitespace before it
+     * validates, and the normalized string was then thrown away in favor of
+     * the raw one. Those differ in two ways that matter. `@scure/bip39` splits
+     * on a literal single space and only counts words, so `ABANDON abandon...`
+     * passes the check and then derives a different seed, a different zpub and
+     * a different set of addresses: a wallet reporting zero for money that is
+     * there, which is the exact failure this function exists to prevent. And a
+     * phrase separated by a newline or a double space throws `Invalid
+     * mnemonic` out of `openFromMnemonic`, which is called from a `useMemo`
+     * during render and from above `hotsign.ts`'s try, neither of which
+     * catches.
+     *
+     * `readPhrase` already keeps the normalized form. This is the same rule
+     * arriving at the other door.
+     */
+    btcMnemonic = phrase.words ?? rawBtc;
   }
-  const btcMnemonic = typeof rawBtc === 'string' ? rawBtc : null;
 
   if (xmrSeed === null && btcMnemonic === null) {
     return { ok: false, problem: 'These keys hold neither a Monero nor a Bitcoin wallet.' };
@@ -488,9 +507,28 @@ export function withRestored(
     createdAt: 0,
   };
 
+  /*
+   * A restored Monero seed always scans from the beginning, whatever was here.
+   *
+   * The condition used to be `existing ? base.createdAt : 0`, which is right
+   * for an empty phone and wrong for every other route into this function.
+   * Restoring twenty-five words onto a phone that already holds a wallet made
+   * here keeps *that* wallet's creation time, and `watchOnlyFrom` turns it
+   * into a block height: a wallet funded years ago starts its scan at last
+   * week and reports zero, with no error, which for Monero is
+   * indistinguishable from the coins being gone. Restoring twelve words and
+   * then twenty-five on an empty phone reaches the same place by two steps,
+   * because the Bitcoin branch below stores `when`.
+   *
+   * `createdAt` feeds the Monero scan start and a cosmetic date on the
+   * accounts list, and nothing else, so zeroing it costs a slower first scan
+   * and buys a correct balance. That is the trade `Restore.tsx` already
+   * promises in as many words: "A restored Monero wallet scans from the
+   * beginning of the chain."
+   */
   const record: HotRecord =
     restored.chain === 'xmr'
-      ? { ...base, xmrSeed: restored.xmrSeed, createdAt: existing ? base.createdAt : 0 }
+      ? { ...base, xmrSeed: restored.xmrSeed, createdAt: 0 }
       : { ...base, btcMnemonic: restored.btcMnemonic, createdAt: existing ? base.createdAt : when };
 
   return { ok: true, record };

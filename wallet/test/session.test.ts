@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { canBroadcast, journeyReached, reduce, START, type SessionEvent, type SessionState } from '../src/core/session';
 import type { Verified } from '../src/core/build';
 import type { Draft } from '../src/core/model';
@@ -59,7 +60,7 @@ function run(events: SessionEvent[], from: SessionState = START): SessionState {
 const HAPPY: SessionEvent[] = [
   { type: 'recipient', value: draft.recipient, source: 'scanned' },
   { type: 'amount', value: '0.05' },
-  { type: 'prepared', draft, at: AT },
+  { type: 'prepared', draft, account: 'hot', at: AT },
   { type: 'transmit', transmission, at: AT },
   { type: 'handed-over', at: AT },
   { type: 'read-back', at: AT },
@@ -104,7 +105,7 @@ describe('a signature that does not match what was approved', () => {
       { type: 'recipient', value: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', source: 'typed' },
       { type: 'amount', value: '0.05' },
       { type: 'fee', value: 'priority' },
-      { type: 'prepared', draft, at: AT },
+      { type: 'prepared', draft, account: 'hot', at: AT },
       { type: 'transmit', transmission, at: AT },
       { type: 'handed-over', at: AT },
       { type: 'read-back', at: AT },
@@ -194,7 +195,7 @@ describe('signing on this device, instead of walking to a vault', () => {
       type: 'amount',
       value: '0.01',
     });
-    return reduce(composed, { type: 'prepared', draft, at: 1 });
+    return reduce(composed, { type: 'prepared', draft, account: 'hot', at: 1 });
   };
 
   it('reaches the signing step only from review, and only when it may', () => {
@@ -253,5 +254,137 @@ describe('signing on this device, instead of walking to a vault', () => {
     }
     state = reduce(state, { type: 'sign-here', signsHere: true, at: 2 });
     expect(canBroadcast(state)).toBe(false);
+  });
+});
+
+describe('a payment remembers which account it is from', () => {
+  /* The defect: a `Draft` carried no account identity and `selectAccount` is a
+   * bare setter with no session reset, so selecting a different account left a
+   * composed payment at `review` while every screen around it changed. Review
+   * offered SIGN ON THIS PHONE over the vault account's transaction, the key
+   * image book was resolved off the new selection so a legitimate vault
+   * signature landed in terminal `mismatch`, and a broadcast marked the wrong
+   * watcher's coins pending. Unpairing under a live draft reached the same
+   * state with no tap at all. */
+
+  const composed = (): SessionState =>
+    reduce(reduce(START, { type: 'recipient', value: draft.recipient, source: 'typed' }), {
+      type: 'amount',
+      value: '0.05',
+    });
+
+  it('records the account the draft was built for', () => {
+    const state = reduce(composed(), { type: 'prepared', draft, account: 'vault', at: AT });
+    expect(state.account).toBe('vault');
+    expect(state.draft).toBe(draft);
+  });
+
+  it('carries it through signing, verification and broadcast', () => {
+    const state = run(
+      [
+        { type: 'prepared', draft, account: 'vault', at: AT },
+        { type: 'transmit', transmission, at: AT },
+        { type: 'handed-over', at: AT },
+        { type: 'read-back', at: AT },
+        { type: 'returned', verified: matched, at: AT },
+        { type: 'broadcast', at: AT },
+        { type: 'published', txid: 'f'.repeat(64), at: AT },
+      ],
+      composed(),
+    );
+    expect(state.step).toBe('done');
+    expect(state.account).toBe('vault');
+  });
+
+  it('drops it with the draft when the payment is abandoned', () => {
+    /* Otherwise the next payment inherits an account nobody chose for it. */
+    const back = reduce(reduce(composed(), { type: 'prepared', draft, account: 'vault', at: AT }), {
+      type: 'back',
+    });
+    expect(back.step).toBe('compose');
+    expect(back.draft).toBeNull();
+    expect(back.account).toBeNull();
+    expect(reduce(back, { type: 'reset' }).account).toBeNull();
+  });
+});
+
+describe('publishing has a way out', () => {
+  const publishing = (): SessionState =>
+    run([...HAPPY, { type: 'broadcast', at: AT }]);
+
+  it('is recoverable rather than a screen with no exit', () => {
+    /* `broadcasting` had no `back` transition and `<Ready />` renders with its
+     * button disabled, so anything that entered this step and then failed to
+     * dispatch pinned the session there until the app was relaunched, with a
+     * signed transaction stranded behind it. */
+    const stalled = publishing();
+    expect(stalled.step).toBe('broadcasting');
+    const out = reduce(stalled, { type: 'back' });
+    expect(out.step).toBe('ready');
+    /* Still the same signature. Backing out of a stall must not cost somebody
+     * another Face ID prompt or another walk to the vault. */
+    expect(out.verified).toBe(stalled.verified);
+    expect(canBroadcast(out)).toBe(true);
+  });
+
+  it('still refuses to publish what did not verify', () => {
+    const stuck = run([...HAPPY.slice(0, -1), { type: 'returned', verified: mismatched, at: AT }]);
+    expect(canBroadcast(reduce(stuck, { type: 'back' }))).toBe(false);
+  });
+});
+
+describe('what the store hands the reducer', () => {
+  /* Source guards, because there is no React renderer in this package and the
+   * defects below are about which value a callback reads rather than about any
+   * shape a reducer can be asked for. */
+  const store = readFileSync('src/state/store.tsx', 'utf8');
+  const broadcast = /const broadcast = useCallback\([\s\S]*?\n  \}, \[[^\]]*\]\);/.exec(store)?.[0] ?? '';
+  const code = broadcast.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  it('publishes the chain the payment is on, not the chain chip', () => {
+    /* Every neighbor reads `draft.asset`; this one read the app-wide chip.
+     * Send is a modal with a swipe gesture, so a person could leave the ready
+     * screen, change the chip on Home, come back and press BROADCAST: a Monero
+     * transaction to the Bitcoin node, with the mainnet Monero gate, keyed to
+     * the same chip, never running. */
+    expect(broadcast, 'broadcast not found in the store').toBeTruthy();
+    expect(code).toMatch(/const asset = draft\.asset;/);
+    /* The dependency list is where reading the app-wide chip shows up: this
+     * callback cannot close over that state without naming it here. */
+    const deps = (/\n  \}, \[([^\]]*)\]\);/.exec(broadcast)?.[1] ?? '').split(',').map((d) => d.trim());
+    expect(deps, 'broadcast dependencies not found').toContain('session.draft');
+    expect(deps, 'the chain chip decides again').not.toContain('asset');
+  });
+
+  it('publishes from the account the payment was prepared from', () => {
+    expect(code).toMatch(/watchers\.watcherFor\(session\.account\)/);
+  });
+
+  it('verifies against the account the payment was prepared from', () => {
+    /* The other half of the same defect, and the one that costs a real
+     * signature. `verifySignedMonero` is handed the key images for the coins
+     * being spent, resolved from a watcher; resolved off the selection, a
+     * legitimate vault signature returning after somebody visited the accounts
+     * list is checked against the wrong account's book and lands in terminal
+     * `mismatch`, which no event climbs out of. */
+    const apply = /const applySignature = useCallback\([\s\S]*?\n  \);/.exec(store)?.[0] ?? '';
+    expect(apply, 'applySignature not found').toBeTruthy();
+    const body = apply.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(body).toMatch(/const paying = watchers\.watcherFor\(session\.account\);/);
+    expect(body, 'the selection decides which book a signature is checked against').not.toMatch(
+      /moneroImagesFor[\s\S]*?\bwatcher\b\./,
+    );
+  });
+
+  it('checks it has somewhere to publish before it says it is publishing', () => {
+    /* Dispatching `broadcast` and then returning on a missing watcher left the
+     * session in a step with no exit. The order is the fix; the sentence is
+     * the rest of it. */
+    const guardAt = code.indexOf('if (!paying)');
+    const dispatchAt = code.indexOf("dispatch({ type: 'broadcast'");
+    expect(guardAt, 'the missing-watcher check is gone').toBeGreaterThan(-1);
+    expect(dispatchAt, 'the broadcast transition is gone').toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(dispatchAt);
+    expect(code).toMatch(/no node to publish it to/);
   });
 });

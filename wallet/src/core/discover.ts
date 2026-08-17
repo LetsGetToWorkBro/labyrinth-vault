@@ -62,7 +62,7 @@ export const GAP_LIMIT = 20;
 const BATCH = 10;
 
 /** A cap, so a wallet pointed at a hostile node cannot be walked forever. */
-const MAX_ADDRESSES = 500;
+export const MAX_ADDRESSES = 500;
 
 export interface DiscoveredAddress {
   address: string;
@@ -81,6 +81,18 @@ export interface Discovery {
   spendable: Atoms;
   /** How many addresses were asked about, which is what the node learned. */
   queried: number;
+  /**
+   * True when a branch hit `MAX_ADDRESSES` before it hit the gap limit, which
+   * means the walk stopped somewhere the account was still in use.
+   *
+   * Carried separately from `problem` so a caller can tell a cap from a node
+   * failure, and reported as a refusal either way. Both of the loop's exits
+   * used to return `problem: null`, so a wallet with more used addresses than
+   * the cap got `ok: true` and a balance covering only the part that was
+   * reached, which is the same silent shortfall the gap limit exists to
+   * prevent, arriving through the mechanism meant to bound it.
+   */
+  truncated: boolean;
 }
 
 /**
@@ -93,7 +105,7 @@ async function walkBranch(
   transport: Transport,
   wallet: BtcWallet,
   change: 0 | 1,
-): Promise<{ problem: string | null; addresses: DiscoveredAddress[]; queried: number }> {
+): Promise<{ problem: string | null; addresses: DiscoveredAddress[]; queried: number; truncated: boolean }> {
   const addresses: DiscoveredAddress[] = [];
   let index = 0;
   let sinceUsed = 0;
@@ -123,7 +135,7 @@ async function walkBranch(
         /* One address failing means the node is unwell or unreachable, and a
          * partial scan is worse than none: it produces a balance that is
          * confidently too low. Stop and say so. */
-        return { problem: answer.problem, addresses, queried };
+        return { problem: answer.problem, addresses, queried, truncated: false };
       }
       const entry = batch[i]!;
       entry.used = answer.value.used;
@@ -135,7 +147,11 @@ async function walkBranch(
     index += batch.length;
   }
 
-  return { problem: null, addresses, queried };
+  /* Stopping at the cap with the gap still unclosed means the account was
+   * still in use where the walk gave up, so there are addresses beyond it that
+   * were never asked about. The gap limit is the honest stop; the cap is a
+   * leash against a hostile node, and reaching it is not an answer. */
+  return { problem: null, addresses, queried, truncated: sinceUsed < GAP_LIMIT };
 }
 
 /**
@@ -158,6 +174,7 @@ export async function discover(
     balance: 0n,
     spendable: 0n,
     queried: 0,
+    truncated: false,
   };
 
   const receive = await walkBranch(transport, wallet, 0);
@@ -170,6 +187,21 @@ export async function discover(
 
   const addresses = [...receive.addresses, ...change.addresses];
   const queried = receive.queried + change.queried;
+
+  /* The same policy the node-error branch already applies, for the same
+   * reason: a partial scan produces a balance that is confidently too low, and
+   * a number under the word BALANCE that is missing coins is worse than no
+   * number at all. Nothing is lost on the chain, and saying which branch ran
+   * out is what tells whoever reads this that the cap is what has to move. */
+  if (receive.truncated || change.truncated) {
+    const branch = receive.truncated ? 'receiving' : 'change';
+    return {
+      ...empty,
+      truncated: true,
+      queried,
+      problem: `This account has used more than ${MAX_ADDRESSES} ${branch} addresses, which is further than this wallet walks. The balance it could show would be missing coins, so it is showing none. The coins are on the chain and a wallet that walks further will find them.`,
+    };
+  }
 
   /* Only the used ones can hold anything, so only they are asked for outputs.
    * That is a real reduction in what the node is told: an account with three
@@ -198,7 +230,7 @@ export async function discover(
     .filter((utxo) => utxo.confirmations > 0)
     .reduce((sum, utxo) => sum + utxo.value, 0n);
 
-  return { ok: true, problem: null, addresses, utxos, balance, spendable, queried: queried + used.length };
+  return { ok: true, problem: null, addresses, utxos, balance, spendable, queried: queried + used.length, truncated: false };
 }
 
 function toUtxo(raw: NodeUtxo, entry: DiscoveredAddress, tipHeight: number): Utxo {
@@ -227,8 +259,16 @@ function toUtxo(raw: NodeUtxo, entry: DiscoveredAddress, tipHeight: number): Utx
  * gave somebody. Derived from the scan, this is stable across launches and
  * across devices holding the same key, and it advances exactly when a payment
  * arrives.
+ *
+ * Null when every address in the walk has been paid to, rather than the first
+ * one. That fallback handed out an address the chain had already seen, which
+ * is the one thing this function exists not to do: it links the next payment
+ * to the last one and it is invisible on screen. A successful `discover` can
+ * no longer produce that list, since a branch still in use at the cap is now a
+ * refusal, so this is the shape of the type agreeing with the shape of the
+ * code rather than a live case.
  */
 export function nextReceiveAddress(addresses: readonly DiscoveredAddress[]): DiscoveredAddress | null {
   const receiving = addresses.filter((entry) => entry.change === 0);
-  return receiving.find((entry) => !entry.used) ?? receiving[0] ?? null;
+  return receiving.find((entry) => !entry.used) ?? null;
 }

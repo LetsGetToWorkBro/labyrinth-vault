@@ -28,10 +28,19 @@ a then-900-test suite.
 
 ## House style
 
-- **No em dashes** anywhere: code, comments, docs, user-facing copy. Use a
-  colon, a comma, or two sentences.
-- **US spelling.** Both are enforced by `test/copy-style.test.ts`, which walks
-  the filesystem.
+- **No em dashes and US spelling in anything a person reads**: every string in
+  the apps, every document, every word on the site. Use a colon, a comma, or
+  two sentences. **Code comments are exempt**, and the exemption is deliberate
+  rather than an oversight: several thousand words of internal argument would
+  be worse for being flattened, `test/copy-style.test.ts` says so in as many
+  words, and `wallet/test/copy.test.ts` asserts the exemption is real so that
+  nobody tightens it by accident. This line used to say "code, comments, docs,
+  user-facing copy", which two guards contradicted, and a stated rule the
+  suite disagrees with teaches people that the stated rules are decoration.
+  Four guards enforce the real one over comment-stripped source:
+  `test/copy-style.test.ts` for the markdown, the engine, the vault's Swift
+  and the Worker; `wallet/test/copy.test.ts` for the companion's screens; and
+  `test/site-claims.test.ts` for the site.
 - Comments explain **why**, not what. A comment that restates the line above it
   is noise; a comment naming the failure a line prevents is the reason the line
   survives a refactor.
@@ -61,9 +70,18 @@ useful. Never leave key handling half-built in a tree that is on TestFlight.
 
 ## Before you commit
 
-    npm test                      # vault: 1015 tests, includes typecheck and swift-check
-    cd wallet && npx vitest run   # companion: 631 tests
+    npm test                      # vault: 1060 tests, includes typecheck and swift-check
+    cd wallet && npx vitest run   # companion: 905 tests
     cd wallet && npx tsc --noEmit
+    cd worker && npm test         # the Worker: 68 tests, plus npm run typecheck
+
+The counts are there so that a suite quietly shrinking is visible, not as a
+target. They were 1015 and 631 for long enough to be wrong by two hundred
+tests, which is the failure this line exists to catch pointed at itself. All
+three now run on push: `.github/workflows/tests.yml` had one job that stopped
+after the companion, so every guard under `worker/test` was enforced only by
+whoever remembered, and `cd worker && npm run typecheck` had never once been
+run. `test/shipping.test.ts` fails if a suite falls out of that file again.
 
 `npm test` also rebuilds the engine bundle and writes its SHA-256 into
 `ios/LabyrinthVault/Support/BundleDigest.swift`. Skipping it and then building

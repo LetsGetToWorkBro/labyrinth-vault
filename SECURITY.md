@@ -33,7 +33,7 @@ hold funds you would miss with anything built on it.
 | Screen and reader disagreeing about a number | Every amount is formatted once, by `formatBtc`; a test fails if any Swift file converts satoshis itself | `src/bridge/summary.ts`, `test/app-wiring.test.ts` |
 | Secrets left unwipeable in memory | Everything secret is a `Uint8Array`; strings are immutable and cannot be zeroed, so becoming text is an explicit `reveal*` call, and a test enforces it | `src/keys/monero.ts`, `test/no-network.test.ts` |
 | Seed at rest | Argon2id + XChaCha20-Poly1305, parameters authenticated with the ciphertext | `src/keys/seal.ts` |
-| Tuning weakening the vault | Calibration walks up from the default and can only strengthen | `calibrateKdf` |
+| Tuning weakening the vault | There is no tuning: every vault is sealed at one set of parameters, RFC 9106's second recommendation, and the reader refuses a blob whose stated parameters fall outside the accepted floors and ceilings | `src/keys/seal.ts`, `test/seal.test.ts` |
 | Dependency compromise via version ranges | Every version exact-pinned; the transitive closure is walked by a test and must stay inside the audited family | `test/supply-chain.test.ts` |
 | Broken build generating wrong keys | Self-test against outside vectors at every launch; nothing runs if it fails | `src/selftest.ts` |
 | RNG failure at signing time | Deterministic nonces (RFC 6979) in the signer | `@scure/btc-signer` |
@@ -89,9 +89,18 @@ The claims above are tests, not prose: delete a defense and the suite goes
 red. Every one has been verified by mutation. Each guard was removed in turn,
 the suite re-run, and the failure confirmed. That includes the guards added by
 the most recent passes: the opaque-output refusal, the wallet binding, the
-`yourNet` arithmetic, the calibration floor, the account validation, the
+`yourNet` arithmetic, the KDF floors and ceilings, the account validation, the
 single-frame cap, the Monero container refusal, the byte-only passphrase and
 the bundle digest the app checks before it evaluates a line of its engine.
+
+The row about tuning used to read "Calibration walks up from the default and
+can only strengthen", citing `calibrateKdf`. That function walks upward and
+cannot weaken anything, and nothing has ever called it: `seal` takes no
+parameters across the bridge, so there is no path from a measurement to a
+sealed blob. Citing an unreachable function as a live defense is the thing
+this section exists to prevent, and it went unnoticed for exactly as long as
+the sentence had no test behind it. What holds the property now is that there
+is only one set of parameters to weaken, plus the reader's floors.
 
 That exercise is worth doing rather than assuming. One test in this suite
 originally passed with the defense it was written for deleted. It guarded a

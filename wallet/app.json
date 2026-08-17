@@ -36,19 +36,24 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "The camera is how this wallet reads a signature back from your vault. It is the only channel between the two halves, and nothing is ever sent anywhere else."
+          "cameraPermission": "The camera is how this wallet reads a signature back from your vault. It is the only channel between the two halves, and nothing is ever sent anywhere else.",
+          "microphonePermission": false
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#F3F0E9",
+          "imageWidth": 200
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false
     },
-    "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F3F0E9"
-    }
+    "icon": "./assets/icon.png"
   }
 }

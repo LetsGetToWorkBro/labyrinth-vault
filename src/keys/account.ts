@@ -34,6 +34,19 @@ import { restoreHeight, revealSecretHex, type Wallet as MoneroWallet, type Netwo
 /** Bumped only if the shape changes in a way an old reader would misread. */
 export const ACCOUNT_VERSION = 1;
 
+/**
+ * The highest restore height this format will carry.
+ *
+ * At two minutes a block this is a few hundred years of chain, so no honest
+ * export can reach it and no honest export ever needs to. The ceiling is here
+ * because the companion re-validates the same field when it reads its own
+ * pairing back off disk, and a height this door lets through but that door
+ * refuses is a pairing that is accepted on camera and then silently vanishes
+ * on the next launch, with no message at either end. One number, checked in
+ * both places, or the two checks disagree and the disagreement is invisible.
+ */
+export const MAX_RESTORE_HEIGHT = 100_000_000;
+
 export interface BitcoinAccount {
   v: number;
   chain: 'btc';
@@ -138,7 +151,11 @@ export function parseAccount(bytes: Uint8Array): Account | null {
     const height = raw['height'];
     const network = raw['network'];
     if (typeof address !== 'string' || typeof view !== 'string') return null;
-    if (typeof height !== 'number' || !Number.isInteger(height) || height < 0) return null;
+    /* Safe-integer rather than integer: `Number.isInteger(1e300)` is true, and
+     * a height above 2^53 is not a block number, it is a payload somebody
+     * edited. */
+    if (typeof height !== 'number' || !Number.isSafeInteger(height)) return null;
+    if (height < 0 || height > MAX_RESTORE_HEIGHT) return null;
     if (network !== 'mainnet' && network !== 'stagenet' && network !== 'testnet') return null;
     // 64 hex characters, or it is not a view key and the companion would fail
     // later and less clearly.

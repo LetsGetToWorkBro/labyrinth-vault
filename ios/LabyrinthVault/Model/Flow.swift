@@ -28,7 +28,17 @@ import Foundation
 /// screens; this enum is what the transition rules are written in terms of.
 /// Every `Route` case has exactly one kind, and `Vault.go` maps before asking.
 public enum RouteKind: String, CaseIterable, Sendable {
-    case launch, setup, unlock, home, airgap, export, scanner, acquiring, received
+    /* `received` used to sit between `acquiring` and `review`, for a screen
+     * that announced a completed transport. Nothing ever went there:
+     * `Vault.offer(frame:)` describes a payload the instant its last frame
+     * lands and routes on the verdict, so the scan path is scanner, acquiring,
+     * then review or refused. The screen meanwhile printed a fixed fragment
+     * count and a fixed payload kind, which is the sort of invented fact this
+     * app exists to refuse, and the permissive default at the bottom of
+     * `allowed` meant a future `go(.received)` would have been legal from
+     * anywhere. Deleted rather than repaired: an armed dead screen on the
+     * signing path is worth less than nothing. */
+    case launch, setup, unlock, home, airgap, export, scanner, acquiring
     case review, destination, approve, signed, signedQR, refused
     case keyImages
     /// The read-only Monero screen: one of `wallet2`'s own files, described.
@@ -55,9 +65,9 @@ public enum Flow {
     ///      that could reach `review` would be a refusal somebody can click
     ///      through, which is no refusal at all.
     ///   4. **Review comes from the reader.** `review` may follow only the
-    ///      scan path (`scanner`, `acquiring`, `received`), itself, or its
-    ///      detour. Nothing walks into a confirmation screen from the home
-    ///      screen with a stale summary.
+    ///      scan path (`scanner`, `acquiring`), itself, or its detour. Nothing
+    ///      walks into a confirmation screen from the home screen with a stale
+    ///      summary.
     public static func allowed(from: RouteKind, to: RouteKind) -> Bool {
         // Rule 3 first: from a refusal, two exits.
         if from == .refused {
@@ -72,14 +82,14 @@ public enum Flow {
         case .signedQR:
             return from == .signed
         case .review:
-            return from == .scanner || from == .acquiring || from == .received
+            return from == .scanner || from == .acquiring
                 || from == .destination || from == .review
         case .keyImages:
             /* The scan path only, same as review: the screen full of key
              * image frames exists because a payload just finished assembling,
              * and walking into it from anywhere else would animate a stale
              * answer about a request nobody just made. */
-            return from == .scanner || from == .acquiring || from == .received
+            return from == .scanner || from == .acquiring
         case .xmrFile:
             /* The scan path only, for the same reason as `keyImages`: the
              * screen exists because a payload just finished assembling, and
@@ -92,7 +102,7 @@ public enum Flow {
              * be unsafe, but because a route between the signing path and a
              * screen full of unverified amounts is the kind of adjacency that
              * later gets read as continuity. */
-            return from == .scanner || from == .acquiring || from == .received
+            return from == .scanner || from == .acquiring
         case .destination:
             return from == .review
         case .refused:
@@ -100,7 +110,7 @@ public enum Flow {
              * that never touch a transaction have nothing to refuse, and a
              * refusal appearing out of the settings screen would mean state
              * leaked somewhere it should not exist. */
-            return from == .scanner || from == .acquiring || from == .received
+            return from == .scanner || from == .acquiring
                 || from == .review || from == .destination || from == .approve
                 || from == .signed || from == .signedQR
         case .launch:

@@ -157,6 +157,7 @@ final class WireContractTests: XCTestCase {
         let all: [Refusal] = [
             .changeMismatch, .unknowableFee, .sighashFlags, .duplicateInput,
             .opaqueOutput, .noKeys, .unreadable, .moneroFile, .digestMismatch,
+            .engineRefused("None of the inputs belong to this wallet."),
             .unrecognised("x"),
         ]
         for refusal in all {

@@ -33,7 +33,7 @@ import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { Action, Gap, Notice, Screen } from '../design/atoms';
 import { Body, Label, Small, Strong } from '../design/text';
 import { Header } from '../components/chrome';
@@ -65,10 +65,13 @@ export function MoneroFileScreen({ navigation }: Nav<'MoneroFile'>) {
       const asset = picked.assets[0];
       if (!asset) return;
 
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      const bytes = bytesFromBase64(base64);
+      /* The bytes, without the base64 hop. `readAsStringAsync` is not a slow
+       * path on this version of expo-file-system, it is a deprecation stub
+       * whose whole body throws, so this screen answered every file with "that
+       * file could not be read off this device" and blamed the file. The rest
+       * of the app moved to `File` two commits before this screen was written;
+       * `state/vaultFileStore.ts` is the other side of the same trip. */
+      const bytes = new File(asset.uri).bytesSync();
 
       const verdict = offerMoneroFile(bytes);
       setOffer(verdict);
@@ -161,31 +164,4 @@ export function MoneroFileScreen({ navigation }: Nav<'MoneroFile'>) {
       </ScrollView>
     </Screen>
   );
-}
-
-/**
- * Base64 to bytes, without `atob` or `Buffer`.
- *
- * React Native has neither reliably, and `expo-file-system` hands back base64
- * because a JavaScript string is the only thing that crosses its bridge. This
- * is the same alphabet the standard uses, decoded four characters at a time.
- */
-function bytesFromBase64(text: string): Uint8Array {
-  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  const clean = text.replace(/[^A-Za-z0-9+/]/g, '');
-  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
-  let buffer = 0;
-  let bits = 0;
-  let at = 0;
-  for (const character of clean) {
-    const value = ALPHABET.indexOf(character);
-    if (value < 0) continue;
-    buffer = (buffer << 6) | value;
-    bits += 6;
-    if (bits >= 8) {
-      out[at++] = (buffer >>> (bits - 8)) & 0xff;
-      bits -= 8;
-    }
-  }
-  return out.subarray(0, at);
 }

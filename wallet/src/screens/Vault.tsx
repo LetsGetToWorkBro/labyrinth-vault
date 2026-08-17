@@ -84,8 +84,22 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
               <FactRow label="LAST SESSION">
                 {vault.lastSession ? sessionTime(vault.lastSession, now) : 'never'}
               </FactRow>
+              {/* The pairing's key, not the selection's.
+                  `store.selectedAccountKey` is the account key of whichever account
+                  the app is looking at, so with a vault paired and the wallet
+                  on this phone selected, this row printed that wallet's own
+                  zpub under the heading THIS PAIRING. Two things wrong at
+                  once: a false statement about where a key came from, and an
+                  invitation to hand out the one string that links every
+                  address of the hot wallet to every other. */}
               <FactRow label="ACCOUNT KEY" last>
-                <Mono size={13}>{store.accountKey ? elide(store.accountKey, 10, 8) : 'NOT PAIRED'}</Mono>
+                <Mono size={13}>
+                  {store.pairing?.btc
+                    ? elide(store.pairing.btc.zpub, 10, 8)
+                    : store.pairing?.xmr
+                      ? 'MONERO ONLY'
+                      : 'NOT PAIRED'}
+                </Mono>
               </FactRow>
 
               <Gap size={space.gap} />
@@ -175,7 +189,13 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
 
           <Gap size={space.section} />
           <SectionHead>WHAT EACH HALF DOES</SectionHead>
-          <Halves />
+          {/* `hot` rather than the selected account, because this panel is
+              about the two devices rather than about one account: the question
+              it answers is "what does the phone in my hand do", and on a phone
+              holding a seed the answer is not "holds no keys" no matter which
+              row happens to be selected. 130 lines below this, `SecurityScreen`
+              was made conditional for exactly this reason. */}
+          <Halves anyKeysHere={store.hot !== null} />
 
           {/* The note that used to live here described the fixture: "the state
               above is a fixture, and the send flow signs for itself with a
@@ -189,14 +209,19 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
   );
 }
 
-function Halves() {
+function Halves({ anyKeysHere }: { anyKeysHere: boolean }) {
   return (
     <View style={{ flexDirection: 'row', gap: space.step }}>
       <Panel style={{ flex: 1, padding: space.gap, gap: space.snug }}>
         <Label tone={color.bone}>THIS WALLET</Label>
         <Small tone={color.slate}>Online</Small>
         <Gap size={space.snug} />
-        {['Watches the chain', 'Builds payments', 'Broadcasts', 'Holds no keys'].map((line) => (
+        {[
+          'Watches the chain',
+          'Builds payments',
+          'Broadcasts',
+          anyKeysHere ? 'Holds keys for one wallet' : 'Holds no keys',
+        ].map((line) => (
           <Small key={line} tone={color.ash}>
             {line}
           </Small>
@@ -312,7 +337,24 @@ function Step({ number, title, body }: { number: string; title: string; body: st
 // ---------------------------------------------------------- security center
 
 export function SecurityScreen({ navigation }: Nav<'Security'>) {
-  const { vault, now, hot } = useStore();
+  const { vault, now, hot, forgetHotKeys } = useStore();
+  /*
+   * Forgetting, in two taps, with the cost printed between them.
+   *
+   * `forgetHotKeys` was written, documented and exported, and no screen called
+   * it. Two places told people to use it: `Backup.tsx` refuses a second wallet
+   * with "forget the wallet on this phone first", and the Nodes screen's
+   * FORGET EVERYTHING STORED button cleared the node file and neither keychain
+   * item. Both were dead ends, and one of them read as a wipe that had not
+   * happened.
+   *
+   * Not a route, because the thing being confirmed is one sentence long and a
+   * screen push would be somewhere a back gesture can strand a half-made
+   * decision. Not a system alert either: the sentence that matters here is
+   * three lines and an alert would truncate it into "are you sure".
+   */
+  const [asking, setAsking] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
 
   return (
     <Screen>
@@ -405,6 +447,39 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
               <Action label="SHOW THE RECOVERY WORDS" quiet onPress={() => navigation.navigate('Backup')} />
               <Gap size={space.snug} />
               <Action label="RESTORE ANOTHER CHAIN" quiet onPress={() => navigation.navigate('Restore')} />
+              <Gap size={space.snug} />
+              {asking ? (
+                <>
+                  {/* `forget` rather than `delete`, the word `keyvault.ts`
+                      chose and for its reason: the coins stay on the chain and
+                      the words on paper still restore them. A screen saying
+                      "delete wallet" invites somebody to believe they
+                      destroyed something they did not, and then to stop
+                      looking after the paper. */}
+                  <Notice tone="alarm" title="THE WORDS ARE THE ONLY WAY BACK">
+                    This removes the seed for this wallet from the keychain. Nothing on the chain
+                    changes and the words you wrote down still restore it anywhere. If they are not
+                    written down, there is no other copy of them on this phone or anywhere else.
+                  </Notice>
+                  <Gap size={space.step} />
+                  <Action
+                    label={forgetting ? 'FORGETTING…' : 'YES, FORGET THE KEYS'}
+                    tone={color.alarm}
+                    disabled={forgetting}
+                    onPress={() => {
+                      setForgetting(true);
+                      void forgetHotKeys().finally(() => {
+                        setForgetting(false);
+                        setAsking(false);
+                      });
+                    }}
+                  />
+                  <Gap size={space.snug} />
+                  <Action label="KEEP THEM" quiet disabled={forgetting} onPress={() => setAsking(false)} />
+                </>
+              ) : (
+                <Action label="FORGET THE KEYS ON THIS PHONE" quiet onPress={() => setAsking(true)} />
+              )}
             </>
           )}
 

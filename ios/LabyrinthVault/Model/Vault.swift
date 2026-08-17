@@ -129,7 +129,6 @@ enum Route: Equatable {
     case export
     case scanner
     case acquiring
-    case received
     /// Review holds the summary; approve additionally holds the digest the
     /// person scrolled past. The compiler enforces the order.
     case review(TxSummary)
@@ -231,11 +230,17 @@ final class Vault: ObservableObject {
     @Published private(set) var biometricsEnrolled = false
     @Published private(set) var biometricKind: BiometricUnlock.Kind = .none
 
-    /// Re-read what the keychain and the sensor say. Cheap, and called at
-    /// boot, on returning to the foreground, and after enrolling or forgetting
-    /// — enrollment can be revoked from outside this app, by adding a face or
-    /// turning the passcode off, and a button offering something that is gone
-    /// is worse than no button.
+    /// Re-read what the keychain and the sensor say. Cheap, and called at the
+    /// end of `boot()`, whenever the unlock screen appears, and after
+    /// enrolling, forgetting or erasing: enrollment can be revoked from
+    /// outside this app, by adding a face or turning the passcode off, and a
+    /// button offering something that is gone is worse than no button.
+    ///
+    /// Those three are the whole of it, and there is deliberately no
+    /// foreground hook. This comment used to promise one, which was worth
+    /// nothing twice over: `sleep()` routes to the unlock screen on every
+    /// backgrounding a vault survives, so the screen that reads this state is
+    /// also the screen whose appearance already refreshes it.
     func refreshBiometricState() {
         biometricKind = BiometricUnlock.kind()
         biometricsEnrolled = biometricKind.isAvailable && BiometricUnlock.isEnrolled()
@@ -274,15 +279,22 @@ final class Vault: ObservableObject {
         let reason = "Unlock the vault"
         switch await BiometricUnlock.recall(reason: reason) {
         case .passphrase(let passphrase):
-            let failure = await openVault(passphrase: passphrase)
-            if failure != nil {
+            switch await openVault(passphrase: passphrase) {
+            case .opened:
+                return nil
+            case .refused:
                 /* The stored passphrase does not open this vault, so it is
                  * worse than useless: it is a button that fails every time.
                  * Drop it and let the person type. */
                 forgetPassphrase()
                 return "The stored passphrase no longer opens this vault, so it was discarded. Enter it to unlock."
+            case .notAttempted(let sentence):
+                /* The seal was never tried, so nothing here is evidence about
+                 * the stored passphrase and the enrollment stays. Discarding
+                 * it on this branch would throw away a working shortcut over a
+                 * second tap arriving while the first was still deriving. */
+                return sentence
             }
-            return nil
         case .declined:
             /* Cancelled, or not recognized. Nothing to say: the passphrase
              * field is already on the screen underneath. */
@@ -328,12 +340,14 @@ final class Vault: ObservableObject {
     /// instead of spinning.
     var passSeconds: Double? { SealedStore.passSeconds() }
 
-    /// Whether key stretching runs in compiled code or in the interpreter.
+    /// Which Argon2id key stretching actually runs on this build.
     ///
-    /// Reported on the Settings screen because the difference is a minute per
-    /// unlock and the failure is silent: a native derivation that does not
-    /// install is not an error anywhere, it is just the slow app back again.
-    var kdfIsNative: Bool { engine?.kdfIsNative ?? false }
+    /// Reported on the Settings screen because two of the three states are
+    /// invisible otherwise. `engine` costs a minute per unlock and nothing
+    /// says so; `mismatch` seals vaults no other build can open and nothing
+    /// says that either. Defaults to `engine` with no engine, which is the
+    /// state that claims the least.
+    var kdfSource: KdfSource { engine?.kdfSource ?? .engine }
 
     /// Frames gathered so far, for the scanner's progress line.
     @Published private(set) var scanProgress: (have: Int, total: Int) = (0, 0)
@@ -405,6 +419,13 @@ final class Vault: ObservableObject {
                 self.checks = checks
                 self.engineProblem = problem
                 self.stored = stored
+                /* The one refresh that runs on every launch. The unlock screen
+                 * refreshes on its own appearance, but a vault created in this
+                 * session never passes it: setup ends at home, and Settings
+                 * and Recovery both decide what to offer from
+                 * `biometricsEnrolled`. Without this they would decide it from
+                 * a default rather than from the keychain. */
+                self.refreshBiometricState()
                 self.booting = false
                 self.booted = true
             }
@@ -532,6 +553,35 @@ final class Vault: ObservableObject {
 
     // MARK: - The session
 
+    /// What an unlock attempt came back as.
+    ///
+    /// Three cases rather than an optional sentence, and the third case is the
+    /// reason. `openVault` returned `String?`, where `nil` meant "the vault
+    /// opened" and its re-entrancy guard also returned `nil` when it declined
+    /// to run at all. A second tap arriving while the first derivation was
+    /// still going therefore reported success for an attempt that never
+    /// happened, and `UnlockView` reads that as proof the seal opened before
+    /// storing the passphrase behind Face ID: `BiometricUnlock.enroll`
+    /// documents itself as legal only for a passphrase that has just opened
+    /// this vault.
+    ///
+    /// Telling `refused` from `notAttempted` is the other half, and it is the
+    /// half that costs something. `unlockWithBiometrics` throws the stored
+    /// passphrase away when the seal refuses it, which is right, and would
+    /// throw away a working enrollment over a double tap if the two outcomes
+    /// were one.
+    enum Opened: Equatable {
+        /// The seal opened. The session is live and the route has moved home.
+        case opened
+        /// The seal did not open under this passphrase. The only outcome that
+        /// is evidence about the passphrase itself.
+        case refused(String)
+        /// Nothing was tried: no engine, no vault on this device, or an
+        /// attempt already in flight. The sentence is nil for the last of
+        /// those, because a person who tapped twice needs no telling.
+        case notAttempted(String?)
+    }
+
     /// Open the vault from the unlock screen.
     ///
     /// The passphrase is turned into bytes and zeroed on the way out, on every
@@ -541,13 +591,13 @@ final class Vault: ObservableObject {
     ///
     /// The key stretching is tuned to cost real time — that is the defense —
     /// so it runs off the main thread while `opening` is true. On success the
-    /// route moves home and the return is nil; on failure the return is the
-    /// engine's sentence, which deliberately does not distinguish a wrong
-    /// passphrase from a damaged blob (see src/keys/seal.ts).
-    func openVault(passphrase: String) async -> String? {
-        guard let engine else { return "The vault engine is not loaded." }
-        guard let sealedHex else { return "No vault exists on this device." }
-        guard !opening else { return nil }
+    /// route moves home; on a refusal the answer carries the engine's
+    /// sentence, which deliberately does not distinguish a wrong passphrase
+    /// from a damaged blob (see src/keys/seal.ts).
+    func openVault(passphrase: String) async -> Opened {
+        guard let engine else { return .notAttempted("The vault engine is not loaded.") }
+        guard let sealedHex else { return .notAttempted("No vault exists on this device.") }
+        guard !opening else { return .notAttempted(nil) }
         opening = true
         /* ## Buying a little time against the app switcher
          *
@@ -627,7 +677,7 @@ final class Vault: ObservableObject {
             /* The vault opened, so this is the one moment its passphrase is
              * known to be correct — which is the only moment a migration can
              * safely run. */
-            migrateToLayeredScheme(engine: engine, sealedHex: sealedHex, passphrase: passphrase)
+            await migrateToLayeredScheme(engine: engine, sealedHex: sealedHex, passphrase: passphrase)
             // Identity from the account key, so it means something. The
             // formatting lives in Model/Identity.swift, where it is compiled
             // and tested off-device.
@@ -636,10 +686,10 @@ final class Vault: ObservableObject {
             notice = nil
             Haptic.signed()
             go(.home)
-            return nil
+            return .opened
         case .failure(let error):
             Haptic.refuse()
-            return error.localizedDescription
+            return .refused(error.localizedDescription)
         }
     }
 
@@ -671,16 +721,36 @@ final class Vault: ObservableObject {
     /// vault. If any of this fails they still have it, sealed the old way, and
     /// telling them their unlock half-worked would be alarming about something
     /// that cost them nothing. The next unlock tries again.
-    private func migrateToLayeredScheme(engine: Engine, sealedHex: String, passphrase: String) {
+    ///
+    /// ## Why the reseal is detached
+    ///
+    /// `reseal` is three Argon2id derivations, not one: it unseals under the
+    /// old passphrase, seals under the new one, and unseals the result to
+    /// prove it opens before handing it back. This class is `@MainActor`, so
+    /// running that inline blocks the thread that draws. Every other
+    /// derivation in this file is already detached; this was the exception,
+    /// and it sat inside the one function that takes the trouble to hold a
+    /// background-task assertion open.
+    ///
+    /// The size of it depends on a failure nobody is told about. Where the
+    /// native derivation adopted, three passes are a few seconds. Where it did
+    /// not, which `Settings.swift` documents as silent ("it falls back and the
+    /// app is merely slow"), it is minutes of a main thread that cannot draw,
+    /// under a screen whose own copy says "Not frozen" and offers a clock that
+    /// has stopped ticking. The caller awaits this, so `opening` stays true and
+    /// the background-task assertion stays alive across it.
+    private func migrateToLayeredScheme(engine: Engine, sealedHex: String, passphrase: String) async {
         guard SealedStore.existingDeviceSecret() == nil else { return }
         guard let deviceHex = SealedStore.deviceSecretHex(orMakeWith: Engine.freshRandomBytes),
               let randomHex = Engine.freshRandomHex(bytes: Vault.resealRandomBytes) else { return }
 
-        let resealed = Passphrase.withBytes(of: passphrase) { from -> String? in
-            Passphrase.withLayeredBytes(deviceHex: deviceHex, user: passphrase) { to -> String? in
-                try? engine.reseal(sealedHex: sealedHex, from: from, to: to, randomHex: randomHex).sealed
+        let resealed: String? = await Task.detached(priority: .userInitiated) {
+            Passphrase.withBytes(of: passphrase) { from -> String? in
+                Passphrase.withLayeredBytes(deviceHex: deviceHex, user: passphrase) { to -> String? in
+                    try? engine.reseal(sealedHex: sealedHex, from: from, to: to, randomHex: randomHex).sealed
+                }
             }
-        }
+        }.value
         guard let resealed, SealedStore.save(resealed) == nil else { return }
         stored = .found(resealed)
     }
@@ -721,8 +791,23 @@ final class Vault: ObservableObject {
     /// wiped, and the device is back where setup starts. Recovery from here
     /// is the phrases on paper, in anyone's standard wallet software — there
     /// is deliberately no copy anywhere this method could miss.
+    ///
+    /// Both keychain owners are told, and the second one is the easy one to
+    /// forget. `SealedStore.erase()` drops the blob, the witness, the timing
+    /// and the device secret, and argues in its own comment that the device
+    /// half must go with the blob it sealed. The same argument applies one
+    /// account over: `BiometricUnlock` holds the passphrase a person typed,
+    /// not the layered bytes, so leaving it behind means the *next* vault made
+    /// on this phone under the same passphrase opens from a stale item nobody
+    /// chose to keep. Worse, `Unlock` offers the enrollment box only when
+    /// nothing is stored, so that vault would be handed an UNLOCK WITH FACE ID
+    /// lever it never opted into, and would never be shown the sentence saying
+    /// what biometric unlock costs. Between an erase and the next setup there
+    /// is no screen that could remove it either: the STOP USING FACE ID lever
+    /// lives in Settings, and Settings needs a vault.
     func eraseVault() {
         SealedStore.erase()
+        forgetPassphrase()
         lock()
         stored = .none
         creation = .idle
@@ -942,7 +1027,6 @@ final class Vault: ObservableObject {
         case .export: .export
         case .scanner: .scanner
         case .acquiring: .acquiring
-        case .received: .received
         case .review: .review
         case .destination: .destination
         case .approve: .approve
@@ -985,9 +1069,23 @@ final class Vault: ObservableObject {
             let signed = try engine.sign(psbtHex: psbt, approvedDigest: reviewedDigest)
             Haptic.signed()
             go(.signed(tx, signed))
-        } catch {
+        } catch EngineError.refusedAs(let code, _) {
+            /* The same first catch the Monero path has. Without it the two
+             * signers disagreed about what a named refusal is, which is the
+             * kind of asymmetry that gets copied rather than noticed. */
             Haptic.refuse()
-            go(.refused(.digestMismatch))
+            go(.refused(Refusal(code: code)))
+        } catch {
+            /* Not a digest mismatch. This used to route here, which threw the
+             * engine's sentence away and accused the transaction of having
+             * changed between two screens. The reachable case is a PSBT none
+             * of whose inputs belong to this vault: `foreign-input` is
+             * deliberately not fatal at describe time, so it passes review and
+             * `signPsbt` refuses at the end with "None of the inputs belong to
+             * this wallet". SCAN AGAIN, which is the only lever on that
+             * screen, can never fix it. */
+            Haptic.refuse()
+            go(.refused(.engineRefused(error.localizedDescription)))
         }
     }
 
@@ -1064,8 +1162,10 @@ final class Vault: ObservableObject {
             Haptic.refuse()
             go(.refused(Refusal(code: code)))
         } catch {
+            // Same reasoning as the Bitcoin path: the engine said why, and
+            // replacing that with a digest accusation invents a fact.
             Haptic.refuse()
-            go(.refused(.digestMismatch))
+            go(.refused(.engineRefused(error.localizedDescription)))
         }
     }
 }

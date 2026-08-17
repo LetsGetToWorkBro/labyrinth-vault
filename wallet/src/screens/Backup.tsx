@@ -102,6 +102,14 @@ export function CreateWalletScreen({ navigation }: Nav<'CreateWallet'>) {
           'only way back. Restore a phrase to add a chain, or forget the wallet on this ' +
           'phone first if you mean to start over.'
         }
+        /* Both halves of that sentence lead somewhere now. The forgetting one
+         * named an action no screen offered for the whole of the hot-spending
+         * work, which is a refusal that tells somebody to do something they
+         * cannot do. */
+        actions={[
+          { label: 'RESTORE A PHRASE', onPress: () => navigation.replace('Restore') },
+          { label: 'FORGET THE WALLET ON THIS PHONE', onPress: () => navigation.replace('Security') },
+        ]}
       />
     );
   }
@@ -416,14 +424,37 @@ function WordGrid({ heading, words, shown }: { heading: string; words: string[];
   );
 }
 
-/** A screen that exists only to say why it has nothing to show. */
-function Refusal({ onBack, title, body }: { onBack: () => void; title: string; body: string }) {
+/**
+ * A screen that exists only to say why it has nothing to show.
+ *
+ * With somewhere to go, when there is somewhere. A refusal naming a way out
+ * and offering no way to take it is the shape this repository keeps finding:
+ * a person reads "forget the wallet on this phone first" and then goes looking
+ * for a control that was never wired to anything.
+ */
+function Refusal({
+  onBack,
+  title,
+  body,
+  actions,
+}: {
+  onBack: () => void;
+  title: string;
+  body: string;
+  actions?: { label: string; onPress: () => void }[] | undefined;
+}) {
   return (
     <Screen>
       <StatusBar style="light" />
       <Header onBack={onBack} overline="RECOVERY" title={title} />
       <View style={{ paddingHorizontal: space.gutter }}>
         <Body>{body}</Body>
+        {actions?.map((action) => (
+          <View key={action.label}>
+            <Gap size={space.gap} />
+            <Action label={action.label} quiet onPress={action.onPress} />
+          </View>
+        ))}
       </View>
     </Screen>
   );

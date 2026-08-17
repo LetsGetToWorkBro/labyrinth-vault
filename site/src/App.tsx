@@ -207,7 +207,7 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="architecture section-pad">
-        <h2>TWO DEVICES.<br />ONE WALLET.<br /><span>ZERO PRIVATE-KEY EXPOSURE.</span></h2>
+        <h2>TWO DEVICES.<br />ONE WALLET.<br /><span>NO KEY EVER CROSSES.</span></h2>
         <div className="architecture-track">
           {architecture.map(([actor, action], index) => <article key={action}><span>{String(index + 1).padStart(2, "0")}</span><b>{actor}</b><p>{action}.</p></article>)}
         </div>
@@ -262,7 +262,7 @@ export default function LabyrinthSite() {
       </section>
 
       <section id="wallet" className="wallet-section section-pad">
-        <div className="wallet-copy"><span className="product-name">LABYRINTH WALLET</span><h2>THE WALLET<br />YOU USE<br />EVERY DAY.</h2><p>Watch the chain. Prepare transactions. Track your funds. Broadcast signed transactions. The Wallet never needs your private keys.</p></div>
+        <div className="wallet-copy"><span className="product-name">LABYRINTH WALLET</span><h2>THE WALLET<br />YOU USE<br />EVERY DAY.</h2><p>Watch the chain. Prepare transactions. Track your funds. Broadcast signed transactions. An account paired from a Vault is watch-only here, forever: the Wallet cannot sign for it, whatever else the phone is holding.</p><p>It can also hold a wallet of its own, and that is the smaller promise. Its phrase lives in the iOS keychain and every signature asks for Face ID first, which is protection by the device rather than by something you know. It is for the balance you carry. Anything you are saving belongs on the other phone.</p></div>
         <Phone mode="wallet" />
       </section>
 
@@ -286,7 +286,7 @@ export default function LabyrinthSite() {
             <span>XMR</span><h3>MONERO</h3><p>Private-by-default protocol. The same separation between online watch and offline authority.</p>
           </article>
         </div>
-        <p className="offline-line">YOUR KEYS STAY OFFLINE.</p>
+        <p className="offline-line">WATCH ONLINE. SIGN OFFLINE.</p>
       </section>
 
       <section className="drawer-section">
@@ -295,7 +295,7 @@ export default function LabyrinthSite() {
       </section>
 
       <section className="manifesto section-pad">
-        <h2>NO CLOUD.<br />NO ACCOUNT.<br />NO PRIVATE KEYS<br />ON THE ONLINE DEVICE.<br />NO NETWORK<br />IN THE VAULT.<br />NO BLIND SIGNING.<br />NO “TRUST US.”</h2>
+        <h2>NO CLOUD.<br />NO ACCOUNT.<br />NO KEY LEAVES<br />THE VAULT.<br />NO NETWORK<br />IN THE VAULT.<br />NO BLIND SIGNING.<br />NO “TRUST US.”</h2>
         <div className="verify-call">VERIFY IT.</div>
         <p className="audit-warning">The software is early. It has not been independently audited. Do not put funds you cannot afford to lose into an unaudited system.</p>
       </section>
@@ -311,7 +311,7 @@ export default function LabyrinthSite() {
 
       <section className="comparison section-pad">
         <h2>THE WALLET WATCHES.<br />THE VAULT SIGNS.</h2>
-        <div className="comparison-grid"><article><h3>LABYRINTH WALLET</h3><strong>ONLINE</strong><span>WATCHES CHAIN</span><span>BUILDS TRANSACTIONS</span><span>SWAPS</span><span>BROADCASTS</span></article><article><h3>LABYRINTH VAULT</h3><strong>OFFLINE</strong><span>HOLDS KEYS</span><span>READS TRANSACTIONS</span><span>VERIFIES</span><span>SIGNS</span></article></div>
+        <div className="comparison-grid"><article><h3>LABYRINTH WALLET</h3><strong>ONLINE</strong><span>WATCHES CHAIN</span><span>BUILDS TRANSACTIONS</span><span>SWAPS</span><span>BROADCASTS</span><span>CAN HOLD A SMALL WALLET</span></article><article><h3>LABYRINTH VAULT</h3><strong>OFFLINE</strong><span>HOLDS THE KEYS THAT MATTER</span><span>READS TRANSACTIONS</span><span>VERIFIES</span><span>SIGNS</span></article></div>
       </section>
 
       <section id="start" className="start-section section-pad">

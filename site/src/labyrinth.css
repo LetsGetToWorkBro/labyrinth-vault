@@ -265,6 +265,10 @@ a { color: inherit; text-decoration: none; }
 .wallet-section { min-height: 130svh; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 9vw; background: radial-gradient(circle at 80% 45%, rgb(241 243 244 / 0.08), transparent 30%), var(--lab-surface); }
 .wallet-copy h2 { font-size: clamp(4rem, 8.5vw, 9rem); line-height: 0.83; letter-spacing: -0.075em; }
 .wallet-copy p { max-width: 32rem; color: var(--lab-muted); font-size: 1.15rem; line-height: 1.6; }
+/* The second paragraph is the smaller promise, set smaller. Same column, so
+   the eye reads it as a qualification of the sentence above rather than as a
+   second headline claim, which is what it is. */
+.wallet-copy p + p { margin-top: 1.25rem; font-size: 1rem; }
 
 .swap-section { display: grid; grid-template-columns: 1fr 1fr; gap: 8vw; background: #0a0d10; }
 .swap-title h2 { font-size: clamp(3.8rem, 7.6vw, 8rem); line-height: 0.86; letter-spacing: -0.07em; }

@@ -1,39 +1,37 @@
-Labyrinth Wallet is the everyday half of a two-device wallet. It watches your Bitcoin and Monero, builds the payments, and hands them to an airgapped vault on a second phone to be signed.
+Labyrinth Wallet is the everyday half of a two-device wallet. It watches your Bitcoin and Monero, builds the payments, and hands them to an airgapped vault on a second phone to be signed. It can hold a smaller wallet of its own.
 
-It has never seen a private key and there is no screen that would accept one.
+TWO KINDS OF ACCOUNT
 
-WHAT IT IS ALLOWED TO KNOW
+An account paired from a vault is watch-only here, forever. This half cannot sign for it whatever else it happens to be holding: one function takes one fact, and there is no setting to talk past. Every screen says which kind you are on.
 
-An extended public key, a Monero view key, addresses, balances, unspent outputs, fee markets, history. Every one of those is public information, and none of it can move a coin. That is what lets this half live on the phone you carry, with a network and an app store on it.
+An account made on this phone is the other trade, made on purpose and said out loud. Its recovery phrase is kept by the iOS keychain: tied to this device, needing it unlocked, with no copy riding a backup onto your next phone. What that leaves is a phone taken while unlocked, so every signature asks for Face ID first, and so does reading the phrase back. It is a real reduction against a vault, and anything worth more than the phone belongs on the other half.
 
-WHAT MAKES THE RETURN TRIP THE INTERESTING PART
+WHAT A PAIRED ACCOUNT REVEALS
 
-The obvious reading is that the vault is the careful half and this one is a display. The missing half of that thought: after the vault signs, the signed bytes come back through a camera into an app on a networked phone, and the thing that broadcasts is this device.
+An extended public key, a Monero view key, addresses, balances, unspent outputs, fee markets, history. All of it is public, and none of it can move a coin, which is what lets this half live on the phone you carry with a network and an app store on it. An address is public too, so receiving needs no vault while spending from a paired account does: that asymmetry is the architecture, visible.
 
-So before anything is published, the wallet compares what came back against the intent it recorded before the vault ever saw it. The same coins, the same recipient, the same amount, the same fee, no extra outputs. A mismatch is terminal. There is no state in the app that can broadcast after one, which is why there is no "broadcast anyway" button: there is nowhere for it to lead.
+THE RETURN TRIP IS THE INTERESTING PART
 
-SWAPPING, AND WHAT NOTHING CAN CHECK
+The obvious reading is that the vault is the careful half and this one a display. The missing half of that thought: the signed bytes come back through a camera into an app on a networked phone, and the thing that broadcasts is this device.
 
-A swap has an address in it that appears in no transaction, so it reaches no confirmation screen and the vault cannot help. That is the payout address, and the wallet derives it from your own account key rather than offering a field to paste one into. The order that comes back from the exchange is compared against the one that was sent, and a refusal produces no order at all, which means no address to deposit to.
+So before anything is published, the wallet compares what came back against the intent it recorded before the vault ever saw it. The same coins, recipient, amount and fee, no extra outputs. A mismatch is terminal: no state in the app can broadcast after one, which is why there is no "broadcast anyway" button. Nowhere for it to lead.
 
-Once an order is verified the deposit is an ordinary payment, through the same vault and the same confirmation screen as anything else.
+SWAPS, AND WHAT NOTHING CAN CHECK
 
-A swap tells an exchange your IP address and two addresses you own. The app says so every time, not once.
+A swap has an address in it that appears in no transaction, so it reaches no confirmation screen and the vault cannot help. That is the payout address, and the wallet derives it from your own account key rather than offering a field to paste one into. The order that comes back is compared against the one sent, and a refusal produces no order, so there is no address to deposit to.
 
-RECEIVING WORKS ALONE
-
-An address is public information derived from a public key, so a wallet with no keys can hand one out all day. Receiving needs no vault. Spending does. That asymmetry is the architecture, visible.
+A swap tells an exchange your IP address and two addresses you own. The app says so every time.
 
 YOU CHOOSE THE NODE
 
-The wallet reads the chain through a node, and there is none set by default. Every other light wallet ships pointing at a server the developer picked, which works immediately and means one person decided who gets to watch every user's addresses forever.
+The wallet reads the chain through a node, and there is none set by default. Every other light wallet ships pointing at a server the developer picked, which works at once and means one person decided who watches every user's addresses forever.
 
-This app makes that choice in front of you, on a screen that says what it costs first. A public Bitcoin node learns every address in your account, because a light client has to ask about each one. Your own node learns nothing. Running your own is presented as the ordinary option, with the command to do it.
+The app makes that choice in front of you, on a screen that says what it costs first. A public Bitcoin node learns every address in your account, because a light client asks about each one. Your own learns nothing, and running one is the ordinary option here, with the command to do it.
 
-Bitcoin works against any Esplora node, including one on your own machine. Monero scans on the device: the node serves blocks, your view key does the arithmetic here, and the node never learns which outputs are yours. Every amount found is proved against the commitment on the chain before it is counted. What a view key alone cannot see is spending, so the number is labeled as what arrived until your vault answers a key image round trip, and after that, spends are subtracted and the screen says where the answer came from.
+Monero scans on the device: the node serves blocks, your view key does the arithmetic here, and the node never learns which outputs are yours. Every amount found is proved against its commitment on the chain before it counts. A view key alone cannot see spending, so a paired account's total is labeled as what arrived until your vault answers a key image round trip.
 
-Prices never come from a price service this phone talks to, because a wallet that asks what bitcoin is worth tells whoever answers that you are running one, on every refresh. When Labyrinth's relay is available, it asks instead and serves every client the same cached answer, so the price source sees a server on a timer and never you. When it is not, balances are shown in coin rather than at a made-up rate.
+Prices never come from a price service this phone talks to: a wallet that asks what bitcoin is worth tells whoever answers that you run one, on every refresh. When Labyrinth's relay is available it asks instead and serves every client the same cached answer, so the price source sees a server on a timer and never you. Otherwise balances are shown in coin.
 
-With no node set, every number is a fixture and the app says DEMO DATA on screen.
+Watching nothing, the wallet says so and shows no balance: no fixture stands in for money. A swap quote with no relay configured is a worked example, under a DEMO DATA notice.
 
 Do not put money on this.

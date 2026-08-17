@@ -111,6 +111,9 @@ function spendOf(images: string[], hash: string): BuiltTx {
 
 interface FakeChain {
   blocks: Record<number, BuiltTx[]>;
+  /** The highest block this chain has. `get_info` reports `tip + 1`, the way
+   *  monerod reports a length rather than an index, and `get_block` above it
+   *  fails, so a caller that confuses the two is caught here. */
   tip?: number;
   /** image → status for /is_key_image_spent. Absent means the route 404s. */
   spentAnswers?: Record<string, number>;
@@ -133,12 +136,19 @@ function fakeNode(chain: FakeChain): Transport & { askedSpent: string[][] } {
           status: 200,
           text: JSON.stringify({
             id: '0', jsonrpc: '2.0',
-            result: { height: chain.tip ?? 1, target_height: 0, synchronized: true, mainnet: true, status: 'OK' },
+            result: { height: (chain.tip ?? 1) + 1, target_height: 0, synchronized: true, mainnet: true, status: 'OK' },
           }),
         };
       }
       if (request.path === '/json_rpc' && body['method'] === 'get_block') {
         const height = Number((body['params'] as { height?: number }).height);
+        if (chain.tip !== undefined && height > chain.tip) {
+          return {
+            ok: true, status: 200,
+            text: JSON.stringify({ id: '0', jsonrpc: '2.0',
+              error: { code: -2, message: 'Requested block height: too big.' } }),
+          };
+        }
         return {
           ok: true,
           status: 200,
@@ -421,6 +431,7 @@ describe('the watcher, whole', () => {
     new NodeWatcher(nodes, null, { btc: null, xmr: transport }, 1_700_000_000_000, {
       account,
       scan: { birth: 10, height: 10 },
+      source: 'vault',
     });
 
   it('turns received into a balance once images arrive and a spend lands', async () => {
@@ -547,6 +558,7 @@ describe('the activity list', () => {
     const w = new NodeWatcher(nodes, null, { btc: null, xmr: node }, 1_700_000_000_000, {
       account,
       scan: { birth: 10, height: 10 },
+      source: 'vault',
     });
     await w.refresh(1_700_000_000_000);
 
@@ -587,5 +599,73 @@ describe('the sentence under the number', () => {
   it('counts the outputs still waiting for an image', () => {
     const sentence = moneroCaveat(status({ images: 1 }), 0, { images: 1, uncovered: 2, spentCount: 0, spentUnknown: 0 });
     expect(sentence).toContain('2 outputs have no key image yet');
+  });
+
+  /* W-C4's residual, which survived the fix that made a hot Monero account
+   * spendable. Every clause below named a vault: the spend key "lives in the
+   * vault", the images are ones "your vault computed", and an uncovered
+   * output waits "until the vault answers for it". All three are read under
+   * the balance on Home and on Asset, which are the screens where the number
+   * is looked at, and all three are false about twenty-five words sitting in
+   * this phone's own keychain. The account may not have a vault at all.
+   *
+   * The four cases below are the four branches. A test on one of them would
+   * have passed against the version that fixed only the sentence somebody
+   * happened to be reading. */
+  describe('names the device that actually holds the key', () => {
+    it('tells a hot account its own scan will do the subtracting', () => {
+      const sentence = moneroCaveat(status(), 0, undefined, 'hot');
+      expect(sentence).toContain('that key is on this phone');
+      expect(sentence, 'a wallet with no vault is told its key is in one').not.toContain(
+        'lives in the vault',
+      );
+    });
+
+    it('credits the arithmetic to this phone when this phone did it', () => {
+      const sentence = moneroCaveat(
+        status({ images: 3 }),
+        0,
+        { images: 3, uncovered: 0, spentCount: 1, spentUnknown: 0 },
+        'hot',
+      );
+      expect(sentence).toContain('key images this phone computed');
+      expect(sentence).not.toContain('your vault computed');
+    });
+
+    it('says the same about a clean scan as about a scan that found spends', () => {
+      const sentence = moneroCaveat(
+        status({ images: 3 }),
+        0,
+        { images: 3, uncovered: 0, spentCount: 0, spentUnknown: 0 },
+        'hot',
+      );
+      expect(sentence).toContain('key images this phone computed');
+      expect(sentence).not.toContain('your vault computed');
+    });
+
+    it('sends an uncovered output to the next scan, not to a vault', () => {
+      const sentence = moneroCaveat(
+        status({ images: 1 }),
+        0,
+        { images: 1, uncovered: 2, spentCount: 0, spentUnknown: 0 },
+        'hot',
+      );
+      expect(sentence).toContain('until the next scan reaches them');
+      expect(sentence, 'it tells a phone-only wallet to wait for a vault').not.toContain(
+        'the vault answers',
+      );
+    });
+
+    it('still says the vault when it is a vault', () => {
+      /* The other half of the pair, and the reason this is not a rename. */
+      const sentence = moneroCaveat(
+        status({ images: 1 }),
+        0,
+        { images: 1, uncovered: 2, spentCount: 1, spentUnknown: 0 },
+        'vault',
+      );
+      expect(sentence).toContain('your vault computed');
+      expect(sentence).toContain('until the vault answers for them');
+    });
   });
 });

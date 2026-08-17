@@ -88,6 +88,23 @@ export interface SessionState {
   step: Step;
   compose: Compose;
   draft: Draft | null;
+  /**
+   * Which account this payment is being made from.
+   *
+   * Recorded when the draft is built and not read from the selection again,
+   * because the selection moves and a draft does not. Selecting a different
+   * account on the accounts screen used to leave a composed payment sitting at
+   * `review` while every screen around it changed underneath: the review step
+   * offered SIGN ON THIS PHONE for a vault account's coins, `offerSignature`
+   * resolved the key image book off the new selection so a legitimate vault
+   * signature landed in terminal `mismatch`, and a broadcast marked the wrong
+   * watcher's Monero coins pending. Unpairing a vault under a live draft
+   * reached the same place with no tap at all.
+   *
+   * Null only for a session with no draft. It is the id from `accounts.ts`,
+   * not the account key, so nothing about a key ends up in session state.
+   */
+  account: string | null;
   transmission: Transmission | null;
   /** Frames captured while reading the signature back. */
   capture: { have: number; total: number } | null;
@@ -104,6 +121,7 @@ export const START: SessionState = {
   step: 'compose',
   compose: { recipient: '', amountText: '', feeKey: 'standard', source: null },
   draft: null,
+  account: null,
   transmission: null,
   capture: null,
   verified: null,
@@ -116,7 +134,9 @@ export type SessionEvent =
   | { type: 'recipient'; value: string; source: Compose['source'] }
   | { type: 'amount'; value: string }
   | { type: 'fee'; value: Compose['feeKey'] }
-  | { type: 'prepared'; draft: Draft; at: number }
+  /** Built, and for which account. The id travels with the draft from here
+   *  on, so nothing downstream has to ask the selection what it used to be. */
+  | { type: 'prepared'; draft: Draft; account: string | null; at: number }
   | { type: 'transmit'; transmission: Transmission; at: number }
   /**
    * Sign on this device instead of walking to a vault.
@@ -166,7 +186,14 @@ export function reduce(state: SessionState, event: SessionEvent): SessionState {
 
     case 'prepared':
       if (state.step !== 'compose') return state;
-      return { ...state, step: 'review', draft: event.draft, problem: null, since: event.at };
+      return {
+        ...state,
+        step: 'review',
+        draft: event.draft,
+        account: event.account,
+        problem: null,
+        since: event.at,
+      };
 
     case 'transmit':
       if (state.step !== 'review') return state;
@@ -232,7 +259,9 @@ export function reduce(state: SessionState, event: SessionEvent): SessionState {
     case 'back':
       switch (state.step) {
         case 'review':
-          return { ...state, step: 'compose', draft: null };
+          /* The account goes with the draft. Leaving it behind would let the
+           * next payment inherit an account nobody chose for it. */
+          return { ...state, step: 'compose', draft: null, account: null };
         case 'transmit':
           return { ...state, step: 'review', transmission: null };
         case 'awaiting':
@@ -241,6 +270,19 @@ export function reduce(state: SessionState, event: SessionEvent): SessionState {
           return { ...state, step: 'awaiting', capture: null };
         case 'signing':
           return { ...state, step: 'review' };
+        case 'broadcasting':
+          /*
+           * A publish that never answers has to have a way out.
+           *
+           * This step had no exit at all: `<Ready />` renders with its button
+           * disabled and no `back`, so anything that entered `broadcasting`
+           * and then failed to dispatch left the session pinned there until
+           * the app was relaunched, with a signed transaction stranded behind
+           * it. Returning to `ready` is safe because the bytes do not change:
+           * publishing the same signed transaction twice is one transaction,
+           * and a node that already has it says so.
+           */
+          return { ...state, step: 'ready' };
         case 'failed':
           /* Back from a failed broadcast returns to the signed transaction,
            * not to the beginning: it is still signed, and making somebody

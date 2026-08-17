@@ -42,8 +42,18 @@
  * this is.
  */
 
-import { EMPTY_VIEW, NodeWatcher, type MoneroWatch, type RefreshResult, type WatcherNodes } from './watcher';
+import {
+  EMPTY_VIEW,
+  NodeWatcher,
+  priceTransportFor,
+  type MoneroWatch,
+  type RefreshResult,
+  type WatcherNodes,
+} from './watcher';
+import { fetchPrices } from '../net/prices';
+import type { Transport } from '../net/http';
 import type { ChainSnapshot } from './chain';
+import type { ScanState } from './moneroscan';
 
 /**
  * What a screen renders when no account is selected.
@@ -89,17 +99,104 @@ export function selected(ids: readonly string[], wanted: string | null): string 
   return ids[0]!;
 }
 
+/**
+ * Where a rebuilt watcher should start its Monero scan.
+ *
+ * Its own function because the answer is a security property with three
+ * inputs, and it was previously one inline ternary that had it backwards.
+ *
+ * Two conditions, and both are about the findings rather than the number. A
+ * scan position is only half of a scan: the outputs it found live in
+ * `NodeWatcher.found`, in memory, because a list of somebody's incoming
+ * payments on disk is exactly what the view key was protecting. So a position
+ * may only be resumed when the outputs that go with it are still here, which
+ * is what `resumable` means and why it is compared by identity: it is the same
+ * object the last refresh in this process wrote.
+ *
+ * The second condition is the one that was inverted. Resuming is only sound
+ * when the earlier pass started at or before this account's birth height,
+ * because a pass that started *later* never walked `[birth, stored.birth)` and
+ * nothing else ever will: the height only moves forward and this wallet has no
+ * rescan. The old comparison was `stored.birth >= birth`, which reused a
+ * position in exactly the case that skips blocks and discarded it in the case
+ * that does not. The equality case, an ordinary rescan of the same account, is
+ * why the common path looked fine.
+ */
+export function resumeFrom(
+  birth: number,
+  stored: ScanState | undefined,
+  resumable: ScanState | undefined,
+): ScanState {
+  if (resumable && stored && resumable === stored && stored.birth <= birth) return stored;
+  return { birth, height: birth };
+}
+
+/**
+ * What an account's watcher was built for.
+ *
+ * The watching keys and nothing else: the same account key and the same Monero
+ * address mean the same wallet, so the watcher already holding its outputs and
+ * its key image book is still the right watcher for it. The scan position is
+ * deliberately absent, because a reused watcher keeps its own, which is the
+ * whole point of reusing it.
+ */
+function identityOf(account: AccountKeys): string {
+  return `${account.zpub ?? ''}|${account.monero?.account.address ?? ''}`;
+}
+
 export class Watchers {
   private readonly byId = new Map<string, NodeWatcher>();
+  /** The relay, when there is one, asked once per refresh for the whole set.
+   *  Built from the same rule the watchers use, from the same function, so
+   *  the two cannot come to disagree about whether the relay is on. */
+  private readonly prices: Transport | null;
+  /** What each watcher was built for, so a later rebuild can tell whether an
+   *  account's keys are still the same ones. */
+  private readonly builtFor = new Map<string, string>();
 
-  constructor(nodes: WatcherNodes, accounts: readonly AccountKeys[], now: number = Date.now()) {
+  /**
+   * @param carry the previous set, when the same nodes are still configured.
+   *
+   * Making or forgetting a wallet on this phone used to rebuild every watcher,
+   * because the account list is one memo over the whole array. A fresh
+   * `NodeWatcher` has an empty `found` map and an empty key image book, both
+   * memory-only by design, so adding a hot wallet dropped the *vault*
+   * account's spendable Monero to zero and made somebody repeat a physical QR
+   * round trip for an action that had nothing to do with that account.
+   *
+   * Passing the previous set keeps a watcher whose account is unchanged. A
+   * changed node still rebuilds everything, and that is correct rather than an
+   * oversight: a balance from a different node is not a balance from this one.
+   */
+  constructor(
+    nodes: WatcherNodes,
+    accounts: readonly AccountKeys[],
+    now: number = Date.now(),
+    carry: Watchers | null = null,
+    /* Overridable for the same reason `NodeWatcher`'s transports are: the
+     * thing under test has to be the real class, driven by a recorded answer.
+     * A test that could not count the calls could not tell one price fetch
+     * for the set from one per account, which is the whole property. */
+    prices: Transport | null = priceTransportFor(nodes),
+  ) {
+    this.prices = prices;
     for (const account of accounts) {
       if (account.zpub === null && account.monero === null) continue;
+      const identity = identityOf(account);
       this.byId.set(
         account.id,
-        new NodeWatcher(nodes, account.zpub, undefined, now, account.monero),
+        carry?.builtFrom(account.id, identity) ??
+          new NodeWatcher(nodes, account.zpub, undefined, now, account.monero),
       );
+      this.builtFor.set(account.id, identity);
     }
+  }
+
+  /** The watcher this set holds for `id`, but only if it was built for exactly
+   *  these keys. A different wallet under a reused id gets nothing. */
+  private builtFrom(id: string, identity: string): NodeWatcher | null {
+    if (this.builtFor.get(id) !== identity) return null;
+    return this.byId.get(id) ?? null;
   }
 
   /** The ids that have a watcher, in the order they were given. */
@@ -140,9 +237,26 @@ export class Watchers {
    * race.
    */
   async refreshAll(now: number = Date.now()): Promise<Map<string, RefreshResult>> {
+    /*
+     * One price for the set, not one per account.
+     *
+     * The price fetch lived inside `NodeWatcher.refresh`, so a phone watching
+     * a vault account and a hot account made two identical `/v1/price` calls
+     * to the same relay, from the same address, in the same second, on every
+     * refresh. The relay is the one hop in this app that sees a request it
+     * could correlate, and the number of calls per refresh is exactly the
+     * number of accounts somebody holds. The price itself is one number for
+     * the whole app, so there was never a second question being asked.
+     *
+     * `null` rather than `undefined` when there is no price source, because
+     * the two mean different things to a watcher: undefined sends it out to
+     * ask for itself, which is what a lone watcher wants and is precisely
+     * what must not happen here.
+     */
+    const priced = this.prices ? await fetchPrices(this.prices) : null;
     const results = new Map<string, RefreshResult>();
     for (const [id, watcher] of this.byId) {
-      results.set(id, await watcher.refresh(now));
+      results.set(id, await watcher.refresh(now, priced));
     }
     return results;
   }

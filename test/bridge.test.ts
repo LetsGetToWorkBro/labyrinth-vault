@@ -13,11 +13,17 @@
  * person approving it never saw.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import * as btc from '@scure/btc-signer';
 import { addressAt, openFromMnemonic } from '../src/keys/bitcoin';
 import { describePsbt } from '../src/keys/psbt';
 import { describeForScreen, encodeForScreen, toWire } from '../src/bridge/summary';
+import { api, resetHost } from '../src/bridge/host';
+import { Collector } from '../src/airgap/envelope';
+import { parseAccount, type Account, type MoneroAccount } from '../src/keys/account';
+import { passphraseToBytes } from '../src/keys/seal';
+import { codeOnly } from './support/source';
 
 const WORDS =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -183,5 +189,73 @@ describe('the shape survives the crossing', () => {
     expect(wire.signable).toBe(false);
     expect(wire.refusal).toBe('unreadable');
     expect(wire.problem).toBeTruthy();
+  });
+});
+
+describe('the watch-only export never guesses when the vault was made', () => {
+  /* A vault does not know its own birthday. The sealed blob carries no
+   * timestamp, so anything the bridge stamps into a Monero export is the day
+   * somebody pressed the button, and `moneroAccount` defaults `when` to
+   * exactly that. The consequence is not a wrong label: the companion starts
+   * its scan at that height, walks past every block the wallet was paid in,
+   * and reports zero for a funded wallet with nothing on screen to explain it.
+   *
+   * Nothing can reach this today, because `Export.swift` asks for "btc" and
+   * there is no Monero export lever. That is the reason to hold it now rather
+   * than later: this is cheap while it is unreachable and it is a lost balance
+   * the day somebody wires the button.
+   *
+   * Two checks, because the behavior and the omission are different failures.
+   * The first is what a companion would actually receive. The second is the
+   * shape of the mistake: an argument left off. */
+
+  const passphrase = Array.from(passphraseToBytes('correct horse battery staple'));
+
+  const exported = (): Account => {
+    const created = JSON.parse(api.create('5a'.repeat(88), passphrase, '')) as {
+      ok: boolean;
+      sealed?: string;
+      problem?: string;
+    };
+    expect(created.ok, created.problem).toBe(true);
+    const unlocked = JSON.parse(api.unlock(created.sealed!, passphrase)) as { ok: boolean };
+    expect(unlocked.ok).toBe(true);
+
+    const reply = JSON.parse(api.exportAccount('xmr')) as { ok: boolean; frames?: string[] };
+    expect(reply.ok).toBe(true);
+    const collector = new Collector();
+    let assembled: ReturnType<Collector['offer']> | null = null;
+    for (const frame of reply.frames!) assembled = collector.offer(frame);
+    expect(assembled!.payload, 'the export did not reassemble').toBeTruthy();
+    const account = parseAccount(assembled!.payload!);
+    expect(account, 'the export did not parse').not.toBeNull();
+    return account!;
+  };
+
+  afterEach(() => resetHost());
+
+  it('tells the companion to scan from the beginning rather than from today', () => {
+    const account = exported();
+    expect(account.chain).toBe('xmr');
+    /* Zero, not "roughly now". A scan that starts too early costs patience; a
+     * scan that starts too late looks exactly like money that never arrived. */
+    expect((account as MoneroAccount).height, 'the export stamped a restore height it cannot know').toBe(0);
+  });
+
+  it('states the height rather than inheriting the default', () => {
+    /* The behavioral check above passes for the wrong reason on the day
+     * somebody makes `moneroAccount`'s default zero: the omission would be
+     * back and invisible. What is actually being held is that the bridge
+     * decides. Comments stripped, because the paragraph at the call site
+     * spells the defaulted form out in order to explain why it is wrong. */
+    const bridge = codeOnly(readFileSync('src/bridge/host.ts', 'utf8'));
+    const calls = [...bridge.matchAll(/moneroAccount\(([^)]*)\)/g)].map((m) => m[1]!);
+    expect(calls.length, 'the bridge no longer exports a Monero account').toBeGreaterThan(0);
+    for (const args of calls) {
+      expect(
+        args.split(',').length,
+        `moneroAccount(${args}) leaves the restore height to a default that means today`,
+      ).toBe(3);
+    }
   });
 });

@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import * as btc from '@scure/btc-signer';
+import { argon2id } from '@noble/hashes/argon2.js';
 import { addressAt, openWatch } from '../src/keys/bitcoin';
 import { passphraseToBytes } from '../src/keys/seal';
 import { codeOnly } from './support/source';
@@ -431,27 +432,21 @@ describe('the bundle adopts a host derivation when there is one', () => {
    * bundle reads it at load. What it cannot prove is that Swift's block has
    * the signature this fake has, because nothing here runs Swift;
    * test/app-wiring.test.ts holds the two names together instead. */
-  it('finds it, calls it, and reports itself as native', () => {
-    const seen: number[][] = [];
-    const context: Record<string, unknown> = {
-      __labyrinthArgon2id: (
-        passphrase: number[],
-        salt: number[],
-        t: number,
-        m: number,
-        p: number,
-        dkLen: number,
-      ) => {
-        seen.push([passphrase.length, salt.length, t, m, p, dkLen]);
-        // Wrong on purpose: a refusal, so seal.ts falls back and the round
-        // trip below still has to work.
-        return null;
-      },
-    };
-    runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
-    const hosted = context.LabyrinthVault as ReturnType<typeof loadBundle>;
 
-    expect(call(hosted, 'version')).toEqual({ ok: true, version: 7, kdf: 'native', cryptonight: 'absent' });
+  const load = (host: unknown) => {
+    const context: Record<string, unknown> = { __labyrinthArgon2id: host };
+    runInNewContext(readFileSync(BUNDLE, 'utf8'), context);
+    return context.LabyrinthVault as ReturnType<typeof loadBundle>;
+  };
+
+  it('finds it and calls it with the parameters the header will carry', () => {
+    const seen: number[][] = [];
+    const hosted = load((passphrase: number[], salt: number[], t: number, m: number, p: number, dkLen: number) => {
+      seen.push([passphrase.length, salt.length, t, m, p, dkLen]);
+      // A refusal, so seal.ts falls back and the round trip below still has
+      // to work.
+      return null;
+    });
 
     const made = call(
       hosted,
@@ -461,9 +456,52 @@ describe('the bundle adopts a host derivation when there is one', () => {
     );
     expect(made.ok, made.problem).toBe(true);
     expect(seen.length, 'the host derivation was never called').toBeGreaterThan(0);
-    const [first] = seen;
-    expect(first!.slice(1)).toEqual([16, 3, 65536, 1, 32]);
+    const sealing = seen.find((call) => call[2] === 3);
+    expect(sealing!.slice(1)).toEqual([16, 3, 65536, 1, 32]);
   }, 600000);
+
+  it('says "engine" for a host whose every call fails', () => {
+    /* The inverted diagnostic, pinned in the direction it should point.
+     *
+     * This assertion used to read "native", because the reply was built from
+     * "is a function installed" rather than from what a derivation would do.
+     * The host here refuses every call, so `deriveKey` falls through to the
+     * JavaScript on every seal, and on a phone that is the minute-long unlock
+     * the whole native port exists to remove. docs/handoff.md hands a tester
+     * this one word as the check for whether the port arrived; the word has
+     * to be able to say no. */
+    expect(call(load(() => null), 'version')).toEqual({
+      ok: true,
+      version: 7,
+      kdf: 'engine',
+      cryptonight: 'absent',
+    });
+  });
+
+  it('says "native" only for a host that answers with Argon2id', () => {
+    /* And the other side of it, so the reply is not simply pessimistic. This
+     * host is the real algorithm reached the other way round, which is what a
+     * working build has: the same derivation, in C, behind the bridge. */
+    const working = (passphrase: number[], salt: number[], t: number, m: number, p: number, dkLen: number) =>
+      Array.from(argon2id(Uint8Array.from(passphrase), Uint8Array.from(salt), { t, m, p, dkLen }));
+    expect(call(load(working), 'version')).toEqual({
+      ok: true,
+      version: 7,
+      kdf: 'native',
+      cryptonight: 'absent',
+    });
+  });
+
+  it('says "mismatch" for a host that answers with something else', () => {
+    /* The third state, and the one that cannot be read off "is it installed".
+     * A host returning the right number of wrong bytes is believed by
+     * `deriveKey`, which only length-checks, so this build seals vaults that
+     * no other build can open. Nothing can catch that at seal time. Saying it
+     * is the whole of what can be done from here. */
+    const wrong = (_passphrase: number[], _salt: number[], _t: number, _m: number, _p: number, dkLen: number) =>
+      Array.from({ length: dkLen }, (_, i) => (i * 7 + 1) & 0xff);
+    expect(call(load(wrong), 'version')).toMatchObject({ ok: true, kdf: 'mismatch' });
+  });
 });
 
 describe('the bundle adopts a host CryptoNight when there is one', () => {

@@ -34,10 +34,23 @@
  *   - a suggested public node, not marked as mine: **proxied**
  *   - a node marked as mine: **direct**, deliberately
  *   - anything else: **direct**, because the proxy would refuse it anyway
+ *
+ * ## None of it is switched on yet
+ *
+ * `routedTransport` below has no production caller. The watchers build their
+ * transports with `live()` directly, so every address query and every
+ * broadcast in the shipped app goes straight to the node the person chose.
+ * That is what `privacyNote` tells them, so nobody is being misled today, and
+ * saying it here is about the day after: going live is one string,
+ * `SWAP_PROXY`, and filling it in switches on swaps and prices and leaves
+ * chain traffic exactly where it is. Wiring this in is a deliberate second
+ * act, not a side effect of a deploy, and `routeFor` will have to start
+ * consulting `swapConfigured()` when it happens, because a relay that is not
+ * deployed cannot be the answer for a node that is.
  */
 
 import { hostOf, type NodeConfig } from '../core/nodes';
-import type { Reply, Request, Transport } from './http';
+import { deadline, DEFAULT_TIMEOUT_MS, type Reply, type Request, type Transport } from './http';
 import { SWAP_PROXY } from './swapproxy';
 
 /**
@@ -120,6 +133,7 @@ export function routedTransport(
   direct: Transport,
   base: string = SWAP_PROXY,
   doFetch: typeof fetch = fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Transport {
   const route = routeFor(node);
   if (route.via === 'direct') return direct;
@@ -127,15 +141,20 @@ export function routedTransport(
   return {
     base: direct.base,
     async send(request: Request): Promise<Reply> {
-      /* Nothing throws across this boundary, same contract as the direct
-       * transport: a screen should render "the node did not answer" rather
-       * than a red box, and a relay that failed differently from a direct
-       * connection would be a second set of failure paths to get right. */
+      /* Nothing throws across this boundary, and nothing waits forever: the
+       * same two contracts the direct transport holds, because a caller that
+       * had to know which transport it was handed would defeat the point of
+       * there being two. A relay that hangs is in fact worse than a node that
+       * hangs, since the person did not choose it and has nothing to point
+       * at: the screen would name the node they picked while the wait belongs
+       * to a machine they never heard of. */
+      const clock = deadline(timeoutMs);
       try {
         const query = new URLSearchParams({ host: route.host, path: request.path });
         const contentType = request.contentType ?? 'application/json';
         const response = await doFetch(`${base}/v1/node?${query.toString()}`, {
           method: request.method,
+          signal: clock.signal,
           headers: { 'Content-Type': contentType, Accept: 'application/json' },
           ...(request.method === 'POST'
             ? {
@@ -152,7 +171,12 @@ export function routedTransport(
         }
         return { ok: true, status: response.status, text };
       } catch (error) {
+        if ((error as Error)?.name === 'AbortError') {
+          return { ok: false, status: null, problem: 'The relay did not answer in time.' };
+        }
         return { ok: false, status: null, problem: (error as Error)?.message ?? 'The relay did not answer.' };
+      } finally {
+        clock.done();
       }
     },
   };

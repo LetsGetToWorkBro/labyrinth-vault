@@ -10,8 +10,12 @@ most of them are not recoverable from the diff.
 
 ## The state of the tree
 
-Both suites pass: **1017 vault, 707 companion.** `npx tsc --noEmit` is clean
-in `wallet/`. The vault's own typecheck runs inside `npm test`.
+All three suites pass: **1060 vault, 905 companion, 68 Worker.** `npx tsc
+--noEmit` is clean in `wallet/` and in `worker/`, and the vault's own typecheck
+runs inside `npm test`. All three now run on push: the Worker's suite and
+typecheck were missing from `.github/workflows/tests.yml`, and the Worker's
+typecheck had never once been run anywhere, because it typechecks the wallet
+modules the Worker bundles and one browser-only fetch option failed it.
 
 The vault and the companion are both on TestFlight at build 11, which is
 **older than everything in this document**. Nothing described here has been on
@@ -197,10 +201,11 @@ long enough to sort.
 
 ### 5. Export compliance (**done**)
 
-`wallet/app.json` says `ITSAppUsesNonExemptEncryption: false`, which is correct
-today and becomes a false statement on a US export form the day the wallet
-holds a seed. `docs/shipping.md` says the wallet answers no **because** it is
-watch-only.
+As written, this section was a warning about a key that was still in place:
+`wallet/app.json` said `ITSAppUsesNonExemptEncryption: false`, which was
+correct for a watch-only app and became a false statement on a US export form
+the day the wallet held a seed. `docs/shipping.md` said the wallet answered no
+**because** it was watch-only.
 
 Flip it in the same commit as the first key storage that reaches a user, not in
 a cleanup pass. That drags the wallet onto the same BIS self-classification the
@@ -282,6 +287,31 @@ progress to the other, which is a scan that starts too late and a balance that
 is short. And a refresh now asks every account rather than the one on screen,
 because refreshing what is being looked at makes the other account's balance a
 thing that only updates when somebody visits it.
+
+## The copy caught up with the code, in one pass
+
+The wallet held a seed for four commits while the App Store listing, the
+hosted privacy policy, the App Review notes, the README and the marketing site
+all said it held no private key. `store/wallet/privacy-policy.md` is rendered
+to `labyrinthwallet.com/privacy` by `site/scripts/render-policies.mjs` and is
+the URL given to App Store Connect, and `store/wallet/review-notes.md` is
+pasted whole into the same form, so two of those were statements to Apple. A
+test in the suite pinned the false sentence in place, which is why it survived
+the work that made it false.
+
+All of it now says the same thing, and the thing it says is the distinction
+rather than a denial: a vault-paired account is watch-only on this phone
+forever, and an account made here keeps its seed in the keychain behind Face
+ID per signature. Three guards hold it: `test/store.test.ts` refuses the old
+sentence in the listing and requires the new one, `test/site-claims.test.ts`
+does the same for the site and also requires it to say where a phone-made key
+lives, and both read `keyvault.ts` so that the copy cannot become true again
+by the code changing under it.
+
+The rule this cost is written down because it will apply again: **the window
+between a capability landing and the documents admitting it is the window in
+which a false statement gets filed.** Move the copy in the commit that moves
+the code.
 
 ## Still true, still unverified
 

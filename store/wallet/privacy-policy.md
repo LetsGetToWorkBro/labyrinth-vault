@@ -1,26 +1,41 @@
 # Labyrinth Wallet privacy policy
 
-Labyrinth Wallet is the watch-only half of a two-device wallet. It holds no
-private key and has no account, no cloud, and no telemetry. What it does do is
-talk to a Bitcoin or Monero node, and, if you use the swap feature, to a
-currency exchange, and those conversations are not private by magic. This
-policy is about being exact about which ones happen, what each one reveals, and
-who is on the other end, because a wallet that is vague about that is a wallet
-asking to be trusted rather than checked.
+Labyrinth Wallet is the online half of a two-device wallet. It has no account,
+no cloud, and no telemetry. What it does do is talk to a Bitcoin or Monero
+node, and, if you use the swap feature, to a currency exchange, and those
+conversations are not private by magic. This policy is about being exact about
+which ones happen, what each one reveals, and who is on the other end, because
+a wallet that is vague about that is a wallet asking to be trusted rather than
+checked.
 
 ## What the app holds
 
-Watch-only material only: a Bitcoin account extended public key (zpub), a
-Monero primary address and private *view* key, the addresses derived from
-them, and the balances and history read from a node. None of it can spend.
-There is no seed phrase, no spend key, and no screen that would accept one.
-Signing happens on your separate airgapped vault, never here.
+Two kinds of account, and the difference is where the key is. The app tells
+you which kind you are looking at on every screen where it matters, and this
+document is the longer version of that sentence.
 
-Nothing secret is stored at rest, because there is no secret to store. The
-only things kept between launches are your chosen node addresses, how far a
+**An account paired from a vault: watch-only material only.** A Bitcoin
+account extended public key (zpub), a Monero primary address and private
+*view* key, the addresses derived from them, and the balances and history read
+from a node. None of it can spend. Signing for that account happens on your
+separate airgapped vault and cannot happen here, whatever else this phone is
+holding at the time.
+
+**An account made on this phone: a recovery phrase, stored.** Making or
+restoring a wallet here writes its seed into the iOS keychain, readable only
+while the device is unlocked and only on this device, so no copy of it rides a
+backup onto your next phone. The app asks for Face ID, or your passcode,
+before every signature it makes with that seed, and again before it will show
+you the words. No passphrase of ours protects it: the device does. That is a
+real reduction against the vault, which is why the app says so where you make
+the account and why anything worth more than the phone belongs on the other
+half.
+
+The rest of what is kept between launches is not secret and is stored in an
+ordinary file rather than the keychain: your chosen node addresses, how far a
 Monero scan has progressed, and the details of a single swap that is still in
-flight. That file contains no key and no address that identifies you; it is
-kept in the app's own storage, never synced to iCloud or to us.
+flight. That file holds no key. Neither the file nor the keychain item is
+synced to iCloud or to us.
 
 ## What talking to a node reveals
 
@@ -85,11 +100,14 @@ stored, or transmitted.
 
 Nothing. There is no analytics, crash reporting, advertising, or tracking
 framework in the app, and its privacy manifest declares no tracking, no
-collected data types, and no required-reason API use. We run the swap proxy
-and, when you use it, a node relay of the public nodes the app suggests; both
-are built to forward and forget, and neither is a place your activity comes to
-rest. We have no account system and no way to identify you. If you email us, we
-see your email, and that is the only data path we control.
+collected data types, and no required-reason API use. We run the swap proxy,
+which is built to forward and forget and is not a place your activity comes to
+rest. A relay for the public nodes the app suggests is written and **is not
+switched on**: every chain query and every broadcast goes from your phone
+straight to the node you chose, which is what the node screen tells you, and
+this paragraph will change in the same commit as the code if that ever stops
+being true. We have no account system and no way to identify you. If you email
+us, we see your email, and that is the only data path we control.
 
 ## Changes
 

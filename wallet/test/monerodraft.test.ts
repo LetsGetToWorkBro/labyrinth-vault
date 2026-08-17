@@ -17,7 +17,13 @@ import { describe, expect, it } from 'vitest';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { toHex } from '@vault/keys/monero';
 import { prepareMoneroDraft, verifySignedMonero, type MoneroSpendMaterials } from '../src/core/monerodraft';
-import { SIGNED_VERSION, type SpendableOutput } from '../src/core/monerospend';
+import {
+  assembleUnsigned,
+  encodeUnsigned,
+  SIGNED_VERSION,
+  type SpendableOutput,
+} from '../src/core/monerospend';
+import { RING_SIZE } from '../src/core/decoys';
 import type { Reply, Request, Transport } from '../src/net/http';
 import type { Draft } from '../src/core/model';
 
@@ -152,14 +158,45 @@ describe('verifying the signed set that comes back', () => {
     }));
   }
 
-  function draftWith(): Draft {
+  /**
+   * The bytes the wallet approved, assembled for real.
+   *
+   * A placeholder here would make the network comparison a test of nothing:
+   * `verifySignedMonero` reads the approved network out of these bytes with
+   * the strict parser, and a `Uint8Array([1])` fails the parse, so every case
+   * below would land in the unreadable-draft branch and no case would reach
+   * the comparison it is named for.
+   */
+  function approvedBytes(network: 'mainnet' | 'stagenet'): Uint8Array {
+    const coin = owned(2_000_000_000_000n, 1_000_001);
+    const members = Array.from({ length: RING_SIZE }, (_, i) => ({
+      globalIndex: 1_000_000 + i,
+      key: i === 1 ? coin.key : hex64(`de${i}`),
+      commitment: i === 1 ? coin.commitment : hex64(`ad${i}`),
+      unlocked: true,
+      height: 1,
+    }));
+    const assembled = assembleUnsigned({
+      inputs: [coin],
+      rings: [{ members, realPosition: 1 }],
+      destinations: [{ address: THEM, amount: 1_000_000_000_000n }],
+      change: 2_000_000_000_000n - 1_000_000_000_000n - 720_000_000n,
+      ownAddress: OWN,
+      fee: 720_000_000n,
+      network,
+    });
+    if (!assembled.ok) throw new Error(assembled.problem);
+    return encodeUnsigned(assembled.set);
+  }
+
+  function draftWith(network: 'mainnet' | 'stagenet' = 'mainnet'): Draft {
     return {
       asset: 'XMR',
       recipient: THEM,
       amount: 1_000_000_000_000n,
       fee: 720_000_000n,
       feeRate: 1,
-      unsigned: new Uint8Array([1]),
+      unsigned: approvedBytes(network),
       digest: 'ab'.repeat(32),
       createdAt: NOW,
       inputs: [],
@@ -208,5 +245,39 @@ describe('verifying the signed set that comes back', () => {
   it('refuses bytes that are not a signed set at all', () => {
     const verdict = verifySignedMonero(draftWith(), new Uint8Array([9, 9, 9]), [IMAGE]);
     expect(verdict.ok).toBe(false);
+  });
+
+  it('refuses a return signed for a network the payment was not built for', () => {
+    /* The mainnet broadcast gate reads its network off the verdict, and the
+     * verdict used to copy the returned payload's own claim about itself. One
+     * edited word in what came back would have opened a gate that exists as a
+     * source constant precisely so it could not be flipped. The approved bytes
+     * decide, and they say stagenet. */
+    const verdict = verifySignedMonero(draftWith('stagenet'), signedReturn({ network: 'mainnet' }), [IMAGE]);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.reasons.join(' ')).toMatch(/approved a stagenet payment/);
+      expect(verdict.reasons.join(' ')).toMatch(/signed for mainnet/);
+    }
+  });
+
+  it('accepts a stagenet payment that came back signed for stagenet', () => {
+    /* The other side of the same fixture, so the check above is a comparison
+     * and not a refusal of anything that is not mainnet. Stagenet is the
+     * network the dry run that lifts the broadcast gate runs on. */
+    const verdict = verifySignedMonero(draftWith('stagenet'), signedReturn({ network: 'stagenet' }), [IMAGE]);
+    expect(verdict.ok, verdict.ok ? '' : verdict.reasons.join(' / ')).toBe(true);
+    if (verdict.ok) expect(verdict.network).toBe('stagenet');
+  });
+
+  it('refuses when the approved bytes cannot be read back', () => {
+    /* Nothing in the app produces this today, and the branch has to exist
+     * anyway: a draft whose payload does not parse is one whose network
+     * nothing can establish, and an unanswerable question is a refusal here
+     * rather than a pass. */
+    const draft = { ...draftWith(), unsigned: new Uint8Array([1]) };
+    const verdict = verifySignedMonero(draft, signedReturn(), [IMAGE]);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reasons.join(' ')).toMatch(/could not be read back/);
   });
 });

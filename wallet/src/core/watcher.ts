@@ -59,9 +59,11 @@ import {
   outputKey,
   progressFraction,
   scan,
+  topBlock,
   toSpendable,
   totalReceived,
-  SPEND_BLINDNESS,
+  spendBlindness,
+  type MoneroSource,
   type MoneroAccount,
   type Received,
   type ScanState,
@@ -74,7 +76,7 @@ import { moneroBroadcastGate } from './moneroreadiness';
 import * as esplora from '../net/esplora';
 import * as monerod from '../net/monerod';
 import { ownNodesOnly } from '../net/nodeproxy';
-import { fetchPrices } from '../net/prices';
+import { fetchPrices, type PriceResult } from '../net/prices';
 import { SWAP_PROXY, swapConfigured } from '../net/swapproxy';
 
 export interface WatcherNodes {
@@ -87,11 +89,24 @@ export interface MoneroWatch {
   account: MoneroAccount;
   /** Where a previous run got to, from storage, or the birth height twice. */
   scan: ScanState;
+  /**
+   * Where this account's spend key is, which decides every custody sentence
+   * printed under its balance.
+   *
+   * Required rather than defaulted. The caveat used to say the spend key
+   * "lives in the vault" and that the images came from one, unconditionally,
+   * on a screen a hot account reads its own balance from. A default would put
+   * that sentence back the first time somebody added a construction site and
+   * did not scroll.
+   */
+  source: MoneroSource;
 }
 
 /** What the app persists after a refresh, and what the screens read. */
 export interface MoneroStatus {
   scan: ScanState;
+  /** The highest block that exists, not the chain's length. Screens print it
+   *  beside `scan.height`, and the two have to be in the same units. */
   tip: number;
   /** Zero to one, measured from the birth height. */
   fraction: number;
@@ -114,6 +129,35 @@ export interface RefreshResult {
 }
 
 /**
+ * The highest sat/vB this wallet will take from a node as a fee estimate.
+ *
+ * Generous rather than tight, and the direction matters both ways. Too low and
+ * a genuine congestion spike is refused, the fallback rate underpays, and the
+ * transaction sits unconfirmed. Too high and a node that answers with a
+ * meaningless number gets to price somebody's payment. The busiest blocks
+ * Bitcoin has ever had are in the low thousands of sat/vB, so this is several
+ * times any real fee market and nowhere near the answers a broken or hostile
+ * node gives.
+ *
+ * What it is not: a bound on what a payment may cost. A rate inside this range
+ * can still be a large fee on a large transaction, and the check for that is a
+ * fee weighed against the amount on the screen where a person approves it.
+ */
+export const MAX_BTC_FEE_RATE = 10_000;
+
+/**
+ * The same ceiling for Monero, in piconero per byte.
+ *
+ * A monerod fee estimate on an ordinary day is tens of thousands of piconero
+ * per byte, so this is some hundreds of times normal: past it, the node is not
+ * describing a fee market. It matters more here than on the Bitcoin side,
+ * because the estimate is not shown as a choice between three named options; it
+ * is multiplied by the priority and by the transaction's weight, and the first
+ * time anybody sees the result it is already a number on a review screen.
+ */
+export const MAX_XMR_FEE_PER_BYTE = 10_000_000n;
+
+/**
  * Fee options from the node's own estimates.
  *
  * Esplora answers with up to twenty-eight block targets. A person choosing a
@@ -124,6 +168,13 @@ export interface RefreshResult {
  * The floor of one sat/vB is not a preference. A node with an empty mempool
  * reports estimates below the relay minimum, and a transaction built at that
  * rate is one no peer will forward.
+ *
+ * The ceiling is the other half of the same idea, and it was missing. A number
+ * outside any real fee market is not an estimate this wallet can use, so it
+ * takes the same route an absent one takes: the per-target fallback. Nothing
+ * downstream can catch it, because `verifySigned` compares the returned fee
+ * against the draft that was built from the same poisoned rate and finds them
+ * in agreement.
  */
 export function feeOptionsFrom(estimates: esplora.FeeEstimates): FeeOption[] {
   const at = (target: number, fallback: number): number => {
@@ -131,8 +182,11 @@ export function feeOptionsFrom(estimates: esplora.FeeEstimates): FeeOption[] {
       .map(Number)
       .filter((key) => key <= target)
       .sort((a, b) => b - a);
-    const rate = known.length ? estimates[known[0]!] : undefined;
-    return Math.max(1, Math.round((rate ?? fallback) * 10) / 10);
+    const quoted = known.length ? estimates[known[0]!] : undefined;
+    const rate = quoted !== undefined && Number.isFinite(quoted) && quoted <= MAX_BTC_FEE_RATE
+      ? quoted
+      : fallback;
+    return Math.max(1, Math.round(rate * 10) / 10);
   };
 
   return [
@@ -263,11 +317,23 @@ export interface SpendCoverage {
  * The last part is the one that changed shape when the key image round trip
  * landed. With no images, the permanent warning stands: this is what arrived.
  * With images covering everything, spends are subtracted and the sentence
- * says where the images came from, because their correctness rests on the
- * vault rather than on anything this device can prove. In between, both are
- * true at once and both get said.
+ * says where the images came from, because their correctness rests on
+ * whichever device computed them rather than on anything the scan can prove.
+ * In between, both are true at once and both get said.
+ *
+ * `source` is why that clause is not a fixed string. A hot account computes
+ * its own images from twenty-five words in this phone's keychain, and telling
+ * its owner the vault did it names a device they may not have. It is a
+ * parameter rather than something read off `spends`, because the honest
+ * sentence at `images === 0` differs too: a paired account is waiting on a QR
+ * from across the room, a hot one is waiting on its own next refresh.
  */
-export function moneroCaveat(status: MoneroStatus, unvalued: number, spends?: SpendCoverage): string {
+export function moneroCaveat(
+  status: MoneroStatus,
+  unvalued: number,
+  spends?: SpendCoverage,
+  source: MoneroSource = 'vault',
+): string {
   const parts: string[] = [];
   if (!status.caughtUp) {
     parts.push(
@@ -280,15 +346,20 @@ export function moneroCaveat(status: MoneroStatus, unvalued: number, spends?: Sp
     );
   }
 
+  /* Whose arithmetic this is. Both halves of the round trip are real work
+   * somebody could want to check, and crediting it to the wrong device is the
+   * same defect as the custody copy: on a hot account this phone opened the
+   * spend key and computed these itself. */
+  const computedBy = source === 'hot' ? 'this phone computed' : 'your vault computed';
   if (!spends || spends.images === 0) {
-    parts.push(SPEND_BLINDNESS);
+    parts.push(spendBlindness(source));
   } else {
     if (spends.spentCount > 0) {
       parts.push(
-        `${spends.spentCount} spent ${spends.spentCount === 1 ? 'output is' : 'outputs are'} subtracted, using key images your vault computed.`,
+        `${spends.spentCount} spent ${spends.spentCount === 1 ? 'output is' : 'outputs are'} subtracted, using key images ${computedBy}.`,
       );
     } else {
-      parts.push('No spends found so far, checked using key images your vault computed.');
+      parts.push(`No spends found so far, checked using key images ${computedBy}.`);
     }
     if (spends.spentUnknown > 0) {
       parts.push(
@@ -296,8 +367,9 @@ export function moneroCaveat(status: MoneroStatus, unvalued: number, spends?: Sp
       );
     }
     if (spends.uncovered > 0) {
+      const answers = source === 'hot' ? 'the next scan reaches' : 'the vault answers for';
       parts.push(
-        `${spends.uncovered} ${spends.uncovered === 1 ? 'output has' : 'outputs have'} no key image yet and ${spends.uncovered === 1 ? 'counts' : 'count'} as unspent until the vault answers for ${spends.uncovered === 1 ? 'it' : 'them'}.`,
+        `${spends.uncovered} ${spends.uncovered === 1 ? 'output has' : 'outputs have'} no key image yet and ${spends.uncovered === 1 ? 'counts' : 'count'} as unspent until ${answers} ${spends.uncovered === 1 ? 'it' : 'them'}.`,
       );
     }
   }
@@ -422,6 +494,20 @@ export function moneroHistory(
  * Built with its transports rather than making them, so the tests drive it
  * with recorded node answers and the thing under test is the real class.
  */
+/**
+ * Where a price comes from, decided once.
+ *
+ * Exported because `Watchers` asks the same question: the price is one number
+ * for the whole app, so it is fetched once for a set of accounts rather than
+ * once per account, and the set has to be able to build the transport the
+ * accounts would have built. Two copies of this expression would drift, and
+ * the way they would drift is that one of them keeps calling out for somebody
+ * who has turned the relay off.
+ */
+export function priceTransportFor(nodes: WatcherNodes): Transport | null {
+  return swapConfigured() && !ownNodesOnly(nodes) ? live(SWAP_PROXY) : null;
+}
+
 export class NodeWatcher implements Watcher {
   private snap: ChainSnapshot;
   private readonly btcWallet: BtcWallet | null;
@@ -451,6 +537,10 @@ export class NodeWatcher implements Watcher {
   /** The node's fee estimate from the last refresh, piconero per byte. Null
    *  until a refresh has asked, and a send refuses rather than guesses. */
   private moneroFeePerByte: bigint | null = null;
+  /** Why there is no usable fee estimate, when the reason is worth saying.
+   *  "The node has not answered yet" and "the node answered with a number
+   *  that is not a fee" send somebody to different places. */
+  private moneroFeeRefusal: string | null = null;
   private xmrHistory: Transaction[] = [];
   private btcHistory: Transaction[] = [];
 
@@ -474,7 +564,7 @@ export class NodeWatcher implements Watcher {
     } = {
       btc: nodes.btc ? live(nodes.btc.url) : null,
       xmr: nodes.xmr ? live(nodes.xmr.url) : null,
-      prices: swapConfigured() && !ownNodesOnly(nodes) ? live(SWAP_PROXY) : null,
+      prices: priceTransportFor(nodes),
     },
     now: number = Date.now(),
     monero: MoneroWatch | null = null,
@@ -498,8 +588,20 @@ export class NodeWatcher implements Watcher {
     return this.snap;
   }
 
-  /** Go to the network. Everything else in this class reads what this leaves. */
-  async refresh(now: number = Date.now()): Promise<RefreshResult> {
+  /**
+   * Go to the network. Everything else in this class reads what this leaves.
+   *
+   * @param priced a price somebody else already fetched for this pass.
+   *   `undefined` means nobody did, so this watcher asks for its own, which is
+   *   what a lone watcher wants. `null` means somebody looked and there was no
+   *   price source, which is not the same thing and must not send this one out
+   *   to ask again. `Watchers.refreshAll` always passes one of the two, so a
+   *   phone watching a vault account and a hot account no longer makes two
+   *   identical `/v1/price` calls from one address on every refresh: the
+   *   relay's log is the one place this app's traffic is correlatable, and
+   *   the count of calls is the shape of how many accounts somebody has.
+   */
+  async refresh(now: number = Date.now(), priced?: PriceResult | null): Promise<RefreshResult> {
     const problems: { asset: Asset; problem: string }[] = [];
     let queried = 0;
 
@@ -531,10 +633,13 @@ export class NodeWatcher implements Watcher {
      * did not answer about somebody's money, and a missing convenience number
      * does not belong in it. */
     let centsPerUnit = this.snap.centsPerUnit;
-    if (this.transports.prices) {
-      const priced = await fetchPrices(this.transports.prices);
-      if (priced.ok) centsPerUnit = priced.centsPerUnit;
-    }
+    const answer =
+      priced === undefined
+        ? this.transports.prices
+          ? await fetchPrices(this.transports.prices)
+          : null
+        : priced;
+    if (answer?.ok) centsPerUnit = answer.centsPerUnit;
 
     const ok = problems.length === 0;
     this.snap = {
@@ -649,7 +754,10 @@ export class NodeWatcher implements Watcher {
     const watch = this.monero;
     if (!watch) return { ok: false, problem: 'No Monero account has been paired with this wallet yet.' };
     if (this.moneroFeePerByte === null) {
-      return { ok: false, problem: 'The node has not quoted a fee yet. Refresh, then try again.' };
+      return {
+        ok: false,
+        problem: this.moneroFeeRefusal ?? 'The node has not quoted a fee yet. Refresh, then try again.',
+      };
     }
     const owned = this.moneroSpendable();
     if (owned.length === 0) {
@@ -738,7 +846,11 @@ export class NodeWatcher implements Watcher {
       };
     }
 
-    const tip = reply.value.height;
+    /* The node answers with the chain's length; every height below is an index
+     * into it. Converting here, once, is what keeps the walk from asking for a
+     * block one past the end and what keeps a confirmation count from reading
+     * one too high. */
+    const tip = topBlock(reply.value.height);
     const watch = this.monero;
     if (!watch) {
       return {
@@ -785,7 +897,20 @@ export class NodeWatcher implements Watcher {
      * trip at compose time. A failed estimate leaves null, and the send path
      * refuses with a sentence rather than substituting a guess. */
     const feeReply = await monerod.feeEstimate(transport);
-    this.moneroFeePerByte = feeReply.ok ? feeReply.value : null;
+    if (feeReply.ok && feeReply.value > MAX_XMR_FEE_PER_BYTE) {
+      /* Refused rather than used. There is no second screen on the hot path:
+       * the rate goes into the draft, the draft is what the signature is
+       * checked against, and the two agree because they came from the same
+       * number. The node is named because changing it is the thing to do. */
+      this.moneroFeePerByte = null;
+      this.moneroFeeRefusal =
+        `${this.nodes.xmr?.label ?? 'That node'} quoted ${feeReply.value} piconero per byte, ` +
+        `which is far outside any real Monero fee market. Nothing will be built at that price. ` +
+        'Set a different Monero node and refresh.';
+    } else {
+      this.moneroFeePerByte = feeReply.ok ? feeReply.value : null;
+      this.moneroFeeRefusal = null;
+    }
 
     const all = [...this.found.values()];
     const total = totalReceived(all);
@@ -816,12 +941,17 @@ export class NodeWatcher implements Watcher {
         spendable: this.moneroSpendable().reduce((sum, output) => sum + output.amount, 0n),
         addresses: [{ address: watch.account.address, path: null, used: true }],
         height: tip,
-        caveat: moneroCaveat(status, total.unknown, {
-          images: this.book.size(),
-          uncovered: balance.uncovered,
-          spentCount: balance.spentCount,
-          spentUnknown: balance.spentUnknown,
-        }),
+        caveat: moneroCaveat(
+          status,
+          total.unknown,
+          {
+            images: this.book.size(),
+            uncovered: balance.uncovered,
+            spentCount: balance.spentCount,
+            spentUnknown: balance.spentUnknown,
+          },
+          watch.source,
+        ),
       },
     };
   }

@@ -41,6 +41,17 @@ client one cached answer (`worker/src/prices.ts`), and until then live
 balances are shown in coin. Nothing else has to be remembered for that
 either.
 
+**What that string does not turn on is chain traffic, and this is the trap.**
+`worker/src/nodes.ts` implements a relay for the public nodes the app
+suggests, and `routedTransport` in `wallet/src/net/nodeproxy.ts` is its client
+and **has no production caller**. Every address query and every broadcast goes
+from the phone straight to the node the person chose, before and after this
+deploy. That is what the Nodes screen tells them, so nobody is being misled
+today; the danger is the day after the deploy, when a reader of these files
+could reasonably conclude that addresses were behind Cloudflare when they are
+not. Connecting the two is a change in the wallet, with its own guard, and it
+is not part of this sequence.
+
 So the sequence is:
 
 1. **Deploy the Worker.** From `worker/`:

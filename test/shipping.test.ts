@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { codeOnly, sourcesUnder } from './support/source';
 
@@ -105,6 +105,50 @@ describe('the vault is shaped like something that can be uploaded', () => {
     const doc = readFileSync('docs/shipping.md', 'utf8');
     expect(doc).toMatch(/5D992/);
     expect(doc).toMatch(/self-classification/i);
+  });
+
+  it('never tells the submitter to make the edit that failed four uploads', () => {
+    /* The assertion above reads the whole runbook for the word YES near "App
+     * Store Connect", and the runbook is long enough that unrelated prose
+     * satisfied it. Underneath it, the vault's submission checklist said the
+     * export answer "is answered in the Info.plist
+     * (`ITSAppUsesNonExemptEncryption: true`), so Connect will not re-ask per
+     * build", which is the edit Apple rejected four consecutive times and
+     * which `test/shipping.test.ts` now fails on. A person working down a
+     * checklist does what the checkbox says; they do not read the essay four
+     * hundred lines above it.
+     *
+     * So this reads the checkboxes themselves. A `- [ ]` item is the line
+     * plus its indented continuations, because that is how the runbook wraps
+     * them, and a check that looked at single lines would miss the half of a
+     * sentence that carries the instruction. */
+    const doc = readFileSync('docs/shipping.md', 'utf8');
+    const items: string[] = [];
+    for (const line of doc.split('\n')) {
+      if (/^- \[[ x]\]/.test(line)) items.push(line);
+      else if (items.length > 0 && /^ {2,}\S/.test(line)) items[items.length - 1] += ' ' + line.trim();
+      else if (line.trim() === '') items.push('');
+    }
+    const boxes = items.filter((item) => item.startsWith('- ['));
+    expect(boxes.length, 'the runbook lost its checklists').toBeGreaterThan(10);
+
+    /* Naming the key to warn against it is the point of the corrected line,
+     * so what is refused is a box that names it without the warning. */
+    const telling = boxes.filter(
+      (box) => /ITSAppUsesNonExemptEncryption/.test(box) && !/do not add|rather than flipped/i.test(box),
+    );
+    expect(telling, 'a checklist item tells the submitter to put the export key back').toEqual([]);
+
+    /* And both per-app checklists have to carry the instruction that replaced
+     * it, since the failure this guard exists for was one app's list being
+     * corrected and the other's left behind. */
+    const compliance = boxes.filter((box) => /export compliance/i.test(box));
+    expect(compliance.length, 'a per-app checklist lost its export compliance line').toBe(2);
+    for (const box of compliance) {
+      expect(box, 'a checklist item does not say to answer YES per build').toMatch(
+        /answer\s+\*{0,2}YES/i,
+      );
+    }
   });
 
   it('reaches its fixtures through the accessor that exists in both builds', () => {
@@ -290,7 +334,7 @@ describe('the wallet is shaped like something that can be uploaded', () => {
   const app = JSON.parse(readFileSync('wallet/app.json', 'utf8')) as {
     expo: {
       icon?: string;
-      splash?: { image?: string };
+      plugins?: (string | [string, Record<string, unknown>])[];
       ios: {
         bundleIdentifier: string;
         buildNumber?: string;
@@ -304,12 +348,93 @@ describe('the wallet is shaped like something that can be uploaded', () => {
     dependencies: Record<string, string>;
   };
 
+  /** A plugin entry by name, with its configuration, or null if it is absent. */
+  const plugin = (name: string): Record<string, unknown> | null => {
+    for (const entry of app.expo.plugins ?? []) {
+      if (entry === name) return {};
+      if (Array.isArray(entry) && entry[0] === name) return entry[1] ?? {};
+    }
+    return null;
+  };
+
   it('has its own bundle identifier, an icon and a build number', () => {
     expect(ios.bundleIdentifier).toBe('vision.labyrinth.wallet');
     expect(ios.buildNumber).toMatch(/^\d+$/);
     expect(app.expo.icon).toBe('./assets/icon.png');
     expect(existsSync('wallet/assets/icon.png')).toBe(true);
-    expect(existsSync(`wallet/${app.expo.splash?.image?.slice(2)}`)).toBe(true);
+  });
+
+  it('hands the splash asset to something that reads it', () => {
+    /* This used to assert that the file named by a top-level `splash` block
+     * existed, and that was three green checks over an unconsumed file:
+     * `make-icons.mjs` rendered the asset, this test found it on disk, and
+     * the icon test compared its bytes. None of the three asked whether
+     * anything read it. `splash` is not a recognized SDK 57 field and
+     * `expo-splash-screen` was not installed, so `expo config --type
+     * introspect` resolved `[expo-camera, expo-font]` and no splash at all.
+     *
+     * The plugin is installed now and carries the same three values. Proved
+     * once by hand rather than asserted: `expo prebuild` with the plugin
+     * writes `SplashScreenLogo.imageset` from this image and a
+     * `SplashScreenBackground.colorset` holding exactly this color, and the
+     * same prebuild without it writes no logo asset at all. What is checked
+     * here is that the three parts stay together, because the failure mode is
+     * a config that looks configured. */
+    const splash = plugin('expo-splash-screen');
+    expect(splash, 'the splash configuration is not attached to a plugin that reads it').not.toBe(
+      null,
+    );
+    expect(
+      walletPackage.dependencies['expo-splash-screen'],
+      'the splash plugin is configured but not installed, so prebuild will skip it',
+    ).toBeDefined();
+    const image = String(splash?.image ?? '');
+    expect(image, 'the splash plugin names no image').toMatch(/^\.\//);
+    expect(existsSync(`wallet/${image.slice(2)}`), `${image} is not in the repository`).toBe(true);
+  });
+
+  it('declares every package the phone actually loads as a dependency', () => {
+    /* `qrcode` was in `devDependencies` while `src/qr/matrix.ts` imported it
+     * unconditionally and five registered screens rendered it. Nothing broke,
+     * because CI installs everything: `npm ci` with no `--omit=dev` anywhere.
+     * What it broke was the security review, which bounds this app's runtime
+     * risk with `npm audit --omit=dev` and was therefore describing a runtime
+     * surface with a package missing from it, plus nine nested ones under it.
+     *
+     * A misplaced dependency is invisible until the day somebody does a
+     * production install, and then it is a crash on a screen rather than a
+     * failure at build time. So it is checked here: every bare specifier the
+     * wallet's own source imports has to resolve to `dependencies`.
+     *
+     * Comments stripped first. The specifier pattern is deliberately anchored
+     * to an import or export statement rather than looking for quotes near the
+     * word "from", because prose and JSX both contain that shape and a guard
+     * that reads them reports packages nobody imports. */
+    const sources = sourcesUnder('wallet/src', ['.ts', '.tsx']);
+    expect(sources.length, 'the wallet source moved').toBeGreaterThan(20);
+
+    const bare = new Set<string>();
+    for (const file of sources) {
+      const statements = file.code.matchAll(
+        /(?:^|\n)\s*(?:import|export)\b[^;]*?\bfrom\s+'([^']+)'|(?:^|\n)\s*import\s+'([^']+)'/g,
+      );
+      for (const found of statements) {
+        const specifier = found[1] ?? found[2] ?? '';
+        if (specifier.startsWith('.') || specifier.startsWith('/')) continue;
+        /* `@vault/*` is a tsconfig path alias onto the shared engine in
+         * `src/`, not a package, which is the whole reason both halves speak
+         * one wire format without a copy. */
+        if (specifier.startsWith('@vault/')) continue;
+        const parts = specifier.split('/');
+        bare.add(specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!);
+      }
+    }
+    expect(bare.size, 'no imports found, so this guard is checking nothing').toBeGreaterThan(10);
+
+    const misplaced = [...bare].filter((name) => walletPackage.dependencies[name] === undefined);
+    expect(misplaced, 'the phone loads these and the manifest calls them development tools').toEqual(
+      [],
+    );
   });
 
   it('declares the same empty privacy manifest, for the same reason', () => {
@@ -378,11 +503,111 @@ describe('the wallet is shaped like something that can be uploaded', () => {
     expect(walletPackage.dependencies['expo-secure-store']).toBeDefined();
   });
 
+  it('asks for no permission the app has no use for', () => {
+    /* `microphonePermission` was unset, and `expo-camera`'s config plugin
+     * removes its default only when the value is strictly `false`. So
+     * prebuild wrote expo's stock "Allow $(PRODUCT_NAME) to access your
+     * microphone" into the generated Info.plist, of an app that never records
+     * audio. An unused purpose string grants nothing and never prompts, so
+     * the cost is an App Review question and a product that says one thing
+     * about what it touches while its manifest says another.
+     *
+     * Confirmed against the real artifact rather than reasoned about: with
+     * the key absent, `expo config --type introspect` reports
+     * `NSMicrophoneUsageDescription` set to the stock sentence; with it
+     * `false`, the key is gone. This asserts the input that decides it,
+     * because introspection needs `wallet/node_modules`, which CI installs
+     * only after this suite has run.
+     *
+     * `false` and not a string: a purpose string is a request, and there is
+     * nothing to request. */
+    const camera = plugin('expo-camera');
+    expect(camera, 'the camera plugin is gone; the QR round trip needs it').not.toBe(null);
+    expect(
+      camera?.microphonePermission,
+      'the microphone default is back in the generated plist',
+    ).toBe(false);
+    expect(
+      ios.infoPlist['NSMicrophoneUsageDescription'],
+      'a microphone purpose string was added by hand',
+    ).toBeUndefined();
+  });
+
   it('never commits the generated native project', () => {
     /* `wallet/ios` regenerates from app.json on every prebuild. Committing a
      * copy freezes it against the config and the two drift; the config is the
      * source, this suite is what holds the config, and the ignore rule is
      * what keeps the copy out. */
     expect(readFileSync('.gitignore', 'utf8')).toMatch(/wallet\/ios\//);
+  });
+});
+
+describe('every suite in this repository runs when nobody remembers to run it', () => {
+  /*
+   * D-H1. `.github/workflows/tests.yml` had one job and it stopped after the
+   * companion. The Worker is a separate package with its own vitest config,
+   * which the root config cannot pick up by design, so `worker/package.json`
+   * declared `test` and `typecheck` and nothing anywhere called either. Every
+   * guard under `worker/test` was enforced by whoever remembered, including
+   * the retention guard that `store/wallet/privacy-policy.md` points the
+   * public at as "a structural property enforced by an automated test".
+   *
+   * The typecheck is the sharper half. It had never been run once, because
+   * the Worker bundles `wallet/src/net` and typechecks it against
+   * `@cloudflare/workers-types`, and one browser-only fetch option failed the
+   * whole thing. A check nobody has ever run is not a check.
+   *
+   * This is written against the packages rather than against the step names,
+   * so renaming a step is free and deleting a package's run is not.
+   */
+  const workflow = readFileSync('.github/workflows/tests.yml', 'utf8');
+
+  it('is the only workflow, so this file is the whole of CI', () => {
+    /* If a second one appears, the reasoning below covers half of CI and
+     * somebody has to decide what the other half is for. */
+    const dir = '.github/workflows';
+    const files = existsSync(dir) ? readdirSync(dir).filter((name) => /\.ya?ml$/.test(name)) : [];
+    expect(files).toEqual(['tests.yml']);
+  });
+
+  it('runs the vault suite and its typecheck', () => {
+    /* `npm test` at the root is the whole pipeline: bundle, fixtures, vitest,
+     * swift-check, typecheck. */
+    expect(workflow).toMatch(/^\s+npm test$/m);
+  });
+
+  it('runs the companion suite and its typecheck', () => {
+    expect(workflow).toMatch(/working-directory: wallet/);
+    expect(workflow).toMatch(/^\s+npx vitest run$/m);
+    expect(workflow).toMatch(/^\s+npx tsc --noEmit$/m);
+  });
+
+  it('runs the Worker suite and its typecheck', () => {
+    expect(workflow, 'the Worker step is gone and its guards are decoration again').toMatch(
+      /working-directory: worker/,
+    );
+    const step = workflow.slice(workflow.indexOf('working-directory: worker'));
+    expect(step).toMatch(/^\s+npm test$/m);
+    expect(step, 'the Worker typechecks the wallet modules it bundles').toMatch(
+      /^\s+npm run typecheck$/m,
+    );
+  });
+
+  it('caches against every lockfile it installs from', () => {
+    /* Three `npm ci` runs, three lockfiles. A missing one is not a failure,
+     * it is a slow job forever, which nobody files. */
+    for (const lock of ['package-lock.json', 'wallet/package-lock.json', 'worker/package-lock.json']) {
+      expect(workflow, `${lock} is installed from and not cached`).toContain(lock);
+    }
+  });
+
+  it('leaves no document claiming the Worker is unrun', () => {
+    /* The sentence was true, was written down in three places, and is the
+     * kind that outlives its fact. */
+    for (const path of ['CLAUDE.md', 'docs/handoff.md']) {
+      expect(readFileSync(path, 'utf8'), `${path} still says nothing runs the Worker`).not.toMatch(
+        /nothing runs it|does not run on push/,
+      );
+    }
   });
 });

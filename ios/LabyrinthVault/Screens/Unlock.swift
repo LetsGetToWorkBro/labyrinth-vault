@@ -234,22 +234,32 @@ struct UnlockView: View {
         let typed = passphrase
         let shouldRemember = remember && canOfferToRemember
         Task {
-            let failure = await vault.openVault(passphrase: typed)
-            if let failure {
-                problem = failure
-                return
-            }
-            /* Stored only after the seal has actually opened under it. A
-             * passphrase that merely got typed would give a face a shortcut to
-             * a vault it cannot open, which is a button that fails forever. */
-            if shouldRemember {
-                if let refused = vault.rememberPassphrase(typed) {
-                    problem = refused
+            switch await vault.openVault(passphrase: typed) {
+            case .opened:
+                /* Stored only after the seal has actually opened under it. A
+                 * passphrase that merely got typed would give a face a
+                 * shortcut to a vault it cannot open, which is a button that
+                 * fails forever. The `.notAttempted` case below is why this is
+                 * a switch and not a nil check: a declined attempt used to
+                 * come back indistinguishable from a successful one, and
+                 * enrolled the passphrase anyway. */
+                if shouldRemember {
+                    if let refused = vault.rememberPassphrase(typed) {
+                        problem = refused
+                    }
                 }
+                /* The String itself cannot be wiped, but nothing should keep
+                 * showing it either. */
+                passphrase = ""
+            case .refused(let sentence):
+                problem = sentence
+            case .notAttempted(let sentence):
+                /* Nil where the reason is a second tap on a lever whose first
+                 * tap is still deriving. The screen already says DERIVING KEY;
+                 * a sentence in red under the field would report a fault where
+                 * there is none. */
+                problem = sentence
             }
-            /* The String itself cannot be wiped, but nothing should keep
-             * showing it either. */
-            passphrase = ""
         }
     }
 

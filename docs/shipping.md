@@ -13,13 +13,13 @@ needs a Mac, and it is marked.
 | | Vault | Wallet |
 | --- | --- | --- |
 | Bundle id | `vision.labyrinth.vault` | `vision.labyrinth.wallet` |
-| Version / build | 0.1.0 (1) | 0.1.0 (1) |
+| Version / build | 0.1.0 (11) | 0.1.0 (11) |
 | Icon | generated, committed | generated, committed |
 | Privacy manifest | four empty lists, tested | four empty lists, tested |
-| Export compliance | **yes**, mass market | **no**, and here is why |
-| Compiles | **yes, Xcode, first try** | prebuild proven; never compiled |
-| Launches | **yes, Simulator, self-test green** | never launched |
-| Runs on real hardware | **not yet; the next gate** | no |
+| Export compliance | **yes**, mass market | **yes**, mass market |
+| Compiles | **yes, Xcode, first try** | **yes** |
+| Launches | **yes, Simulator, self-test green** | **yes** |
+| Runs on real hardware | one timed unlock, nothing else | not exercised |
 
 ### What the first run on a Simulator cost, and why the next one is on metal
 
@@ -37,16 +37,18 @@ the word `SCROLL`, so the instruction for proceeding was the thing being
 faded out.
 
 Both are the same lesson: the gap between a green suite and a working app is
-whatever the suite could not run. A Simulator closed most of it. What it
-still cannot answer is the two questions below, and both of them are answers
-a person deserves before money is involved.
+whatever the suite could not run. A Simulator closed most of it. Two questions
+needed a phone, and both are answers a person deserves before money is
+involved. The first has one now.
 
-**Argon2id timing on real hardware.** The KDF is calibrated to cost time on
-purpose. `scripts/bench-kdf.mjs` measures it, but a Simulator runs on a
-desktop CPU and tells you nothing about an iPhone's. If unlocking takes eight
-seconds on the oldest supported device, the parameters need revisiting or the
-derivation needs to be native, and that is a decision to make before people
-have vaults sealed under the current numbers.
+**Argon2id timing on real hardware, which has since been answered.** The
+question was whether an unlock would take seconds on a phone, and the answer
+turned on whether the derivation was native. It is: `CArgon2` is a target in
+`Package.swift`, the vault installs it at launch, and the owner timed an
+unlock on a device as near instant. That is the first hardware measurement
+this project has. What it leaves is the inverse check, and the launch
+self-test reports it in a word rather than a stopwatch: a *slow* unlock now
+means the native module did not load and the JavaScript fell in behind it.
 
 **The passcode-bound keychain class.** `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`
 and the Secure Enclave access control behind Face ID are not meaningfully
@@ -54,12 +56,13 @@ exercised by a Simulator. The refusal-to-create-without-a-passcode path and
 the enrollment-change invalidation both need a real device with a real
 passcode.
 
-## Export compliance: the two apps have different true answers
+## Export compliance: one answer now, and it used to be two
 
-App Store Connect asks whether the app uses non-exempt encryption. The wallet
-answers in its Info.plist; the vault answers in App Store Connect, per build,
-for the reason set out below. They answer differently, and that is correct
-rather than an inconsistency.
+App Store Connect asks whether the app uses non-exempt encryption. **Both apps
+answer yes, and both answer in App Store Connect rather than in a manifest**,
+per build, for the reason set out below. They used to answer differently and
+the difference used to be the point; the wallet's answer changed with the code,
+and this section is the account of both halves.
 
 **The wallet used to answer no, and now answers yes.** The old answer was
 correct for the app it described: watch only, holding an extended public key, a
@@ -75,9 +78,8 @@ does it, and an application whose function includes holding a user's key
 material at rest is a controlled encryption item.
 
 So the wallet joins the vault under **5D992.c** and is listed on the same
-self-classification report. The two apps now answer the same way for related
-but not identical reasons, and the sentence above about the difference being
-the point no longer applies.
+self-classification report. The two apps answer the same way now, for related
+but not identical reasons.
 
 *Both halves of that change have to move together.* The manifest key and this
 paragraph were flipped in the same commit as the first build that stores a
@@ -503,10 +505,15 @@ the BIS report) are the ones to start first.
       demo walk's review screen (with its DEMO badge, which cannot be
       hidden), the approve screen, the signed QR, the airgap
       diagnostic. Dark, portrait, no frames or captions needed.
-- [ ] **Export compliance** is answered in the Info.plist
-      (`ITSAppUsesNonExemptEncryption: true`), so Connect will not re-ask per
-      build. If the form asks about France, the France declaration section
-      above is the answer.
+- [ ] **Export compliance: answer YES**, per build, in Connect. This line used
+      to say the Info.plist answered it and that Connect would not re-ask.
+      Both halves were false: the key is not in `ios/project.yml`, it is only
+      quoted inside the comment explaining its removal, and
+      `test/shipping.test.ts` strips comments and fails if it comes back. Do
+      not add `ITSAppUsesNonExemptEncryption: true` to stop the question. That
+      is the edit that failed four consecutive uploads, transcribed in full
+      above, and it now fails `npm test` as well. If the form asks about
+      France, the France declaration section above is the answer.
 
 **The two review risks that remain, named:**
 
@@ -570,9 +577,10 @@ domain, and carries one review risk the vault does not.
 - [ ] **Privacy policy URL:** from the hosting step above.
 - [ ] **App Review notes:** paste [`store/wallet/review-notes.md`](../store/wallet/review-notes.md)
       whole, and **attach the round-trip demo video** (see risk 1 below). The
-      notes lead with the two facts that decide the review: the numbers are
-      fixtures until a node is set, and the app is the online half of a
-      two-device pair.
+      notes lead with the two facts that decide the review: a fresh install
+      watches nothing and says so rather than showing a fixture balance, and
+      the app is the online half of a two-device pair that holds keys for one
+      kind of account and not the other.
 - [ ] **Export compliance: answer YES**, per build, in Connect. Same as the
       vault and for a related reason: this app stores a seed now. There is no
       plist key any more, so Connect will ask on every upload. Do not add
@@ -580,11 +588,13 @@ domain, and carries one review risk the vault does not.
       edit that failed four uploads in a row on the vault, and the
       export-compliance section above is the account of it.
 - [ ] **Screenshots**, one required size class (6.9-inch iPhone). From the shot
-      list: the home screen with its `DEMO DATA` chip, receive showing an
-      address and its derivation path, the send review screen, the **QR
-      transmit frames** (the airgap handoff, the screenshot that explains the
-      product), and a swap quote with its derived payout address. Dark,
-      portrait.
+      list: the home screen with a balance on it (there is no `DEMO DATA` chip
+      any more, and a fresh install shows the NOTHING WATCHED empty state, so
+      this one needs an account and a node), the accounts list showing both
+      kinds side by side, receive showing an address and its derivation path,
+      the send review screen, the **QR transmit frames** (the airgap handoff,
+      the screenshot that explains the product), and a swap quote with its
+      derived payout address. Dark, portrait.
 
 **The review risks that remain, named:**
 
@@ -600,11 +610,14 @@ domain, and carries one review risk the vault does not.
    development build on request. Apple reviews hardware-companion apps this way
    routinely; the video is the standard answer and it should be attached, not
    held in reserve.
-2. **Fixture data reads as a broken wallet.** Every number is `DEMO DATA` until
-   a node is set, and an external tester who skipped the notes will believe the
-   balances. Ship internal TestFlight first (it skips Beta App Review), and
-   open external testing with instructions that lead with the Nodes screen,
-   since setting one is the moment the product becomes real.
+2. **A wallet watching nothing looks like a wallet that lost something.** A
+   fresh install has no account and no node, so home is the NOTHING WATCHED
+   empty state rather than a balance. That is deliberate, and it is the
+   opposite of the old risk, which was a fixture balance a tester would
+   believe. Ship internal TestFlight first (it skips Beta App Review), and open
+   external testing with instructions that lead with pairing or making an
+   account and then the Nodes screen, since those two are the moment the
+   product becomes real.
 3. **2.1 completeness.** With the stand-in controls now gated on `__DEV__`, a
    release build has no button that does nothing; the receive screen simply
    waits for a vault. If a reviewer still finds a dead end, it is a bug.
@@ -615,8 +628,8 @@ domain, and carries one review risk the vault does not.
 real money.** With a node set, Bitcoin discovery, coins, history, fees and
 broadcast are live, and the Monero view-key scan proves every found amount
 against the chain and subtracts spends after a key image round trip. What
-still stands between a tester and their own funds: the fixture until a node
-is chosen (`DEMO DATA`, by design, since there is no default node); the
+still stands between a tester and their own funds: no default node, by
+design, so nothing is watched until one is chosen; the
 Monero mainnet broadcast gate, which refuses until a live stagenet acceptance
 is recorded in `wallet/src/core/moneroreadiness.ts`; and the swap, which
 serves labeled fixture quotes until the proxy Worker is deployed and its
@@ -630,9 +643,9 @@ recording the stagenet acceptance and deploying the Worker.
 **The vault compiles and launches; real hardware is the open gate.** The
 state table at the top is the record: built in Xcode, launched in a
 Simulator, self-test green, and two launch-only bugs found and fixed by
-doing it. What a Simulator cannot answer is Argon2id timing on a phone's CPU
-and the passcode-bound keychain class, which is exactly the section above
-titled "why the next run is on metal". On Linux the model layer still
+doing it. What a Simulator cannot answer is the passcode-bound
+keychain class, and the Argon2id timing question the same section raises has
+since been answered on a device. On Linux the model layer still
 compiles and passes its tests through `./scripts/install-swift.sh`; the
 SwiftUI layer still needs a Mac, as it always will.
 

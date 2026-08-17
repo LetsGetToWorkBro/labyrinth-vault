@@ -19,12 +19,20 @@
  * teaches people that running a node is exotic.
  *
  * **Nothing is chosen until it is chosen.** The suggestions are inert. There
- * is no default, and with no node set the app shows fixture data and says so.
+ * is no default, and with no node set the app has nothing to show and says so
+ * on every screen that would otherwise show a number.
  *
  * The screen also carries the two things a person needs to know about what
  * this app keeps: how far the Monero scan has got, and the short list of what
  * survives a relaunch. Both are here rather than in a settings sub-page,
  * because both are consequences of the choice made above them.
+ *
+ * What that list must not do is understate itself, and it did. It said "no
+ * keys" over a build that stores a seed, above a button reading FORGET
+ * EVERYTHING STORED that clears neither keychain item. Two wrong claims
+ * reinforcing each other: a person reading both would conclude they had wiped
+ * a phone they had not. The list now names the keychain, and the button is
+ * named for what it actually clears.
  */
 
 import { useState } from 'react';
@@ -45,10 +53,14 @@ import {
   type NodeConfig,
   type NodeKind,
 } from '../core/nodes';
-import { SPEND_BLINDNESS } from '../core/moneroscan';
+import { spendBlindness } from '../core/moneroscan';
 
 export function NodesScreen({ navigation }: Nav<'Nodes'>) {
   const store = useStore();
+  /* Which account the scan section is about. Everything above it is about a
+   * node and is the same for every account; the spend sentence below it is
+   * not. */
+  const looking = store.accounts.find((entry) => entry.id === store.selectedAccount) ?? null;
   const [kind, setKind] = useState<NodeKind>('esplora');
   const [typed, setTyped] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
@@ -231,7 +243,17 @@ export function NodesScreen({ navigation }: Nav<'Nodes'>) {
             <Gap size={8} />
           </>
         ) : null}
-        <Small>{SPEND_BLINDNESS}</Small>
+        {/* The one sentence on this screen that is about custody rather than
+            about a node, so it is the one that has to ask which account is
+            being looked at. Saying the spend key "lives in the vault" is true
+            and important about a paired account and false about a wallet
+            whose twenty-five words are in this phone's keychain.
+
+            The screen picks the account and `moneroscan.ts` picks the words.
+            Both sentences used to live here, one of them a copy of the
+            constant and one written locally, which is how the balance caveat
+            and this paragraph came to disagree about the same wallet. */}
+        <Small>{spendBlindness(looking?.signsHere ? 'hot' : 'vault')}</Small>
         <Gap size={8} />
         <Small>
           Monero has no address index, so finding your payments means testing
@@ -246,13 +268,28 @@ export function NodesScreen({ navigation }: Nav<'Nodes'>) {
 
         <Notice title="WHAT IS REMEMBERED" tone="plain">
           The nodes above and how far the Monero scan got, in one file in this
-          app's own storage. No keys and no payment history: those arrive from
-          the vault and live in memory until the app closes.
+          app's own storage. No payment history: that is fetched again on every
+          refresh and never written down.
         </Notice>
         <Gap size={8} />
+        {/* Said separately because it is stored somewhere else, under a
+            different protection, and is not cleared by anything on this
+            screen. The version of this notice that folded the two together
+            said "no keys" on a build that stores a seed. */}
+        {store.hot === null ? null : (
+          <>
+            <Notice title="THE SEED IS NOT IN THAT FILE" tone="warn">
+              A wallet made or restored on this phone keeps its recovery seed in the
+              keychain, under the device passcode, and the button below does not touch
+              it. Forgetting that is under SECURITY, on a screen that says what
+              forgetting costs.
+            </Notice>
+            <Gap size={8} />
+          </>
+        )}
         <ActionRow>
           <Action
-            label="FORGET EVERYTHING STORED"
+            label="FORGET THE NODES AND THE SCAN"
             quiet
             onPress={() => { confirmed(); store.forgetStored(); }}
           />

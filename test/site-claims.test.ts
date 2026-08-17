@@ -41,6 +41,27 @@ function sources(dir: string, found: string[] = []): string[] {
 const files = sources('site/src').concat(existsSync('site/index.html') ? ['site/index.html'] : []);
 const text = files.map((path) => ({ path, body: readFileSync(path, 'utf8') }));
 
+/**
+ * Comments removed first, the way `wallet/test/copy.test.ts` does it.
+ * The rule is about what a person reads on the page, and prose explaining the
+ * rule is not the rule being broken. This repository has now had five guards
+ * fail on exactly that mistake, including the em dash one below, on its first
+ * run, and the custody guard above it, on its first run too: the sentence it
+ * refuses was sitting in a CSS comment recording that the sentence had been
+ * taken off the page.
+ *
+ * A line comment is matched only at the start of a line, because `//` in the
+ * middle of one is nearly always the middle of a URL, and truncating there
+ * would hide real copy from a guard rather than hide a comment from it.
+ */
+const withoutComments = (body: string, path: string): string =>
+  path.endsWith('.html')
+    ? body.replace(/<!--[\s\S]*?-->/g, '')
+    : body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+/** Every file a person's eyes reach, with the prose about the code removed. */
+const copy = text.map(({ path, body }) => ({ path, body: withoutComments(body, path) }));
+
 describe('the site is there to be checked', () => {
   it('found the site to check', () => {
     /* If the site moves or is removed, this suite must fail rather than pass
@@ -78,6 +99,68 @@ describe('the site does not claim a reading the app cannot take', () => {
     for (const { path, body } of text) {
       expect(body, `${path} claims the airgap was verified`).not.toMatch(offending);
     }
+  });
+});
+
+describe('the site does not deny a key the app stores', () => {
+  /* The site sold one sentence for months: the online half holds no private
+   * key. It was true when it was written and it stopped being true the day
+   * the companion grew backup and restore screens, and nothing here noticed,
+   * because the guards for that claim all pointed at the app and the listing.
+   * The site is the loudest surface and was the last one corrected.
+   *
+   * The rule now is the one the app itself follows. There are two kinds of
+   * account: one paired from a vault, which is watch-only on the phone
+   * forever, and one made on the phone, whose seed is in the keychain behind
+   * Face ID. The site may say the first thing as loudly as it likes. It may
+   * not say the second does not exist.
+   */
+
+  it('never says the online half holds no key', () => {
+    /* Each of these shipped, in these words. "KEEP THE KEYS OFFLINE" as
+     * advice is not in the list and is not the problem: the problem is a
+     * statement in the present tense about what this app holds. */
+    const offending =
+      /no\s+private\s+keys?[^.]{0,40}online|never\s+(needs|sees|holds|touches)\s+your\s+private\s+keys?|keys?\s+stay\s+offline|zero\s+private[- ]key\s+exposure|has\s+never\s+seen\s+a\s+private\s+key/i;
+    for (const { path, body } of copy) {
+      expect(body, `${path} says the online half holds no key, which stopped being true`).not.toMatch(
+        offending,
+      );
+    }
+  });
+
+  it('says which account the vault still owns, in the words the rule is written in', () => {
+    /* Dropping the false half must not mean dropping the true half, which is
+     * the stronger claim anyway: `canSignHere` takes a source and nothing
+     * else, so a paired account cannot be signed here whatever the phone is
+     * holding. If that sentence leaves the site, the site has stopped
+     * describing the one property the product cannot survive losing. */
+    const all = copy.map((t) => t.body).join('\n');
+    expect(all, 'the site no longer says a vault-paired account is watch-only here').toMatch(
+      /watch-only[^.]{0,60}forever|forever[^.]{0,60}watch-only/i,
+    );
+
+    const rule = readFileSync('wallet/src/core/keyvault.ts', 'utf8');
+    expect(rule, 'canSignHere no longer takes a source and nothing else').toMatch(
+      /export function canSignHere\(source: Source\): boolean/,
+    );
+  });
+
+  it('says where a key made on the phone lives, rather than leaving it out', () => {
+    /* The quiet failure mode of the fix above: delete the false sentence,
+     * say nothing in its place, and let a person meet the MAKE A WALLET ON
+     * THIS PHONE button having read a site that implied no such thing
+     * existed. So the site has to name the storage and the gate, and the
+     * screens it is describing have to still have both. */
+    const all = copy.map((t) => t.body).join('\n');
+    expect(all, 'the site does not say a wallet made on the phone keeps its phrase here').toMatch(
+      /keychain/i,
+    );
+    expect(all, 'the site does not say what guards it').toMatch(/face\s*id/i);
+
+    const keyvault = readFileSync('wallet/src/core/keyvault.ts', 'utf8');
+    expect(keyvault, 'the wallet no longer stores a seed, so the site should go back to saying so')
+      .toMatch(/xmrSeed/);
   });
 });
 
@@ -474,17 +557,6 @@ describe('the display type fits the phone it is read on', () => {
 });
 
 describe('the site reads the way everything else here reads', () => {
-  /**
-   * Comments removed first, the way `wallet/test/copy.test.ts` does it.
-   * The rule is about what a person reads on the page, and prose explaining
-   * the rule is not the rule being broken. This repository has now had five
-   * guards fail on exactly that mistake, including this one, on its first run.
-   */
-  const withoutComments = (body: string, path: string): string =>
-    path.endsWith('.html')
-      ? body.replace(/<!--[\s\S]*?-->/g, '')
-      : body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-
   it('has no em dashes in anything a person reads', () => {
     /* The rule the wallet and the vault already hold, which the site was
      * outside of: `test/copy-style.test.ts` covers the markdown and

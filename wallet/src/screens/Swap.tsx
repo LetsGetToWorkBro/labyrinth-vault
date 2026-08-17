@@ -299,7 +299,9 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
         <Gap size={space.section} />
         <View style={styles.divide}>
           <View style={{ flex: 1 }}><Rule /></View>
-          <Press onPress={flip} disabled={!canFlip} scale={0.92}>
+          {/* The one control in the app whose whole content is a glyph, so
+              the label cannot be read off what is inside it. */}
+          <Press onPress={flip} disabled={!canFlip} scale={0.92} label="Swap the two coins around">
             <View style={styles.flip}>
               <Animated.View style={flipStyle}>
                 <SwapIcon size={18} tone={canFlip ? color.bone : color.dim} />
@@ -326,7 +328,24 @@ export function SwapScreen({ navigation, route }: Nav<'Swap'>) {
         <Rule />
         <Gap size={space.section} />
 
-        <PayoutBlock to={to} typed={typedPayout} onType={setTypedPayout} derived={store.own.receive(to.ours as Asset)} />
+        <PayoutBlock
+          to={to}
+          typed={typedPayout}
+          onType={setTypedPayout}
+          derived={store.own.receive(to.ours as Asset)}
+          /* Where the payout address comes from, which is where this account's
+             keys are. It is derived either way and checkable either way; what
+             changes is which device it can be checked against, and crediting
+             the vault for an address derived from this phone's own seed is
+             the same false statement the receive screen was making. */
+          signsHere={
+            store.accounts.find((entry) => entry.id === store.selectedAccount)?.signsHere === true
+          }
+          /* And why there is no address, when there is none. "No account
+             paired" was the placeholder for every cause, including the
+             ordinary one: no node is set, so nothing has been derived yet. */
+          nodeSet={to.ours === 'BTC' ? store.nodes.btc !== null : store.nodes.xmr !== null}
+        />
 
         {phase === 'quoted' || phase === 'creating' ? (
           <>
@@ -668,11 +687,15 @@ function PayoutBlock({
   derived,
   typed,
   onType,
+  signsHere,
+  nodeSet,
 }: {
   to: SwapCoin;
   derived: string | null;
   typed: string;
   onType: (value: string) => void;
+  signsHere: boolean;
+  nodeSet: boolean;
 }) {
   if (to.ours !== null) {
     return (
@@ -680,16 +703,28 @@ function PayoutBlock({
         <Label>PAYING OUT TO</Label>
         <Gap size={space.snug} />
         <Panel tone={color.well} style={{ padding: space.gap }}>
-          <Mono size={13}>{derived ?? 'no account paired'}</Mono>
+          <Mono size={13}>
+            {derived ?? (nodeSet ? 'no address derived yet' : 'no node set for this chain')}
+          </Mono>
         </Panel>
         <Gap size={space.snug} />
-        <Notice title="THIS ADDRESS IS YOURS" tone="good">
-          Derived from the account key your vault handed over, not typed and not
-          remembered. You can check it on the receive screen and on the vault,
-          which derive it from the same key. There is no field here on purpose:
-          a payout address is in no transaction, so no confirmation screen ever
-          shows it, and a field is somewhere to paste an attacker's address.
-        </Notice>
+        {signsHere ? (
+          <Notice title="THIS ADDRESS IS YOURS" tone="good">
+            Derived from this account&apos;s own keys, not typed and not
+            remembered. You can check it on the receive screen, which derives it
+            the same way. There is no field here on purpose: a payout address is
+            in no transaction, so no confirmation screen ever shows it, and a
+            field is somewhere to paste an attacker&apos;s address.
+          </Notice>
+        ) : (
+          <Notice title="THIS ADDRESS IS YOURS" tone="good">
+            Derived from the account key your vault handed over, not typed and not
+            remembered. You can check it on the receive screen and on the vault,
+            which derive it from the same key. There is no field here on purpose:
+            a payout address is in no transaction, so no confirmation screen ever
+            shows it, and a field is somewhere to paste an attacker&apos;s address.
+          </Notice>
+        )}
       </>
     );
   }

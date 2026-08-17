@@ -9,14 +9,16 @@ already own, and a spare one from a drawer.**
 >
 > Nothing here has been independently audited.
 >
-> The vault's engine is tested, the app is wired to it, and as of this commit
-> the whole iOS target compiles in Xcode. What that does not mean is that it
-> has been *used*: it has never run against a real transaction on a real phone,
-> and one measurement that decides part of its design is still missing.
+> Both apps compile and both are on TestFlight. What that does not mean is
+> that they have been *used*: no daemon has accepted a broadcast from this
+> code, no third-party wallet has imported a file it wrote, and almost nothing
+> here has been exercised on a physical device. `docs/handoff.md` keeps the
+> current list under "Still true, still unverified", and it is the honest
+> summary of what is claimed versus what is checked.
 >
-> The wallet is a complete interface with no chain behind it. Every balance,
-> price and fee it shows comes from a fixture, and it says so on screen for
-> exactly as long as that stays true. It has never been compiled at all.
+> The wallet reads real chains now, through a node you choose. It also holds
+> keys for accounts made on the phone itself, which is a smaller promise than
+> the vault's and is described as one below.
 >
 > Tested is not the same as safe to hold your savings.
 >
@@ -52,14 +54,23 @@ device in JavaScriptCore. Source in [`ios/`](ios) and [`src/`](src).
 
 <img src="docs/images/wallet-home.webp" width="300" align="right" alt="The wallet's home screen: total balance, BTC and XMR rows, and send, receive and swap actions">
 
-Runs on the phone you actually carry. It watches Bitcoin and Monero with
-public keys only, builds unsigned payments, shows them to the vault as animated
-QR frames, reads the signed result back through the camera, checks it against
-what was approved, and broadcasts.
+Runs on the phone you actually carry. It watches Bitcoin and Monero, builds
+unsigned payments, shows them to the vault as animated QR frames, reads the
+signed result back through the camera, checks it against what was approved,
+and broadcasts.
 
-**It has never seen a private key and has no screen that would accept one.**
-What it can lose is your privacy, not your coins, which is why it ships with no
-default node and explains why on the screen where you choose one.
+**It holds two kinds of account, and the difference is where the key is.** An
+account paired from a vault is watch-only here forever: `canSignHere` takes
+the account's source and nothing else, so no convenience can make this phone
+sign for keys somebody believes are offline. An account made on this phone
+keeps its seed in the iOS keychain, readable only while the device is unlocked
+and only on this device, and asks for Face ID before every signature and
+before it shows the words. That second one is a real reduction against the
+vault, said out loud here and on the screens: it is for the balance you would
+carry, not the one you are saving.
+
+It ships with no default node, and explains why on the screen where you choose
+one, because a light client tells whoever answers every address it asks about.
 
 React Native and Expo, importing the wire format and address rules from
 [`src/`](src) rather than copying them. Source in [`wallet/`](wallet).
@@ -220,7 +231,7 @@ Early. What exists and is tested:
   than trusted to stay true.
 
 - **The sealed vault** (`src/keys/seal.ts`). What the seed looks like at
-  rest: Argon2id (memory-hard, calibrated on the device itself) into
+  rest: Argon2id (memory-hard, at RFC 9106's second recommended setting) into
   XChaCha20-Poly1305, with the KDF parameters authenticated alongside the
   ciphertext so a file cannot be talked into weakening itself. Both primitives
   are pinned in the tests to implementations that share no code with ours:
@@ -303,10 +314,10 @@ Early. What exists and is tested:
 
 - **The online half** (`wallet/`). Labyrinth Wallet, the everyday app that
   watches the chain, builds the payments, shows them to the vault as QR frames
-  and broadcasts what comes back. A React Native application with 513 tests of
-  its own, and the whole interface exists: home, receive, the send flow end to
-  end through the QR handoff, the vault screen, the swap, the node picker, the
-  security center, and the state that matters most, which is a returned
+  and broadcasts what comes back. A React Native application with a test suite
+  of its own, and the whole interface exists: home, receive, the send flow end
+  to end through the QR handoff, the vault screen, the swap, the node picker,
+  the security center, and the state that matters most, which is a returned
   transaction that does not match the one that was approved.
 
   It imports the wire and the address rules from `src/` rather than copying
@@ -321,9 +332,16 @@ Early. What exists and is tested:
     is a decision the app makes you make, and running your own is presented as
     the ordinary choice rather than the advanced one. Nothing is sent anywhere
     until you have set one.
-  - **The numbers are fixtures until you do.** `src/core/demo.ts` supplies every
-    balance, price, fee estimate and confirmation count, and every screen
-    showing one is marked `DEMO DATA` for exactly as long as that is true.
+  - **A wallet watching nothing says so.** There is no fixture balance in a
+    release build: with no account paired and none made here, home is an empty
+    state naming the two ways out. The fixture that survives is the swap quote
+    with no exchange relay configured, and it carries a `DEMO DATA` notice. A
+    warning label over a plausible balance loses to the balance, which is the
+    argument that removed the chip.
+  - **An account made on this phone keeps its seed here.** The keychain, at
+    the strictest class iOS offers, with Face ID per signature and again
+    before the words are shown. `wallet/src/core/keyvault.ts` is the whole of
+    that decision and reads as a security document because it is one.
   - **The stand-in signer is compiled out of release.** A demo vault that signs
     with a published seed is the exact failure this product exists to prevent,
     so both it and the controls that reach it are behind `__DEV__`, and a test
@@ -362,32 +380,30 @@ Early. What exists and is tested:
 
 Next, in order:
 
-1. **Run it on a real phone.** It compiles; it has not been used. Two things
-   need a device rather than a simulator: the keychain's passcode-bound access
-   class, which is the mechanism behind the screen that tells somebody their
-   vault was deleted because they turned their passcode off, and one
-   measurement. Whether the key derivation needs to be native rests on a single
-   number nobody should guess: `npm run bench:kdf` says 1554 ms for the default
-   parameters on a server CPU *with* a JIT, and JavaScriptCore inside an app
-   has no JIT. See [docs/native-primitives.md](docs/native-primitives.md),
-   which is also the argument for what should and should not ever be ported to
-   Swift.
-2. **Compile the wallet.** `expo prebuild` has been proven on Linux with
-   `--no-install`, so the generated project is a known quantity, but nothing
-   has run CocoaPods or a compiler over it. The vault's first build was clean;
-   that is weak evidence about a different app in a different language.
-3. **A node client for the wallet**, so the numbers stop being fixtures. Until
-   then every screen showing a balance says `DEMO DATA`, and external
-   TestFlight is gated on this rather than on the calendar.
-4. **Monero signing, proved against something that is not us.** The primitives,
-   CLSAG, Bulletproofs+, the transaction assembly and the confirmation screen
-   are built and pinned to Monero's own vectors and to bytes Monero's own code
-   produced. What has not happened is the differential test that matters:
-   generating a set with a real Monero wallet, signing it on this device, and
-   having a daemon accept the result. Until that has run on testnet and then
-   stagenet, this is code that agrees with a fixture rather than with the
-   network. [docs/monero-signing.md](docs/monero-signing.md) has the order of
-   work and the two claims this repository has already had to correct.
+1. **Use it on a real phone.** Both apps compile and both are on TestFlight,
+   and almost nothing in either has been driven by a person on hardware. One
+   unlock has been timed and that is the whole of the device evidence so far.
+   `docs/testflight.md` is the ordered plan and `docs/handoff.md` keeps the
+   list of what it has not yet answered: the coin picker, the deposit screen,
+   the accounts list, the recovery words, the restore, and the keychain
+   behavior that no simulator exercises honestly.
+2. **A broadcast a daemon accepts.** Nothing this repository has built has
+   been handed to a running node. `MONERO_SEND_BROADCAST_VERIFIED` is `false`
+   and refuses a mainnet Monero spend for that reason; `scripts/stagenet-send.ts`
+   against a funded stagenet address is the one command that would change it,
+   and it is the same missing evidence for Bitcoin, minus the gate.
+3. **A file another wallet reads.** No real Feather or Cake has imported a key
+   image file or an unsigned set from this vault. `wallet2` has, and `wallet2`
+   is the library rather than the application, which is the distinction
+   [docs/verification.md](docs/verification.md) exists to keep making.
+4. **An unsigned set some other Monero wallet wrote.** The primitives, CLSAG,
+   Bulletproofs+, the transaction assembly and the confirmation screen are
+   built and pinned to Monero's own vectors and to bytes Monero's own code
+   produced. What has not happened is the input coming from somewhere else:
+   generating a set with a real Monero wallet and signing that one here. Until
+   it does, this is code agreeing with a fixture rather than with the network.
+   [docs/monero-signing.md](docs/monero-signing.md) has the order of work and
+   the two claims this repository has already had to correct.
 
 ## Marketing site
 
@@ -462,11 +478,21 @@ which rebuilds every fixture from upstream's own source at a pinned commit.
 [docs/verification.md](docs/verification.md) is the ledger of which claim rests
 on whose software, what that has caught, and what still has no witness at all.
 
-The wallet has its own package and its own suite:
+The wallet and the Worker each have their own package and their own suite, and
+neither is reached by the root `npm test`:
 
 ```sh
 cd wallet && npm ci && npx vitest run && npx tsc --noEmit
+cd worker && npm ci && npm test
 ```
+
+The Worker's `npm run typecheck` is left out of that line because it does not
+pass, and the reason is worth knowing before somebody wires it into CI: the
+Worker bundles modules from `wallet/src/`, and `net/http.ts` passes
+`credentials: 'omit'` to `fetch`, which is a browser option that
+`@cloudflare/workers-types` does not have. The suite runs; the typecheck needs
+that one call site reconciled first. Nothing on push runs either of them
+today, which is the gap and not the plan.
 
 And the two things that need a Mac, once you have one:
 

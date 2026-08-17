@@ -30,7 +30,7 @@
  * why it is a different place than the node config.
  */
 
-import { parseAccount } from '@vault/keys/account';
+import { MAX_RESTORE_HEIGHT, parseAccount } from '@vault/keys/account';
 import { addressAt, openWatch } from '@vault/keys/bitcoin';
 import { openAccount } from './moneroscan';
 
@@ -95,6 +95,44 @@ export function wouldReplace(
 }
 
 /**
+ * A better sentence for a payload `parseAccount` has already refused.
+ *
+ * Deliberately not a second parser, and it must not become one: it looks for
+ * exactly the one refusal a person can act on and says nothing about any
+ * other. `parseAccount` returns null for a dozen reasons and cannot say
+ * which, which is right for a format reader and wrong for a screen somebody
+ * is reading while holding two phones. Every other reason ends at the same
+ * generic sentence, because "this export is not one this wallet can read" is
+ * genuinely all that is known about a malformed payload.
+ *
+ * The restore height is the one worth naming because it is the one an honest
+ * vault can produce: a device with a wrong clock, or a chain whose height was
+ * typed rather than read. The generic sentence sends that person to check
+ * their QR code, which is fine and undamaged, and they have nowhere to go
+ * next.
+ */
+function whyNot(payload: Uint8Array): string {
+  const generic = 'That is not a watch-only export this wallet can read.';
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(payload));
+  } catch {
+    return generic;
+  }
+  if (!value || typeof value !== 'object') return generic;
+  const raw = value as Record<string, unknown>;
+  if (raw['chain'] !== 'xmr') return generic;
+  const height = raw['height'];
+  if (typeof height !== 'number' || !Number.isSafeInteger(height)) return generic;
+  if (height >= 0 && height <= MAX_RESTORE_HEIGHT) return generic;
+  return (
+    `That export says to start scanning Monero at block ${height}, and this wallet only accepts a restore ` +
+    `height between 0 and ${MAX_RESTORE_HEIGHT}. Check the date on the vault that made it, then export the ` +
+    'account again.'
+  );
+}
+
+/**
  * Read an ACCOUNT payload and prove it before anything is kept.
  *
  * A refusal here is a sentence on the scan screen, at the moment somebody is
@@ -103,7 +141,7 @@ export function wouldReplace(
 export function acceptAccount(payload: Uint8Array): Accepted {
   const account = parseAccount(payload);
   if (!account) {
-    return { ok: false, problem: 'That is not a watch-only export this wallet can read.' };
+    return { ok: false, problem: whyNot(payload) };
   }
 
   if (account.chain === 'btc') {
@@ -168,7 +206,12 @@ export function revalidatePairing(value: unknown): Pairing | null {
       typeof birth === 'number' &&
       Number.isSafeInteger(birth) &&
       birth >= 0 &&
-      birth <= 100_000_000 &&
+      /* The same ceiling the export door uses, imported rather than retyped.
+       * A height one door lets through and the other refuses is a pairing
+       * accepted on camera and gone on the next launch, with no message at
+       * either end, which is the failure `MAX_RESTORE_HEIGHT` exists to
+       * prevent and which a second copy of the numeral would reintroduce. */
+      birth <= MAX_RESTORE_HEIGHT &&
       openAccount(entry['address'], entry['view']).ok
     ) {
       xmr = { address: entry['address'], view: entry['view'].toLowerCase(), birth };

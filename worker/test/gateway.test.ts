@@ -18,8 +18,9 @@
 import { describe, expect, it } from 'vitest';
 import worker, { type Env } from '../src/index';
 import { keyConfigsFor, parseKeys } from '../src/gateway';
-import { obliviousFetch, type Relay } from '../../wallet/src/net/oblivious';
-import { encodeKeyList } from '../../wallet/src/net/ohttp/ohttp';
+import { obliviousFetch, REQUEST_MEDIA_TYPE, type Relay } from '../../wallet/src/net/oblivious';
+import { encodeKeyList, sealRequest } from '../../wallet/src/net/ohttp/ohttp';
+import { encodeRequest } from '../../wallet/src/net/ohttp/bhttp';
 
 /** The gateway's key. Any 32 bytes will do; this one is from RFC 9458 A. */
 const GATEWAY_SECRET = '3c168975674b2fa8e465970b79c8dcf09f1c741626480bd4c6162fc5b6a98e1a';
@@ -65,6 +66,32 @@ function pretendRelay(gatewayEnv: Env = env()): Pretend {
 }
 
 const through = (relay: Pretend): typeof fetch => obliviousFetch(relay, { doFetch: relay.forward });
+
+/**
+ * An encapsulated request built without the client, so a test can send the
+ * gateway something no client of ours would.
+ *
+ * `obliviousFetch` composes the inner path out of a parsed URL, which means
+ * every path it can produce is already well formed. Anything checking what
+ * the gateway does with a malformed one has to write the plaintext itself,
+ * which is also what an attacker holding the published key configuration
+ * would do.
+ */
+function handSealed(over: Partial<Parameters<typeof encodeRequest>[0]>): Uint8Array {
+  const config = keyConfigsFor(parseKeys(`1:${GATEWAY_SECRET}`))[0]!;
+  return sealRequest(
+    config,
+    encodeRequest({
+      method: 'GET',
+      scheme: 'https',
+      authority: 'gateway.example',
+      path: '/v1/health',
+      headers: [],
+      body: new Uint8Array(),
+      ...over,
+    }),
+  ).body;
+}
 
 describe('the gateway key configuration', () => {
   it('publishes the configured key in the format clients read', async () => {
@@ -337,20 +364,63 @@ describe('what the gateway refuses', () => {
      * not a party this design trusts either. Only the path is used, against
      * this Worker's own origin. */
     const relay = pretendRelay();
-    let dialled: string | null = null;
+    let dialed: string | null = null;
     const original = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
-      dialled = String(input);
+      dialed = String(input);
       return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
     }) as typeof fetch;
     try {
       const answer = await through(relay)('https://somewhere-else.example/v1/health');
       expect(answer.status).toBe(200);
       expect(await answer.json()).toEqual({ ok: true });
-      expect(dialled).toBeNull();
+      expect(dialed).toBeNull();
     } finally {
       globalThis.fetch = original;
     }
+  });
+
+  it('refuses a plaintext whose path is not a path', async () => {
+    /* The test above cannot reach this branch and it is worth saying why. It
+     * drives the real client, and the real client always writes
+     * `pathname + search`, so no authority it could be handed ever survives
+     * into the field the gateway reads. Everything hostile therefore has to
+     * be built by hand here, because the attacker is not a client of ours.
+     *
+     * The shape being refused is the one `new URL(path, origin)` gets wrong:
+     * an absolute or protocol-relative first argument makes the parser throw
+     * the base away, so the origin the gateway believes it pinned is the one
+     * the sender chose. */
+    for (const path of [
+      'https://evil.example/v1/quote',
+      '//evil.example/v1/quote',
+      '/\\evil.example/v1/quote',
+      'v1/quote',
+    ]) {
+      const answer = await call('https://gateway.example/v1/gateway', {
+        method: 'POST',
+        headers: { 'Content-Type': REQUEST_MEDIA_TYPE },
+        body: handSealed({ path }),
+      });
+      /* Flat, bodyless, and the same shape as every other gateway refusal:
+       * telling a prober which of its tricks was recognized is telling it
+       * which one to try next. */
+      expect(answer.status, path).toBe(400);
+      expect(await answer.text(), path).toBe('');
+    }
+  });
+
+  it('still carries an ordinary hand-built path, so the refusal is not refusing everything', async () => {
+    /* Without this the test above passes just as well against a gateway that
+     * threw on every encapsulated request, which would be a guard reporting
+     * on its own fixture rather than on the check. */
+    const answer = await call('https://gateway.example/v1/gateway', {
+      method: 'POST',
+      headers: { 'Content-Type': REQUEST_MEDIA_TYPE },
+      body: handSealed({ path: '/v1/health' }),
+    });
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get('Content-Type')).toBe('message/ohttp-res');
   });
 });
 
@@ -411,9 +481,9 @@ describe('the ceiling is in the code, not in the platform', () => {
      * same unbounded way. A node should never receive something this Worker
      * would not have accepted for itself. */
     const original = globalThis.fetch;
-    let dialled = false;
+    let dialed = false;
     globalThis.fetch = (async () => {
-      dialled = true;
+      dialed = true;
       return new Response('ok');
     }) as typeof fetch;
     try {
@@ -422,7 +492,7 @@ describe('the ceiling is in the code, not in the platform', () => {
         { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: 'a'.repeat(MB + 1) },
       );
       expect(response.status).toBe(413);
-      expect(dialled, 'the node was dialled anyway').toBe(false);
+      expect(dialed, 'the node was dialed anyway').toBe(false);
     } finally {
       globalThis.fetch = original;
     }
@@ -442,5 +512,57 @@ describe('the ceiling is in the code, not in the platform', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+
+  it('refuses an oversized intent on the two swap routes as well', async () => {
+    /* The third route found by this method. `/v1/gateway` was capped after
+     * one audit and `/v1/node` after another, each named on its own, and the
+     * pattern of naming them one at a time is what left these two open: they
+     * read and parsed in a single `request.json()`, so there was never a
+     * moment where the bytes existed and a size could be asked about. */
+    const original = globalThis.fetch;
+    let dialed = false;
+    globalThis.fetch = (async () => {
+      dialed = true;
+      return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      for (const route of ['/v1/quote', '/v1/create']) {
+        /* Valid in every respect but its size, so the only thing that can
+         * refuse it is the ceiling. A padded field rather than padded
+         * whitespace, because a parser that stripped whitespace would make
+         * this pass for the wrong reason. */
+        const oversized = JSON.stringify({
+          provider: 'exolix',
+          from: 'btc',
+          to: 'xmr',
+          amount: 1,
+          payoutAddress: 'a'.repeat(MB + 1),
+        });
+        const response = await call(`https://gateway.example${route}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: oversized,
+        });
+        expect(response.status, route).toBe(413);
+        expect(dialed, `${route} dialed the exchange anyway`).toBe(false);
+      }
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('reads a body in exactly one place, so a new route cannot forget the ceiling', async () => {
+    /* The behavioral tests above cover the routes that exist today. This one
+     * covers the route somebody adds next. `serve` reads the body once, above
+     * the routing, and hands the string down; a route that reached for
+     * `request.json()` or a second `request.text()` would have gone around
+     * the measurement, and that is the only way this can go wrong again. */
+    const { readFileSync } = await import('node:fs');
+    const code = readFileSync('src/index.ts', 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    expect(code, 'a route parses a body without measuring it first').not.toMatch(/request\.json\s*\(/);
+    expect(code.match(/request\.text\s*\(/g) ?? []).toHaveLength(1);
   });
 });

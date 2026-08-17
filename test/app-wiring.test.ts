@@ -17,12 +17,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 /* The one import of the code under guard, rather than of its text. It earns
  * its exception: see "is reachable" below, where a text guard passed against
  * a wire that had genuinely stopped carrying the payload. */
 import { encodeParts, parsePart } from '../src/airgap/envelope';
+import { codeOnly, sourcesUnder } from './support/source';
 
 /** Every Swift source in the shipping app, for the tree-wide guards. */
 function appSources(dir = 'ios/LabyrinthVault'): { path: string; text: string }[] {
@@ -292,11 +293,131 @@ describe('the vault seals under both layers, not just the typed one', () => {
     expect(saveAt, 'the blob is overwritten before it has been re-sealed').toBeGreaterThan(resealAt);
   });
 
+  it('runs the migration off the main thread, like every other derivation', () => {
+    /* Ordering was the only thing checked here, and ordering is not the only
+     * thing that can be wrong.
+     *
+     * `reseal` is an unseal, a seal and a proof unseal: three Argon2id
+     * derivations. This class is `@MainActor`, so a bare call runs all three on
+     * the thread that draws, and it runs on the success path of the first
+     * unlock after an upgrade. On a build where the native derivation fails to
+     * adopt, which Settings.swift documents as silent, that is minutes of a
+     * frozen app under copy that says it is not frozen. Every other derivation
+     * site in this file already hops off; this one was the exception, and an
+     * exception nothing checks is an exception that comes back. */
+    const migrate = code.slice(code.indexOf('func migrateToLayeredScheme'));
+    const detachedAt = migrate.indexOf('Task.detached');
+    const resealAt = migrate.indexOf('engine.reseal');
+    expect(detachedAt, 'the migration does not leave the main actor at all').toBeGreaterThan(-1);
+    expect(resealAt).toBeGreaterThan(-1);
+    expect(detachedAt, 'the re-seal runs before the hop off the main actor').toBeLessThan(resealAt);
+  });
+
   it('re-seals inside the engine, so the secret never crosses the bridge', () => {
     const engine = readFileSync('ios/LabyrinthVault/Support/Engine.swift', 'utf8');
     expect(engine).toMatch(/func reseal\(sealedHex:/);
     const host = readFileSync('src/bridge/host.ts', 'utf8');
     expect(host).toMatch(/reseal: guarded\('reseal'/);
+  });
+});
+
+describe('ERASE VAULT clears every keychain account this app writes', () => {
+  /*
+   * V-H1. `eraseVault()` called `SealedStore.erase()` and `lock()`, which
+   * between them clear the sealed blob, the witness, the timing record and
+   * the device half. `BiometricUnlock` keeps its own account,
+   * `unlock-passphrase`, and nothing on the erase route touched it: the only
+   * caller of `forget()` was the recovery screen's STOP USING lever and a
+   * self-heal inside the unlock path, neither reachable after an erase.
+   *
+   * So a person who erased their vault, sold the phone, and had the buyer
+   * restore from an iCloud keychain backup would be handing over the
+   * passphrase to a vault they believe is gone. The blob is gone, which is
+   * why this is a High and not a Critical, and a passphrase surviving an
+   * ERASE is still a promise broken.
+   *
+   * Written against the accounts each file declares rather than a list typed
+   * here, because a list typed here is a list that stops matching. Comments
+   * are stripped first, or the guard fires on the paragraph above the
+   * constant it is looking for.
+   */
+  const accountsIn = (source: string): string[] =>
+    [...codeOnly(source).matchAll(/let (\w*[Aa]ccount\w*) = "([^"]+)"/g)].map((match) => match[2]!);
+
+  const storeSource = readFileSync('ios/LabyrinthVault/Support/SealedStore.swift', 'utf8');
+  const biometricSource = readFileSync('ios/LabyrinthVault/Support/BiometricUnlock.swift', 'utf8');
+  const vaultSource = codeOnly(readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8'));
+
+  it('finds the keychain accounts, so a pass means something', () => {
+    /* The degenerate version of every check below is an empty list, which
+     * passes silently. These are the five items this app writes; a new one
+     * arriving here is somebody being asked whether the erase covers it. */
+    expect(accountsIn(storeSource).sort()).toEqual([
+      'device-passphrase.v1',
+      'pass-seconds',
+      'sealed-vault',
+      'vault-witness',
+    ]);
+    expect(accountsIn(biometricSource)).toEqual(['unlock-passphrase']);
+  });
+
+  it('drops every account the sealed store owns', () => {
+    const erase = codeOnly(storeSource).slice(codeOnly(storeSource).indexOf('static func erase()'));
+    const names = [...codeOnly(storeSource).matchAll(/let (\w*[Aa]ccount\w*) = "([^"]+)"/g)];
+    const missed = names.filter(([, name]) => !erase.includes(name!)).map(([, , value]) => value!);
+    expect(missed, 'SealedStore.erase() leaves these in the keychain').toEqual([]);
+  });
+
+  it('drops the passphrase kept for biometric unlock', () => {
+    const erase = vaultSource.slice(
+      vaultSource.indexOf('func eraseVault()'),
+      vaultSource.indexOf('func acknowledgeVanished'),
+    );
+    expect(erase, 'eraseVault() was not found').toBeTruthy();
+    expect(erase).toMatch(/SealedStore\.erase\(\)/);
+    expect(
+      erase,
+      'the passphrase kept for biometric unlock survives ERASE VAULT, and no screen reachable afterwards can remove it',
+    ).toMatch(/forgetPassphrase\(\)|BiometricUnlock\.forget\(\)/);
+  });
+});
+
+describe('a refusal screen states no fact it was never given', () => {
+  /*
+   * V-M1. `Refusal` is an enum with no associated values: it knows which
+   * condition fired and nothing else. Its `findings` printed
+   * "APPROVED SUMMARY DIGEST 9F2A1C04" against "PRESENTED BYTES DIGEST
+   * 71D3E80B", and the first of those is the leading characters of the test
+   * fixture at Vault.swift's `Fixtures.tx.digest` while the second matches
+   * nothing anywhere in this repository. `.changeMismatch`, `.duplicateInput`
+   * and the rest likewise numbered inputs and outputs the enum never saw.
+   *
+   * The screen renders these rows verbatim under a refusal, which is the
+   * moment somebody is deciding whether their vault or their phone is lying
+   * to them. Two hex strings that came from nowhere, one of them from a test,
+   * is the worst possible place for invented detail.
+   *
+   * The pattern is deliberately blunt: any run of six or more hex-looking
+   * uppercase characters, and any INPUT or OUTPUT followed by a number.
+   * Nothing legitimate in these rows needs either, because nothing in this
+   * type knows a digest or a position.
+   */
+  const refusal = codeOnly(readFileSync('ios/LabyrinthVault/Model/Refusal.swift', 'utf8'));
+  const findings = refusal.slice(refusal.indexOf('var findings:'));
+
+  it('finds the findings, so a pass means something', () => {
+    expect(findings, 'the findings property moved or was renamed').toContain('NO SIGNATURE PRODUCED');
+    expect(findings.length).toBeGreaterThan(500);
+  });
+
+  it('quotes no digest and numbers no input or output', () => {
+    const rows = [...findings.matchAll(/\("([^"]*)"/g)].map((match) => match[1]!);
+    expect(rows.length, 'the row matcher found nothing, so this asserts on an empty list').toBeGreaterThan(20);
+    const invented = rows.filter((row) => /\b[0-9A-F]{6,}\b/.test(row) || /\b(INPUT|OUTPUT)\s+\d/.test(row));
+    expect(
+      invented,
+      'Refusal never sees the transaction, so a digest or a position printed here was made up',
+    ).toEqual([]);
   });
 });
 
@@ -958,44 +1079,89 @@ describe('every screen the router can show has a way in', () => {
 
   const vault = readFileSync('ios/LabyrinthVault/Model/Vault.swift', 'utf8');
 
-  /** The chrome routes: `Route` cases with no associated value. */
-  const chromeRoutes = (() => {
+  /** The `Route` enum's body, declarations only. */
+  const routeEnum = (() => {
     const start = vault.indexOf('enum Route: Equatable {');
     expect(start, 'the Route enum moved').toBeGreaterThan(-1);
-    const body = vault.slice(start, vault.indexOf('\n}', start));
-    return [...body.matchAll(/^\s{4}case (\w+)$/gm)].map((m) => m[1]!);
+    return vault.slice(start, vault.indexOf('\n}', start));
   })();
 
+  /** The chrome routes: `Route` cases with no associated value. */
+  const chromeRoutes = [...routeEnum.matchAll(/^\s{4}case (\w+)$/gm)].map((m) => m[1]!);
+
+  /** Every route name, payload-carrying ones included, so that the collector
+   *  below can keep route literals and drop everything else it sweeps up. */
+  const routeNames = new Set([...routeEnum.matchAll(/^\s{4}case (\w+)/gm)].map((m) => m[1]!));
+
   /**
-   * Every route literal that is a *use* rather than a declaration or a switch
-   * arm.
+   * Every route a person can actually arrive at, and only those.
    *
-   * Lines beginning with `case ` are dropped, which removes the enum
-   * declarations and all three exhaustive switches over `Route` in one rule —
-   * including the arm bodies, since `case .settings: SettingsView()` puts the
-   * route and its screen on one line. What survives is navigation: a
-   * `go(.export)` call, a `route = .unlock` assignment, and the tab bar and
-   * settings tables, which hold their destinations as `(String, Route)` pairs
-   * and so never spell `go(` at all. The first draft of this guard missed
-   * those tables and reported the airgap screen as orphaned, which is the
-   * opposite of the truth.
+   * The first version of this collected every `.token` in every Swift file
+   * after dropping lines that begin with `case `, on the theory that what
+   * survived was navigation. It was not. `Flow.swift` states its transition
+   * rules as comparisons — `return from == .scanner || from == .received` —
+   * and those are not lines beginning with `case `, so the table of which
+   * moves are *permitted* was being read as proof that the moves *happen*.
+   * `Flow.swift` alone kept five chrome routes alive, and one route
+   * (`received`) had no other mention anywhere. A guard whose whole purpose is
+   * catching a screen with no way in could not fail for any route on the scan
+   * path.
+   *
+   * So the collection is now by construction rather than by subtraction. Four
+   * shapes, each of which is a person moving:
+   *
+   *   - the argument of a `go(...)` call, whatever its syntax. Taking the
+   *     whole argument rather than a literal straight after the paren is what
+   *     catches `go(vault.hasVault ? .airgap : .setup(.boundary))`, and the
+   *     looseness costs nothing because only names the `Route` enum declares
+   *     are kept.
+   *   - `route = .unlock`, the two places that set it without going.
+   *   - `route: .airgap`, the destination field of the settings table and the
+   *     `var route: Route = .launch` the app opens on.
+   *   - the tab bar's `(String, Route)` pairs, which never spell `go(` at all.
+   *     The first draft missed those and reported the airgap screen as
+   *     orphaned, which is the opposite of the truth.
+   *
+   * Comments are stripped rather than filtered by line, so the paragraph above
+   * `go(.settings)` in App.swift explaining that nothing used to call it does
+   * not count as calling it.
    */
   const reached = (() => {
     const found = new Set<string>();
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) walk(path);
-        else if (entry.name.endsWith('.swift')) {
-          const code = readFileSync(path, 'utf8')
-            .split('\n')
-            .filter((line) => !/^\s*(case |\/\/|\*|\/\*)/.test(line))
-            .join('\n');
-          for (const match of code.matchAll(/\.(\w+)\b/g)) found.add(match[1]!);
-        }
+    const add = (text: string, pattern: RegExp) => {
+      for (const match of text.matchAll(pattern)) {
+        if (routeNames.has(match[1]!)) found.add(match[1]!);
       }
     };
-    walk('ios/LabyrinthVault');
+
+    /** The text between `go(` and its matching close paren. */
+    const goArguments = (code: string): string[] => {
+      const out: string[] = [];
+      for (const call of code.matchAll(/\bgo\(/g)) {
+        let depth = 1;
+        let i = call.index + call[0].length;
+        const from = i;
+        while (i < code.length && depth > 0) {
+          if (code[i] === '(') depth += 1;
+          else if (code[i] === ')') depth -= 1;
+          i += 1;
+        }
+        out.push(code.slice(from, i - 1));
+      }
+      return out;
+    };
+
+    for (const file of sourcesUnder('ios/LabyrinthVault', ['.swift'])) {
+      for (const argument of goArguments(file.code)) add(argument, /\.(\w+)/g);
+      add(file.code, /\broute\s*=\s*\.(\w+)/g);
+      add(file.code, /\broute:\s*\.(\w+)/g);
+      add(file.code, /:\s*Route\??\s*=\s*\.(\w+)/g);
+      /* A literal assigned to something whose declared type names Route: the
+       * destinations are `.home`, `.scanner` and friends inside it. */
+      for (const table of file.code.matchAll(/:\s*\[[^\]]*\bRoute\b[^\]]*\]\s*=\s*\[([\s\S]*?)\n\s*\]/g)) {
+        add(table[1]!, /\.(\w+)/g);
+      }
+    }
     return found;
   })();
 
@@ -1003,7 +1169,12 @@ describe('every screen the router can show has a way in', () => {
     expect(chromeRoutes).toContain('settings');
     expect(chromeRoutes).toContain('recovery');
     expect(chromeRoutes.length).toBeGreaterThan(8);
-    expect(reached.size).toBeGreaterThan(50);
+    /* Low, because the set is now navigation rather than every token in the
+     * app. It is here to catch a renamed `go` or a moved directory, which
+     * would otherwise empty the set and report every screen as orphaned. */
+    expect(reached.size).toBeGreaterThan(8);
+    expect(reached, 'the tab bar table is no longer being read').toContain('settings');
+    expect(reached, 'the go() call sites are no longer being read').toContain('acquiring');
   });
 
   it('navigates to every one of them', () => {
@@ -1055,6 +1226,27 @@ describe('Swift calls only functions the engine actually has', () => {
   it('names nothing the host does not export', () => {
     const missing = [...swiftCalls].filter((name) => !hostFunctions.has(name)).sort();
     expect(missing, 'Swift calls these and the engine has no such function').toEqual([]);
+  });
+
+  it('exports nothing Swift never names', () => {
+    /* The same contract read the other way, which is the direction that had
+     * no guard at all.
+     *
+     * A Swift call to a function the engine dropped fails on a phone, and the
+     * test above catches it. An engine function nothing on the far side names
+     * fails more quietly: it ships, it is documented, and the documentation is
+     * the only place it exists. `calibrateKdf` is the worked example. It is
+     * reachable from `Engine.swift` and from nowhere above it, and three
+     * documents describe the KDF as calibrated on the device, which no build
+     * has ever done.
+     *
+     * The allowlist is empty and should stay that way. An entry in it is a
+     * promise to wire something, written down where the next person will see
+     * it, rather than an export nobody can account for. */
+    const unwired = new Set<string>();
+    const orphaned = [...hostFunctions].filter((name) => !swiftCalls.has(name) && !unwired.has(name)).sort();
+    expect(orphaned, 'the engine exports these and no Swift call site names them').toEqual([]);
+    expect([...unwired].filter((name) => swiftCalls.has(name)), 'this is wired now, take it off the list').toEqual([]);
   });
 
   it('pins the engine contract version on both sides', () => {
@@ -1294,41 +1486,58 @@ describe('the descriptor pairing wire, and the multisig this vault does not do',
     expect(exportScreen).toMatch(/case \.descriptor: return descriptorFrames/);
   });
 
-  it('never offers multisig anywhere a person could read it as working', () => {
-    /* The standing boundary. This vault signs single-signature BIP84 and
-     * nothing else, and multisig is not a missing feature so much as a
-     * different security model: change has to be verified against a script
-     * rather than against a key, and a confirmation screen that cannot do that
-     * is worse than no multisig at all.
-     *
-     * So the rule is that no screen, no wire label and no descriptor may imply
-     * otherwise. Monero's own multisig container names are exempt by path:
-     * monerotx.ts recognises them in order to *refuse* them, which is the
-     * opposite of offering, and the refusal has to say the word to be useful. */
-    const guilty: { path: string; line: string }[] = [];
-    const allowed = new Set(['src/keys/monerotx.ts', 'src/keys/descriptor.ts']);
+  /* The standing boundary. This vault signs single-signature BIP84 and nothing
+   * else, and multisig is not a missing feature so much as a different
+   * security model: change has to be verified against a script rather than
+   * against a key, and a confirmation screen that cannot do that is worse than
+   * no multisig at all.
+   *
+   * So the rule is that no screen, no wire label and no descriptor may imply
+   * otherwise, anywhere either app can reach.
+   *
+   * Two things this guard got wrong before, both of which made it report
+   * coverage it did not have:
+   *
+   * `descriptor.ts` and `monerotx.ts` were exempt by path. The reason was that
+   * `descriptor.ts` names `wsh(sortedmulti(2,...))` in the paragraph arguing
+   * why this vault does not emit one, which is the comment-stripping problem
+   * solved the wrong way: the exemption bought silence for the prose and threw
+   * in the whole file. A real 2-of-2 written into that file passed the entire
+   * suite. Comments are stripped now and the file is walked like every other,
+   * so the paragraph stays sayable and the code does not. `monerotx.ts` never
+   * needed an exemption at all: it says "multisig" in order to refuse a
+   * container, and "multisig" matches none of these patterns.
+   *
+   * And the walk covered `src/` and the vault only. That was true when the
+   * companion was watch-only and stopped being true when a PSBT build-and-sign
+   * path landed in `wallet/src/`, which put the half most likely to grow a
+   * script type outside the only mechanism enforcing the rule.
+   */
+  const MULTISIG = /\bsortedmulti(_a)?\(|\bmulti(_a)?\(|\bwsh\(|\bsh\(/;
 
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name === 'node_modules' || entry.name === '.build') continue;
-          walk(path);
-        } else if (/\.(swift|ts)$/.test(entry.name) && !allowed.has(path)) {
-          const text = readFileSync(path, 'utf8');
-          for (const line of text.split('\n')) {
-            /* Only what a person could act on: a script type this vault could
-             * emit, or a user-facing string. Prose about not doing multisig is
-             * the point and must stay sayable. */
-            if (/\bsortedmulti\b|\bwsh\(|\bsh\(wsh\(/.test(line)) {
-              guilty.push({ path, line: line.trim().slice(0, 80) });
-            }
-          }
-        }
-      }
-    };
-    walk('src');
-    walk('ios/LabyrinthVault');
+  const scanned = [
+    ...sourcesUnder('src', ['.ts', '.js']),
+    ...sourcesUnder('ios/LabyrinthVault', ['.swift']),
+    ...sourcesUnder('wallet/src', ['.ts', '.tsx']),
+    
+  ];
+
+  it('walks all three halves, so a pass is not an empty walk', () => {
+    /* A guard whose directory was renamed reads exactly like a guard that
+     * found nothing wrong. These floors are the difference. */
+    for (const dir of ['src/', 'ios/LabyrinthVault/', 'wallet/src/']) {
+      expect(scanned.filter((f) => f.path.startsWith(dir)).length, `nothing scanned under ${dir}`).toBeGreaterThan(5);
+    }
+    expect(scanned.some((f) => f.path === 'src/keys/descriptor.ts'), 'the descriptor builder is not walked').toBe(true);
+  });
+
+  it('never offers multisig anywhere a person could read it as working', () => {
+    const guilty: string[] = [];
+    for (const file of scanned) {
+      file.code.split('\n').forEach((line, index) => {
+        if (MULTISIG.test(line)) guilty.push(`${file.path}:${index + 1}: ${line.trim().slice(0, 80)}`);
+      });
+    }
     expect(guilty, 'these could emit or claim a multisig script').toEqual([]);
   });
 
@@ -1636,5 +1845,190 @@ describe('the key image answer has two wires and offers the second honestly', ()
      * was halfway through answering. */
     expect(host).toMatch(/lastKeyImageRequest = null;/);
     expect(vault).toMatch(/pendingKeyImageRandomBytes = 0/);
+  });
+});
+
+describe('SECURITY.md cites defenses that exist', () => {
+  /*
+   * "The claims above are tests, not prose: delete a defense and the suite
+   * goes red." That sentence had nothing behind it, and the row it was least
+   * true of proved the point: "Tuning weakening the vault" cited
+   * `calibrateKdf`, a function that walks memory upward, cannot weaken
+   * anything, and has never been called by any build. `seal` takes no
+   * parameters across the bridge, so there is no path from a measurement to a
+   * sealed blob. The mitigation was real code, correctly described, and
+   * entirely inert.
+   *
+   * This is the cheap half of what that sentence promises: every file the
+   * table points at exists, and every symbol it names is somewhere a reader
+   * could find it. It cannot tell a live defense from a dead one, and saying
+   * so here is better than implying it can. What it does catch is the rot
+   * that produced the citation above: a rename, a deletion, a file that moved
+   * and took the argument with it.
+   */
+  const security = readFileSync('SECURITY.md', 'utf8');
+  const table = security.slice(
+    security.indexOf('| Threat | Defense | Where |'),
+    security.indexOf('## What is explicitly out of scope'),
+  );
+  /* Every backticked thing in the third column, which is the column that
+   * points at code. The first two are prose and are allowed to mention
+   * anything. */
+  const cited = [
+    ...new Set(
+      table
+        .split('\n')
+        .filter((line) => line.startsWith('|') && !line.startsWith('|---') && !line.includes('| Threat |'))
+        .flatMap((line) => line.split('|').slice(3, 4))
+        .flatMap((cell) => [...cell.matchAll(/`([^`]+)`/g)].map((match) => match[1]!)),
+    ),
+  ].sort();
+
+  const haystack = [
+    ...sourcesUnder('src', ['.ts']),
+    ...sourcesUnder('test', ['.ts']),
+    ...sourcesUnder('ios', ['.swift']),
+  ]
+    .map((entry) => entry.text)
+    .join('\n');
+
+  it('finds the table, so a pass is not an empty walk', () => {
+    expect(table.length, 'the threat table moved or its heading changed').toBeGreaterThan(1000);
+    expect(cited.length, 'the third column matcher found nothing').toBeGreaterThan(12);
+  });
+
+  /* Four kinds of citation, and the classification is the interesting part:
+   * a bucket nothing lands in is a bucket that checks nothing, so each has
+   * its own count assertion. The table mixes full paths, bare filenames
+   * (`envelope.ts`, `ur.ts`), package names and plain identifiers, and an
+   * earlier version of this block quietly checked only two of the four. */
+  const packages = cited.filter((name) => name.startsWith('@'));
+  const rest = cited.filter((name) => !name.startsWith('@'));
+  const paths = rest.filter((name) => name.includes('/'));
+  const filenames = rest.filter((name) => !name.includes('/') && /\.\w+$/.test(name));
+  const symbols = rest.filter((name) => !name.includes('/') && !/\.\w+$/.test(name));
+
+  it('sorts every citation into exactly one kind', () => {
+    expect(paths.length + filenames.length + packages.length + symbols.length).toBe(cited.length);
+    expect(paths.length, 'no full paths cited').toBeGreaterThanOrEqual(5);
+    expect(filenames.length, 'no bare filenames cited').toBeGreaterThanOrEqual(2);
+    expect(packages.length, 'no packages cited').toBeGreaterThanOrEqual(1);
+    expect(symbols.length, 'no bare symbols cited').toBeGreaterThanOrEqual(2);
+  });
+
+  it('names no file that is not there', () => {
+    const missing = paths.filter((name) => !existsSync(name));
+    expect(missing, 'SECURITY.md points at files that do not exist').toEqual([]);
+  });
+
+  it('names no bare filename that is nowhere in the tree', () => {
+    const known = new Set(
+      [
+        ...sourcesUnder('src', ['.ts']),
+        ...sourcesUnder('test', ['.ts']),
+        ...sourcesUnder('ios', ['.swift']),
+      ].map((entry) => entry.path.slice(entry.path.lastIndexOf('/') + 1)),
+    );
+    const missing = filenames.filter((name) => !known.has(name));
+    expect(missing, 'SECURITY.md points at files that have been renamed or removed').toEqual([]);
+  });
+
+  it('names no package this project does not depend on', () => {
+    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const declared = { ...manifest.dependencies, ...manifest.devDependencies };
+    const missing = packages.filter((name) => declared[name] === undefined);
+    expect(missing, 'SECURITY.md credits a package that is not a dependency').toEqual([]);
+  });
+
+  it('names no symbol that appears nowhere in the source', () => {
+    const missing = symbols.filter((name) => !new RegExp(`\\b${name}\\b`).test(haystack));
+    expect(missing, 'SECURITY.md credits a defense with no code behind the name').toEqual([]);
+  });
+
+  it('does not cite the calibration that never ran', () => {
+    /* Named rather than left to the general check, because `calibrateKdf` is
+     * still in `seal.ts` with its own tests: every check above passes on it.
+     * It is unreachable rather than absent, which is the case a symbol search
+     * is blind to, and it is the case this whole block was written for. */
+    expect(
+      table,
+      'the tuning row is back, and no build has ever calibrated anything',
+    ).not.toMatch(/calibrate/i);
+  });
+});
+
+describe('every state the engine can report about its own KDF reaches a screen', () => {
+  /*
+   * V-L8's second half. `seal.ts` was changed to measure which Argon2id a
+   * build actually runs rather than whether one was installed, because a host
+   * whose `deriveKey` returns nil on every call is installed and runs the
+   * JavaScript. That gave three answers where there had been two, and the new
+   * one is the one worth having: `mismatch` means something compiled is doing
+   * the work, `deriveKey` is using it because the length is right, and it is
+   * not Argon2id. A vault sealed on that build opens on that build and
+   * nowhere else.
+   *
+   * Swift collapsed all three into `kdfIsNative: Bool`, so `mismatch`
+   * rendered as INTERPRETED, which is the label for the slow-but-correct
+   * build. That is not a smaller version of the problem, it is a different
+   * problem described in place of it.
+   *
+   * A cross-language contract with nothing but this connecting the two ends,
+   * which is the same shape as the refusal-codes guard above. Nothing here
+   * compiles Swift.
+   */
+  const seal = readFileSync('src/keys/seal.ts', 'utf8');
+  const replies = codeOnly(readFileSync('ios/LabyrinthVault/Support/EngineReplies.swift', 'utf8'));
+  const settings = codeOnly(readFileSync('ios/LabyrinthVault/Screens/Settings.swift', 'utf8'));
+
+  /** The states the engine can put in a version reply, from the engine. */
+  const states = (/export type KdfSource = ([^;]+);/.exec(seal)?.[1] ?? '')
+    .split('|')
+    .map((part) => part.trim().replace(/'/g, ''))
+    .filter(Boolean)
+    .sort();
+
+  it('finds the engine-side states, so a pass means something', () => {
+    expect(states, 'KdfSource moved or changed shape in seal.ts').toEqual([
+      'engine',
+      'mismatch',
+      'native',
+    ]);
+  });
+
+  it('decodes every one of them on the Swift side', () => {
+    /* The words themselves, because the reply carries strings. `mismatch` is
+     * deliberately absent from the Swift switch: anything unrecognized falls
+     * to it, which is what makes a future fourth state safe rather than
+     * silently read as working. */
+    expect(replies, 'no KdfSource type in Swift; the boolean is back').toMatch(/enum KdfSource/);
+    for (const state of ['engine', 'native']) {
+      expect(replies, `Swift does not decode "${state}"`).toContain(`"${state}"`);
+    }
+    for (const state of states) {
+      expect(replies, `Swift has no case for ${state}`).toMatch(new RegExp(`case ${state}\\b`));
+    }
+  });
+
+  it('gives each state its own words on the settings screen', () => {
+    /* Three distinct labels. Two states sharing one is exactly the defect:
+     * the label a person reads has to distinguish "slow" from "do not trust a
+     * vault sealed here". */
+    const labels = [...replies.matchAll(/case \.\w+: return "([^"]+)"/g)].map((match) => match[1]!);
+    expect(labels.length, 'the label mapping was not found').toBe(states.length);
+    expect(new Set(labels).size, 'two states share a label, which is the collapse again').toBe(
+      states.length,
+    );
+    expect(settings, 'the screen does not read the three-state value').toMatch(
+      /vault\.kdfSource/,
+    );
+    expect(settings, 'the boolean is back on the screen').not.toMatch(/kdfIsNative/);
+  });
+
+  it('does not render a wrong algorithm in the tone that means merely slow', () => {
+    expect(settings).toMatch(/kdfSource == \.mismatch \? \.refused/);
   });
 });

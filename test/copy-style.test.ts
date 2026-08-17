@@ -29,6 +29,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { sourcesUnder } from './support/source';
 
 /**
  * On disk, but not this product.
@@ -105,6 +106,71 @@ describe('the house style holds', () => {
       for (const pattern of BRITISH) {
         const found = pattern.exec(text);
         if (found) guilty.push(`${path}: ${found[0]}`);
+      }
+    }
+    expect(guilty).toEqual([]);
+  });
+});
+
+describe('the house style holds in the strings the apps put on a screen', () => {
+  /* The half the docstring above always claimed and never had.
+   *
+   * The walk was over `.md` only, so "every string the apps put on a screen"
+   * was enforced for the companion by `wallet/test/copy.test.ts` and for the
+   * marketing site by `test/site-claims.test.ts`, and for the vault and the
+   * shared engine by nothing at all. That is how an em dash reached a shipping
+   * Button label one tap from key material: `SHOW KEY AS TEXT — FOR ELECTRUM`
+   * sat in `Screens/Export.swift` through every green run of this file.
+   *
+   * Comments are stripped rather than searched, which keeps the exemption the
+   * docstring states: several thousand words of internal argument are not
+   * front-facing copy and would be worse for being flattened. What is left
+   * after stripping is a string literal or an identifier, and both are fair
+   * game. An identifier spelled `normalise` in a repository that spells in US
+   * English is the same decay this file exists to stop.
+   *
+   * `wallet/src` has its own guard in `wallet/test/copy.test.ts` and `site/`
+   * has one in `test/site-claims.test.ts`, so neither is walked twice.
+   * `worker/src` is here rather than in the Worker's own suite because that
+   * suite is not run on push, and a refusal the Worker writes is a sentence
+   * the companion shows. `test/` is deliberately absent: this file names a
+   * British spelling in the paragraph above in order to forbid it, and a
+   * guard that walks itself is the failure it exists to prevent.
+   */
+  const sources = [
+    ...sourcesUnder('ios/LabyrinthVault', ['.swift']),
+    ...sourcesUnder('src', ['.ts', '.js']),
+    ...sourcesUnder('worker/src', ['.ts']),
+  ];
+
+  it('found the source, so a pass means something', () => {
+    expect(sources.length).toBeGreaterThan(30);
+    expect(sources.some((f) => f.path.endsWith('Screens/Export.swift')), 'the vault screens are not walked').toBe(true);
+    expect(sources.some((f) => f.path === 'src/bridge/summary.ts'), 'the engine is not walked').toBe(true);
+    expect(sources.some((f) => f.path.startsWith('worker/src/')), 'the Worker is not walked').toBe(true);
+    /* The stripping has to leave the code behind. A `codeOnly` that ate
+     * everything would turn all three checks below into checks over nothing,
+     * and they would pass. */
+    const kept = sources.reduce((total, f) => total + f.code.length, 0);
+    expect(kept, 'comment stripping left nothing to check').toBeGreaterThan(100_000);
+  });
+
+  it('has no em dashes outside the comments', () => {
+    const guilty: string[] = [];
+    for (const file of sources) {
+      file.code.split('\n').forEach((line, index) => {
+        if (line.includes('—')) guilty.push(`${file.path}:${index + 1}: ${line.trim().slice(0, 70)}`);
+      });
+    }
+    expect(guilty, 'rewrite the sentence rather than swapping the dash for a hyphen').toEqual([]);
+  });
+
+  it('spells in US English outside the comments', () => {
+    const guilty: string[] = [];
+    for (const file of sources) {
+      for (const pattern of BRITISH) {
+        const found = pattern.exec(file.code);
+        if (found) guilty.push(`${file.path}: ${found[0]}`);
       }
     }
     expect(guilty).toEqual([]);

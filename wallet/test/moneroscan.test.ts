@@ -51,9 +51,12 @@ import {
   progressFraction,
   scan,
   scanOne,
+  topBlock,
   toSpendable,
   totalReceived,
   SPEND_BLINDNESS,
+  SPEND_BLINDNESS_HERE,
+  spendBlindness,
 } from '../src/core/moneroscan';
 import { transactions } from '../src/net/monerod';
 import { NodeWatcher } from '../src/core/watcher';
@@ -184,9 +187,24 @@ interface FakeChain {
   /** Heights whose `get_block` should fail, to test resumption. */
   broken?: number[];
   minerTx?: BuiltTx;
-  /** What `get_info` reports as the chain height. */
+  /**
+   * The highest block this chain has, the way an explorer numbers it.
+   *
+   * `get_info` reports `tip + 1`, because monerod's `height` is the chain's
+   * *length*, and `get_block` above `tip` fails the way a real node fails.
+   * That pairing is the point: a caller that treats the reported height as an
+   * index asks for a block past the end and this fake refuses, which is how
+   * the tests below catch an off-by-one nothing else could see.
+   *
+   * Absent for a chain whose tests call `scan` with a top height of their own
+   * and never ask the node how long the chain is; there is no top block to
+   * enforce, so any height is served.
+   */
   tip?: number;
 }
+
+/** monerod's own words for a height above the chain, near enough. */
+const TOO_BIG_HEIGHT = 'Requested block height: too big.';
 
 function fakeNode(chain: FakeChain): Transport & { asked: string[]; heights: number[] } {
   const asked: string[] = [];
@@ -211,7 +229,7 @@ function fakeNode(chain: FakeChain): Transport & { asked: string[]; heights: num
             id: '0',
             jsonrpc: '2.0',
             result: {
-              height: chain.tip ?? 1,
+              height: (chain.tip ?? 1) + 1,
               target_height: 0,
               synchronized: true,
               mainnet: true,
@@ -227,6 +245,13 @@ function fakeNode(chain: FakeChain): Transport & { asked: string[]; heights: num
         heights.push(height);
         if (chain.broken?.includes(height)) {
           return { ok: false, status: 500, problem: 'the node fell over' };
+        }
+        if (chain.tip !== undefined && height > chain.tip) {
+          return {
+            ok: true,
+            status: 200,
+            text: JSON.stringify({ id: '0', jsonrpc: '2.0', error: { code: -2, message: TOO_BIG_HEIGHT } }),
+          };
         }
         return {
           ok: true,
@@ -526,6 +551,90 @@ describe('walking the chain', () => {
     expect(DEFAULT_BUDGET).toBeGreaterThan(0);
     expect(Number.isSafeInteger(DEFAULT_BUDGET)).toBe(true);
   });
+
+  it('refuses a block the node answered short for, and stays on it', async () => {
+    /* monerod leaves hashes it cannot serve out of the reply and names them
+     * under `missed_tx`, and an `as_json` this wallet cannot parse is dropped
+     * the same way. Either produces a reply with fewer transactions than were
+     * asked for. Counting that block as walked would advance the height over a
+     * payment and nothing here ever walks backwards, so the money would be
+     * gone from the balance for good. */
+    const paid = payTo([9_000_000_000_000n]);
+    const node = fakeNode({ blocks: { 2: [paid] }, tip: 2 });
+    const silent: Transport = {
+      base: node.base,
+      async send(request) {
+        if (request.path === '/get_transactions') {
+          return {
+            ok: true,
+            status: 200,
+            text: JSON.stringify({ status: 'OK', txs: [], missed_tx: [paid.hash] }),
+          };
+        }
+        return node.send(request);
+      },
+    };
+
+    const result = await scan(silent, account, { birth: 2, height: 2 }, 2);
+    expect(result.ok).toBe(false);
+    expect(result.received).toEqual([]);
+    /* The height has not moved, so a later refresh asks for block 2 again. */
+    expect(result.state.height).toBe(2);
+    expect(result.caughtUp).toBe(false);
+    /* The sentence names the block and the transaction, because a scan that
+     * stalls without saying where is a percentage that stopped climbing. */
+    expect(result.problem).toContain('Block 2');
+    expect(result.problem).toContain(paid.hash);
+    expect(result.problem).toMatch(/different Monero node/);
+  });
+
+  it('refuses a block whose transaction the node sent back unparseable', async () => {
+    /* The other half of the same hole, and the one a node reaches with no
+     * misbehavior at all: the reply is well formed, one `as_json` is not, and
+     * `transactions()` drops that entry with a bare continue. */
+    const paid = payTo([4_000n]);
+    const node = fakeNode({ blocks: { 6: [paid] }, tip: 6 });
+    const garbled: Transport = {
+      base: node.base,
+      async send(request) {
+        if (request.path === '/get_transactions') {
+          return {
+            ok: true,
+            status: 200,
+            text: JSON.stringify({ status: 'OK', txs: [{ tx_hash: paid.hash, as_json: '{not json' }] }),
+          };
+        }
+        return node.send(request);
+      },
+    };
+
+    const result = await scan(garbled, account, { birth: 6, height: 6 }, 6);
+    expect(result.ok).toBe(false);
+    expect(result.state.height).toBe(6);
+    expect(result.received).toEqual([]);
+  });
+
+  it('takes a top block index rather than the chain length', async () => {
+    /* The fixture is faithful about this: a chain whose top block is 4 has a
+     * length of 5, and asking for block 5 is an error. `topBlock` is the one
+     * conversion, and this pins what it converts between. */
+    expect(topBlock(5)).toBe(4);
+    expect(topBlock(1)).toBe(0);
+    /* A node that has only the genesis block cannot produce a negative index. */
+    expect(topBlock(0)).toBe(0);
+
+    const node = fakeNode({ blocks: { 4: [payTo([8n])] }, tip: 4 });
+    const walked = await scan(node, account, { birth: 4, height: 4 }, topBlock(5));
+    expect(walked.ok).toBe(true);
+    expect(walked.received).toHaveLength(1);
+    expect(walked.caughtUp).toBe(true);
+
+    /* And the failure the conversion prevents, spelled out: handed the length,
+     * the walk asks for a block that does not exist and the pass fails. */
+    const overshot = await scan(node, account, { birth: 4, height: 4 }, 5);
+    expect(overshot.ok).toBe(false);
+    expect(node.heights).toContain(5);
+  });
 });
 
 describe('turning found outputs into spendable ones', () => {
@@ -624,6 +733,21 @@ describe('what a view key cannot do', () => {
     expect(SPEND_BLINDNESS).toMatch(/what arrived, not what is left/);
   });
 
+  it('has a second sentence for the account whose spend key is on this phone', () => {
+    /* Both, together, because the pair is the property: one of them is false
+     * about each kind of account and the failure is printing the wrong one.
+     * The last clause is shared deliberately: a hot account that has not
+     * finished computing its images is in the same position as a paired one
+     * that has not scanned its vault's reply, and the number means the same
+     * thing in both. */
+    expect(SPEND_BLINDNESS_HERE).toMatch(/that key is on this phone/);
+    expect(SPEND_BLINDNESS_HERE).toMatch(/what arrived, not what is left/);
+    expect(SPEND_BLINDNESS_HERE, 'the hot sentence names a vault').not.toMatch(/vault/);
+    expect(SPEND_BLINDNESS, 'the vault sentence stopped naming the vault').toMatch(/vault/);
+    expect(spendBlindness('hot')).toBe(SPEND_BLINDNESS_HERE);
+    expect(spendBlindness('vault')).toBe(SPEND_BLINDNESS);
+  });
+
   it('has no way to ask for a spend key, by construction', async () => {
     const source = await import('node:fs').then((fs) =>
       fs.readFileSync('src/core/moneroscan.ts', 'utf8'),
@@ -649,6 +773,7 @@ describe('the watcher that drives it', () => {
     new NodeWatcher(nodes, null, { btc: null, xmr: fakeNode(chain) }, 1_700_000_000_000, {
       account,
       scan: scanFrom,
+      source: 'vault',
     });
 
   it('puts what arrived into the balance, and into spendable only after key images', async () => {
@@ -676,6 +801,25 @@ describe('the watcher that drives it', () => {
     await watcher.refresh(1_700_000_000_000);
     const view = watcher.snapshot().assets.XMR;
     expect(view.caveat).toBe(SPEND_BLINDNESS);
+  });
+
+  it('qualifies a hot balance with the sentence that is true of a hot account', async () => {
+    /* The wiring, not the wording: `moneroCaveat` is unit-tested over all four
+     * branches in keyimages.test.ts, and this is the one check that the
+     * watcher hands it the account's own source rather than a constant. The
+     * defect it pins told a phone-only Monero wallet, under its own balance,
+     * that its spend key lived in a vault it does not have. */
+    const watcher = new NodeWatcher(
+      nodes,
+      null,
+      { btc: null, xmr: fakeNode({ blocks: { 1: [payTo([1n])] }, tip: 1 }) },
+      1_700_000_000_000,
+      { account, scan: { birth: 1, height: 1 }, source: 'hot' },
+    );
+    await watcher.refresh(1_700_000_000_000);
+    const view = watcher.snapshot().assets.XMR;
+    expect(view.caveat).toBe(SPEND_BLINDNESS_HERE);
+    expect(view.caveat).not.toBe(SPEND_BLINDNESS);
   });
 
   it('says how far it got while it is still behind', async () => {
@@ -751,6 +895,7 @@ describe('the watcher that drives it', () => {
     const watcher = new NodeWatcher(nodes, null, { btc: null, xmr: behind }, 1_700_000_000_000, {
       account,
       scan: { birth: 0, height: 0 },
+      source: 'vault',
     });
     const result = await watcher.refresh(1_700_000_000_000);
     expect(result.ok).toBe(false);
@@ -769,6 +914,41 @@ describe('the watcher that drives it', () => {
     const watcher = watch({ blocks: {}, tip: 1 }, { birth: 1, height: 1 });
     await watcher.refresh(1_700_000_000_000);
     expect(watcher.snapshot().assets.XMR.addresses[0]?.address).toBe(recipient.address);
+  });
+
+  it('reaches the tip against a node that counts blocks the way monerod does', async () => {
+    /* A caught-up wallet is the ordinary state and it has to be quiet. Asking
+     * for one block past the end made every refresh report a node error, kept
+     * the "not looked for yet" clause in the caveat forever, and trained
+     * somebody to ignore the one place this app reports network trouble. */
+    const watcher = watch({ blocks: { 8: [payTo([2_000_000_000_000n])] }, tip: 8 }, { birth: 8, height: 8 });
+    const result = await watcher.refresh(1_700_000_000_000);
+
+    expect(result.ok).toBe(true);
+    expect(result.problems).toEqual([]);
+    expect(watcher.moneroProgress()?.caughtUp).toBe(true);
+    expect(watcher.moneroProgress()?.tip).toBe(8);
+    expect(watcher.snapshot().assets.XMR.caveat).not.toMatch(/has not been looked for yet/);
+    expect(watcher.snapshot().assets.XMR.balance).toBe(2_000_000_000_000n);
+  });
+
+  it('counts a payment in the newest block as one confirmation, not two', async () => {
+    /* The same off-by-one, where it shows on the activity list. A payment in
+     * the block that was just mined has been confirmed once, and CONFIRMING n
+     * OF 10 that starts at 2 reaches its target a block early. */
+    const watcher = watch({ blocks: { 12: [payTo([5_000n])] }, tip: 12 }, { birth: 12, height: 12 });
+    await watcher.refresh(1_700_000_000_000);
+
+    const rows = watcher.snapshot().transactions.filter((row) => row.asset === 'XMR');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.blockHeight).toBe(12);
+    expect(rows[0]!.confirmations).toBe(1);
+
+    /* And one block deeper is two, so the count is a real depth and not a
+     * constant that happens to read right in one case. */
+    const older = watch({ blocks: { 12: [payTo([5_000n])] }, tip: 13 }, { birth: 12, height: 12 });
+    await older.refresh(1_700_000_000_000);
+    expect(older.snapshot().transactions.filter((row) => row.asset === 'XMR')[0]!.confirmations).toBe(2);
   });
 });
 
@@ -806,5 +986,82 @@ describe('the transaction decoder underneath', () => {
     const parsed = await transactions(node, ['../../etc/passwd']);
     expect(parsed.ok).toBe(false);
     expect(asked).toBe(false);
+  });
+
+  /*
+   * W-H9's second half. The scan length-checks the reply and refuses, which
+   * closes the hole on its own, and it can only say that one of the several
+   * transactions it asked for is missing. These three answers are three
+   * different things to do next, and the decoder is the only layer that can
+   * tell them apart: a node that admits under `missed_tx` that it does not
+   * hold a transaction is a node to replace, while a body that will not parse
+   * is one reply being malformed. Both used to leave here as a short array
+   * with no explanation at all.
+   */
+  const answering = (payload: unknown): Transport => ({
+    base: 'https://node.example',
+    async send() {
+      return { ok: true, status: 200, text: JSON.stringify(payload) };
+    },
+  });
+
+  it('refuses when the node reports a hash it does not hold, and names it', async () => {
+    const tx = payTo([5n]);
+    const parsed = await transactions(
+      answering({ status: 'OK', txs: [], missed_tx: [tx.hash] }),
+      [tx.hash],
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.problem).toContain(tx.hash);
+    expect(parsed.problem).toMatch(/does not have/);
+    expect(parsed.problem, 'a refusal that is a code rather than a sentence').toMatch(
+      /different Monero node/,
+    );
+  });
+
+  it('counts them when several are missing, rather than naming one and stopping', async () => {
+    const one = payTo([5n]);
+    const two = payTo([6n]);
+    const parsed = await transactions(
+      answering({ status: 'OK', txs: [], missed_tx: [one.hash, two.hash] }),
+      [one.hash, two.hash],
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.problem).toContain('2 transactions');
+  });
+
+  it('refuses a body it cannot parse, and says which transaction', async () => {
+    const tx = payTo([5n]);
+    const parsed = await transactions(
+      answering({ status: 'OK', txs: [{ tx_hash: tx.hash, as_json: '{not json' }] }),
+      [tx.hash],
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.problem).toContain(tx.hash);
+    expect(parsed.problem, 'a missing body and an unreadable one are not the same thing').not.toMatch(
+      /does not have/,
+    );
+  });
+
+  it('refuses an entry with no body at all, which is the other way a node answers short', async () => {
+    const tx = payTo([5n]);
+    const parsed = await transactions(answering({ status: 'OK', txs: [{ tx_hash: tx.hash }] }), [tx.hash]);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.problem).toContain(tx.hash);
+  });
+
+  it('still reads a whole answer, so the refusals above are not simply always on', async () => {
+    const tx = payTo([77n]);
+    const parsed = await transactions(
+      answering({ status: 'OK', txs: [{ tx_hash: tx.hash, as_json: tx.json }], missed_tx: [] }),
+      [tx.hash],
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value).toHaveLength(1);
   });
 });

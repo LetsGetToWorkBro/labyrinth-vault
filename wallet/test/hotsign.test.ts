@@ -40,6 +40,29 @@ function codeOnly(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+/**
+ * One top-level function out of a screen file.
+ *
+ * The guards below are about which of Send.tsx's faces reads what, and the
+ * file holds six of them. A check over the whole file cannot tell the compose
+ * step, which has no draft yet and so can only mean the selection, from the
+ * review step, which has one and must ask about that instead. That is not a
+ * hypothetical distinction: the version of the review guard this replaced
+ * spelled out Compose's line, matched it, and passed while Review's was
+ * wrong.
+ *
+ * The closing brace is found at column zero because every face in these files
+ * is a top-level declaration. A nested one would need a real parser, and if
+ * one ever appears this returns the empty string and the `toBeTruthy` below
+ * fails rather than quietly matching nothing.
+ */
+function faceOf(source: string, name: string): string {
+  const start = source.indexOf(`\nfunction ${name}(`);
+  if (start === -1) return '';
+  const end = source.indexOf('\n}\n', start);
+  return end === -1 ? '' : source.slice(start, end + 3);
+}
+
 /* BIP84's own vector, which is the account `DEMO_ZPUB` describes. The wallet
  * signing below has to be the wallet the draft was built for, or the signature
  * is against somebody else's coins and proves nothing. */
@@ -149,9 +172,16 @@ describe('the Face ID gate comes before the key', () => {
 
   it('checks the source above the gate, so the order is source, prompt, key', () => {
     const source = readFileSync('src/core/hotsign.ts', 'utf8');
-    expect(source.indexOf('if (!canSignHere(source))')).toBeLessThan(
-      source.indexOf('const allowed = await gate();'),
-    );
+    const sourceAt = source.indexOf('if (!canSignHere(source))');
+    const gateAt = source.indexOf('const allowed = await gate();');
+    /* Both floored, and that is the whole lesson of this guard. Bare, the
+     * comparison passed when the airgap check was *deleted*: `indexOf` answers
+     * -1 for something that is not there, and -1 is less than everything. A
+     * guard that goes green when the line it is about disappears is worse than
+     * no guard, because it is counted. */
+    expect(sourceAt, 'the airgap check is gone from hotsign.ts').toBeGreaterThan(-1);
+    expect(gateAt, 'the Face ID gate is gone from hotsign.ts').toBeGreaterThan(-1);
+    expect(sourceAt).toBeLessThan(gateAt);
   });
 });
 
@@ -269,6 +299,7 @@ describe('the send flow, split and wired', () => {
   const handoff = readFileSync('src/screens/SendHandoff.tsx', 'utf8');
   const signing = readFileSync('src/screens/SendSigning.tsx', 'utf8');
   const store = readFileSync('src/state/store.tsx', 'utf8');
+  const action = /const signOnThisDevice = useCallback\([\s\S]*?\n  \}, \[[^\]]*\]\);/.exec(store)?.[0] ?? '';
 
   it('put the seam where the two paths diverge, not one face per file', () => {
     /* The split the signing step asked for: the faces that only exist on the
@@ -285,59 +316,148 @@ describe('the send flow, split and wired', () => {
     }
   });
 
-  it('offers the local route only for the account being paid from', () => {
-    /* The question has to be about *this* payment. An earlier version asked
-     * `accounts.some((a) => a.signsHere)`, which is whether any account signs
-     * here, and on a phone watching a vault and a hot wallet at once that
-     * answers yes for both: the vault's own payment would have been offered a
-     * SIGN ON THIS PHONE button. */
-    const code = codeOnly(send);
-    expect(code).toMatch(
-      /const account = store\.accounts\.find\(\(entry\) => entry\.id === store\.selectedAccount\)/,
+  it('offers the local route only for the account the payment was prepared from', () => {
+    /* The question has to be about *this* payment, and three versions of it
+     * have been wrong. `accounts.some((a) => a.signsHere)` asks whether any
+     * account signs here, which on a phone watching a vault and a hot wallet
+     * answers yes for both, so the vault's own payment was offered a SIGN ON
+     * THIS PHONE button. Reading the selection fixed that until the selection
+     * could move underneath a live draft: Send is a modal with `gestureEnabled`
+     * and no focus listener, so dismissing it at review, tapping the hot
+     * account and reopening rendered the local button over the vault
+     * account's transaction. */
+    const review = codeOnly(faceOf(send, 'Review'));
+    expect(review, 'Review was not found in Send.tsx').toBeTruthy();
+    expect(review).toMatch(
+      /const account = store\.accounts\.find\(\(entry\) => entry\.id === store\.session\.account\)/,
     );
-    expect(code).toMatch(/const signsHere = account\?\.signsHere === true/);
-    expect(code, 'any-account is back, and it offers the wrong button').not.toMatch(
+    expect(review, 'the selection decides again, and it moves under a draft').not.toMatch(
+      /selectedAccount/,
+    );
+    expect(review).toMatch(/const signsHere = account\?\.signsHere === true/);
+    expect(review, 'any-account is back, and it offers the wrong button').not.toMatch(
       /accounts\.some\(\(account\) => account\.signsHere\)/,
     );
-    expect(code, 'the review screen must not decide this from the record').not.toMatch(
+    expect(review, 'the review screen must not decide this from the record').not.toMatch(
       /hot !== null|store\.hot/,
     );
+
+    /* Compose is the same rule with the opposite answer, and it is here so
+     * that nobody "fixes" it to match. Before `prepareDraft` runs there is no
+     * `session.account` to read, so the selection is the only thing the
+     * screen could mean. */
+    const compose = codeOnly(faceOf(send, 'Compose'));
+    expect(compose, 'Compose was not found in Send.tsx').toBeTruthy();
+    expect(compose).toMatch(/entry\.id === store\.selectedAccount/);
   });
 
-  it('signs with the account being looked at, never merely one that can sign', () => {
-    /* The same hole one layer down. `signOnThisDevice` picked the first
-     * account that signs here, which on a two-account phone is the hot one
-     * whatever is on screen, and would have carried its source into a
-     * signature over the vault account's draft. */
-    const action = /const signOnThisDevice = useCallback\([\s\S]*?\n  \}, \[/.exec(store)?.[0] ?? '';
-    expect(action, 'signOnThisDevice not found').toBeTruthy();
+  it('leaves exactly one screen calling signOnThisDevice', () => {
+    /* The store holds an in-flight ref that makes a second caller harmless,
+     * and it is not the whole property. `SendSigning` documents at length that
+     * it owns the prompt, and the review button calling the action as well
+     * raised two Face ID prompts on every hot send: the dispatch commits the
+     * step change while the first call is parked on the prompt, the signing
+     * screen mounts, and the second prompt cancels the first. The button is a
+     * transition now. This counts the doors rather than trusting the ref. */
+    const callers: string[] = [];
+    for (const entry of readdirSync('src/screens', { withFileTypes: true })) {
+      if (!entry.isFile() || !/\.tsx?$/.test(entry.name)) continue;
+      const code = codeOnly(readFileSync(`src/screens/${entry.name}`, 'utf8'));
+      if (/\bsignOnThisDevice\(/.test(code)) callers.push(entry.name);
+    }
+    expect(callers).toEqual(['SendSigning.tsx']);
+  });
+
+  it('signs for the account the payment was prepared from, and no other', () => {
+    /* Two versions of this line have been wrong the same way.
+     * `accounts.find((a) => a.signsHere)` asks whether *any* account signs
+     * here, which answers yes for a vault account on a phone that also holds
+     * a hot wallet. Reading the selection fixed that until the selection could
+     * move under a live draft: Send is a modal with no focus listener, so a
+     * visit to the accounts list mid-payment left SIGN ON THIS PHONE over the
+     * vault account's transaction. The draft's own account is the only one of
+     * the three that cannot drift. */
     const code = codeOnly(action);
-    expect(code).toMatch(/accounts\.find\(\(account\) => account\.id === selectedAccount\)/);
-    expect(code).toMatch(/if \(!spending \|\| !spending\.signsHere\) return;/);
+    expect(action, 'signOnThisDevice not found').toBeTruthy();
+    expect(code).toMatch(/accounts\.find\(\(account\) => account\.id === session\.account\)/);
     expect(code, 'the first signable account is back').not.toMatch(
       /accounts\.find\(\(account\) => account\.signsHere\)/,
     );
+    expect(code, 'the selection decides again, and it moves under a draft').not.toMatch(
+      /selectedAccount/,
+    );
+  });
+
+  it('tells the transition table the truth, so its refusal is reachable', () => {
+    /* `session.ts` refuses `sign-here` for an account that does not sign here,
+     * and `docs/handoff.md` cites that as the second, independent place the
+     * airgap is held. The only dispatcher passed the literal `true`, so the
+     * check could never fire in the running app and its test asserted on a
+     * value no code path constructed. */
+    const code = codeOnly(action);
+    expect(code).toMatch(/type: 'sign-here', signsHere: spending\.signsHere/);
+    expect(code, 'the reducer is being told what it wants to hear').not.toMatch(
+      /signsHere: true/,
+    );
+  });
+
+  it('refuses in sentences rather than returning quietly', () => {
+    /* A person who pressed a button and got nothing concludes the app is
+     * broken. Both refusals here name what happened and what to do next. */
+    const code = codeOnly(action);
+    expect(code).toMatch(/no longer on this phone/);
+    expect(code).toMatch(/Hand it to your vault to sign/);
   });
 
   it('routes a local signature through the same verifier the camera path takes', () => {
     /* The property `session.ts` holds: one route into a broadcastable state.
-     * The store's signing action must end at `offerSignature`, which is where
-     * `verifySigned` runs, rather than dispatching `returned` itself. */
-    const action = /const signOnThisDevice = useCallback\([\s\S]*?\n  \}, \[/.exec(store)?.[0] ?? '';
-    expect(action, 'signOnThisDevice not found in the store').toBeTruthy();
+     * The store's signing action must end at the shared verification door,
+     * where `verifySigned` runs, rather than dispatching `returned` itself. */
     const code = codeOnly(action);
-    expect(code).toMatch(/offerSignature\(signed\.raw\)/);
+    expect(action, 'signOnThisDevice not found in the store').toBeTruthy();
+    expect(code).toMatch(/applySignature\(signed\.raw, 'here'\)/);
     expect(code, 'the local path must not mark its own work verified').not.toMatch(
       /type: 'returned'/,
     );
+    /* And exactly one dispatch of `returned` in the whole store, so there is
+     * one place the check can be skipped rather than two. */
+    expect(codeOnly(store).match(/type: 'returned'/g) ?? []).toHaveLength(1);
+  });
+
+  it('leaves the vault link\'s audit trail to the vault', () => {
+    /* LAST VERIFIED SESSION reads "the last time a signature came back from
+     * the vault and matched the transaction this device had prepared". The hot
+     * signer routing through the shared door stamped it for handoffs that
+     * never happened, on exactly the two-account phone the multi-account work
+     * exists for. */
+    const apply = /const applySignature = useCallback\([\s\S]*?\n  \);/.exec(store)?.[0] ?? '';
+    expect(apply, 'applySignature not found').toBeTruthy();
+    const code = codeOnly(apply);
+    expect(code).toMatch(/if \(origin !== 'vault'\) return;/);
+    const guardAt = code.indexOf("if (origin !== 'vault') return;");
+    const stampAt = code.indexOf('lastVerified:');
+    expect(guardAt, 'the origin guard is gone').toBeGreaterThan(-1);
+    expect(stampAt, 'the last-verified line is gone').toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(stampAt);
   });
 
   it('raises the prompt once per payment', () => {
     /* A second prompt over the first is how a signature gets authorized twice
-     * and built once. */
-    const code = codeOnly(signing);
-    expect(code).toMatch(/asked\.current/);
-    expect(code).toMatch(/if \(asked\.current\) return;/);
+     * and built once. Both callers are guarded: the screen does not ask twice
+     * on its own, and the store answers only the first caller whatever
+     * arrangement of screens reaches it. */
+    const screen = codeOnly(signing);
+    expect(screen).toMatch(/asked\.current/);
+    expect(screen).toMatch(/if \(asked\.current\) return;/);
+
+    const code = codeOnly(action);
+    expect(code, 'a second caller raises a second Face ID prompt').toMatch(
+      /if \(signingHere\.current\) return;/,
+    );
+    expect(code).toMatch(/signingHere\.current = true;/);
+    expect(code, 'a refused prompt must be retryable').toMatch(
+      /finally \{\s*signingHere\.current = false;/,
+    );
   });
 
   it('offers no way to remember the prompt for later', () => {

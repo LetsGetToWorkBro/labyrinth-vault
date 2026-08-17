@@ -88,9 +88,19 @@ const keysFrom = (env: Env): Keys => ({
   godexAffiliate: env.GODEX_AFFILIATE_ID,
 });
 
-async function readIntent(request: Request): Promise<Record<string, unknown> | null> {
+/**
+ * The intent, from a body that has already been measured.
+ *
+ * It takes text rather than the request on purpose. `request.json()` reads and
+ * parses in one step, which is how this route came to have no ceiling at all
+ * while the two routes either side of it did: there was no point in the code
+ * where the bytes existed and a size could be asked about. Taking the string
+ * makes it impossible to reach the parser without having gone past the
+ * measurement in `serve`.
+ */
+function readIntent(text: string): Record<string, unknown> | null {
   try {
-    const body = await request.json();
+    const body: unknown = JSON.parse(text);
     return body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -150,6 +160,21 @@ const declaredTooBig = (request: Request): boolean =>
 async function serve(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   try {
+    /* Every body this Worker reads is measured, and it is measured here,
+     * before any route is chosen. That ordering is the whole point. The
+     * ceiling used to be written into each route that carried a body, and two
+     * separate audits found a third route that had not been told: first
+     * `/v1/node`, then `/v1/quote` and `/v1/create`, each patched in turn.
+     * A rule enforced by a list of the places that remembered it is a rule
+     * that fails on the next place added. Here the body is read once, above
+     * the routing, and a route that wants one takes the string. */
+    let body: string | null = null;
+    if (request.method === 'POST') {
+      if (declaredTooBig(request)) return problem('That is too large to relay.', 413);
+      body = await request.text();
+      if (body.length > MAX_BODY_BYTES) return problem('That is too large to relay.', 413);
+    }
+
     /* Also answered outside, before the counting, so that "is it deployed"
      * costs a caller nothing. Here as well so that it can be asked through
      * the oblivious door like everything else. */
@@ -191,18 +216,12 @@ async function serve(request: Request, env: Env): Promise<Response> {
        * arrives at the node as a quoted string and fails for a reason
        * nobody would think to look for. */
       const contentType = request.headers.get('Content-Type') ?? 'application/json';
-      let body: string | undefined;
-      if (request.method === 'POST') {
-        if (declaredTooBig(request)) return problem('That is too large to relay.', 413);
-        body = await request.text();
-        /* Measured before it is forwarded, so a public node never receives
-         * something this Worker would not have accepted for itself. */
-        if (body.length > MAX_BODY_BYTES) return problem('That is too large to relay.', 413);
-      }
+      /* Already measured above, so a public node never receives something
+       * this Worker would not have accepted for itself. */
       const upstream = await fetch(target.url, {
         method: request.method,
         headers: { Accept: 'application/json', 'Content-Type': contentType },
-        ...(body === undefined ? {} : { body }),
+        ...(body === null ? {} : { body }),
       });
       /* Handed back as it arrived, body and status. This Worker does not
        * read chain data any more than it reads an exchange's answer: the
@@ -227,22 +246,22 @@ async function serve(request: Request, env: Env): Promise<Response> {
     }
 
     if ((url.pathname === '/v1/quote' || url.pathname === '/v1/create') && request.method === 'POST') {
-      const body = await readIntent(request);
-      if (!body) return problem('That request was not readable.', 400);
-      const provider = knownProvider(body['provider']);
+      const intended = readIntent(body ?? '');
+      if (!intended) return problem('That request was not readable.', 400);
+      const provider = knownProvider(intended['provider']);
       if (!provider) return problem('Unknown exchange.', 400);
 
       const intent: Intent = {
         provider,
-        from: String(body['from'] ?? ''),
-        to: String(body['to'] ?? ''),
-        amount: numberOf(body['amount']),
-        ...(typeof body['payoutAddress'] === 'string' ? { payoutAddress: body['payoutAddress'] } : {}),
-        ...(typeof body['refundAddress'] === 'string' ? { refundAddress: body['refundAddress'] } : {}),
+        from: String(intended['from'] ?? ''),
+        to: String(intended['to'] ?? ''),
+        amount: numberOf(intended['amount']),
+        ...(typeof intended['payoutAddress'] === 'string' ? { payoutAddress: intended['payoutAddress'] } : {}),
+        ...(typeof intended['refundAddress'] === 'string' ? { refundAddress: intended['refundAddress'] } : {}),
         /* Bounded and passed through unread. It is a uuid from the provider,
          * not something this Worker interprets. */
-        ...(typeof body['rateUuid'] === 'string' && body['rateUuid'].length <= 64
-          ? { rateUuid: body['rateUuid'] }
+        ...(typeof intended['rateUuid'] === 'string' && intended['rateUuid'].length <= 64
+          ? { rateUuid: intended['rateUuid'] }
           : {}),
       };
 

@@ -475,7 +475,11 @@ export async function transactions(
     }
   }
 
-  const reply = parseJson<{ txs?: { tx_hash?: string; as_json?: string; output_indices?: number[] }[]; status?: string }>(
+  const reply = parseJson<{
+    txs?: { tx_hash?: string; as_json?: string; output_indices?: number[] }[];
+    missed_tx?: unknown;
+    status?: string;
+  }>(
     await transport.send({
       method: 'POST',
       path: '/get_transactions',
@@ -483,6 +487,32 @@ export async function transactions(
     }),
   );
   if (!reply.ok) return reply;
+
+  /*
+   * The node telling us, in as many words, which of these it does not have.
+   *
+   * This used to be read by nothing. A short `txs` array came back to the
+   * scan looking like a whole block, the block was recorded as walked, and
+   * because nothing in this wallet ever walks backwards a payment inside the
+   * missing transaction was gone from the balance permanently and silently.
+   * The scan now length-checks the reply and refuses, which closes the hole
+   * on its own, and this is the difference between "the node left one out"
+   * and "the node's answer would not parse": the first is a node to replace
+   * and the second is one node's reply being malformed. A person deciding
+   * what to do next needs to be told which.
+   */
+  const missed = Array.isArray(reply.value.missed_tx)
+    ? reply.value.missed_tx.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+  if (missed.length > 0) {
+    return {
+      ok: false,
+      problem:
+        `That node does not have ${missed.length === 1 ? 'a transaction' : `${missed.length} transactions`} ` +
+        `it was asked for, starting with ${missed[0]}. Refresh to ask again, or set a different Monero node.`,
+    };
+  }
+
   if (!Array.isArray(reply.value.txs)) {
     return { ok: false, problem: 'That node did not answer with transactions.' };
   }
@@ -490,17 +520,40 @@ export async function transactions(
   const out: ScannableTx[] = [];
   for (const entry of reply.value.txs) {
     const hash = typeof entry.tx_hash === 'string' ? entry.tx_hash : '';
-    if (!hash || typeof entry.as_json !== 'string') continue;
+    /*
+     * An entry with no readable body is a refusal now, not a skip.
+     *
+     * The old comment justifying the skip said "the height is recorded so a
+     * later pass over the same range would find it", and there is no later
+     * pass: `state.height` only moves forward and no rescan path exists
+     * anywhere in this wallet. So the transaction whose outputs were not
+     * looked at was a payment that never appeared in the balance, with no
+     * error and nothing to retry. Naming the hash here is what lets the
+     * refusal say which transaction, rather than the scan saying that one of
+     * the several it asked for went missing.
+     */
+    if (!hash) {
+      return { ok: false, problem: 'That node answered with a transaction that has no hash.' };
+    }
+    if (typeof entry.as_json !== 'string') {
+      return {
+        ok: false,
+        problem:
+          `That node returned transaction ${hash} without a readable body, so the outputs in it cannot be ` +
+          'checked against this wallet. Refresh to ask again, or set a different Monero node.',
+      };
+    }
 
     let body: RawJsonTx;
     try {
       body = JSON.parse(entry.as_json) as RawJsonTx;
     } catch {
-      /* One unreadable transaction is one transaction whose outputs are not
-       * found. Failing the whole block would stall the scan on a single odd
-       * entry; skipping it loses at most that transaction, and the height is
-       * recorded so a later pass over the same range would find it. */
-      continue;
+      return {
+        ok: false,
+        problem:
+          `That node's description of transaction ${hash} is not readable, so the outputs in it cannot be ` +
+          'checked against this wallet. Refresh to ask again, or set a different Monero node.',
+      };
     }
 
     const outputs: OutputCandidate[] = [];
@@ -643,6 +696,33 @@ export async function outputDistribution(
   fromHeight: number,
   toHeight: number,
 ): Promise<Parsed<OutputDistribution>> {
+  /*
+   * Only from the start of the chain, and this is a refusal rather than a
+   * clamp because the thing it protects is not knowable from here.
+   *
+   * monerod returns `base` alongside the distribution, and how `base` relates
+   * to the elements after the first is a property of monerod's wire format,
+   * not of this code. With `from_height` zero the base is zero, so every
+   * reading of it agrees and nothing has ever had to decide. The obvious
+   * reason to pass something else is refreshing only the tail of a cached
+   * distribution, and whoever writes that will be one wrong assumption away
+   * from an offset applied to every element or to none: the sequence maps an
+   * output's age to its global index, so a shifted one picks decoys from the
+   * wrong stretch of the chain and hands the network a ring whose real member
+   * is the odd one out. That is a privacy loss with no error message.
+   *
+   * `docs/verification.md` says how to settle it: against monerod's own code
+   * in `oracle/`, not against this file agreeing with itself.
+   */
+  if (fromHeight !== 0) {
+    return {
+      ok: false,
+      problem:
+        'This wallet only reads the output distribution from the start of the chain. Fetching part of it means ' +
+        "understanding how the node's base count applies to the rest, which has never been checked against a real " +
+        'node, and getting it wrong picks decoys from the wrong part of the chain without saying so.',
+    };
+  }
   const reply = await rpc<{
     distributions?: { distribution?: unknown; start_height?: number; base?: number }[];
   }>(transport, 'get_output_distribution', {
@@ -659,15 +739,21 @@ export async function outputDistribution(
     return { ok: false, problem: 'That node did not answer with an output distribution. A spend needs one; some restricted nodes do not serve it.' };
   }
   const base = typeof first.base === 'number' ? first.base : 0;
-  /* The node returns per-window counts on top of `base`; add the base back so
-   * `cumulative` is the true running total from the chain's start, which is
-   * what maps an age to a global output index. */
   const cumulative = first.distribution.map((entry, index) => {
     const value = Number(entry);
     return (Number.isSafeInteger(value) ? value : 0) + (index === 0 ? base : 0);
   });
-  /* Repair the running total: the node already made it cumulative, but adding
-   * base only to element 0 would understate the rest, so carry it forward. */
+  /*
+   * Force the sequence to climb, which is all this loop does.
+   *
+   * It used to be commented as carrying `base` forward, and it does not: it
+   * lifts any element below its predecessor up to it. The two are the same
+   * only when `base` is zero, which is the only case that has ever run, so
+   * the comment was never contradicted by anything. A cumulative count that
+   * went down would be a node answer this code cannot use, and every decoy
+   * this wallet picks is chosen by mapping an age onto this sequence, so the
+   * repair is worth keeping under its real name.
+   */
   for (let i = 1; i < cumulative.length; i++) {
     if (cumulative[i]! < cumulative[i - 1]!) cumulative[i] = cumulative[i - 1]!;
   }

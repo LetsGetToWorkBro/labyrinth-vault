@@ -4,17 +4,21 @@
  *
  * ## The honest disclosure, first
  *
- * This build has no network code in it. Not as a security property — the
- * online half is *supposed* to have a network, that is the entire division of
- * labour — but because this is the frontend, and the node client behind it is
- * not written yet. Every balance, fee estimate, price and confirmation count
- * in the running app comes from `demo.ts`, which is a fixture.
+ * The numbers in the running app are real, and they were not always. This file
+ * used to open by saying that every balance, fee estimate and confirmation
+ * count came from `demo.ts`, and that the app put a `DEMO DATA` chip over the
+ * total to say so. Both stopped being true when `NodeWatcher` landed: the
+ * store builds only that, it asks an Esplora server and a monerod for
+ * everything under the word BALANCE, and `Watchers` never constructs a
+ * `DemoWatcher` at all. The fixture is still in the tree, and it is now only
+ * the test suite's wallet.
  *
- * That is said here, in the file the numbers come out of, rather than only in
- * a README, because a wallet screenshot showing $48,291.82 is a claim about
- * somebody's money and it should be impossible to read this code and not know
- * it is fiction. The app says so on screen too, in the status line: `DEMO
- * DATA`. When the real watcher lands, that line disappears with it.
+ * The disclosure is kept, correct, in the file the numbers come out of rather
+ * than only in a README, because a wallet screenshot showing $48,291.82 is a
+ * claim about somebody's money. What is worth knowing here now is the other
+ * direction: these figures come from one node, chosen by the user, with no
+ * default and no second opinion. `caveat` below is where a view says what its
+ * own number is not.
  *
  * ## Why there is an interface at all, this early
  *
@@ -134,9 +138,11 @@ export interface Watcher {
   broadcast(asset: Asset, raw: Uint8Array, options?: BroadcastOptions): Promise<BroadcastResult>;
 }
 
-/* There is no `nextAddress` here on purpose. Handing out a fresh address means
- * remembering which ones were handed out, or the gap limit stops meaning
- * anything, and this build has nowhere to remember it. The receive screen
- * shows the first address the chain has not seen a payment to, which is
- * derivable from the snapshot and needs no memory. When there is storage, this
- * is where rotation goes. */
+/* There is no `nextAddress` here on purpose, and storage arriving did not
+ * change that. A counter has to be remembered, and a wallet that loses its
+ * counter hands out an address it already gave somebody, which links two
+ * payments that had no reason to be linked. Both places that need an index
+ * derive it from the scan instead: `nextReceiveAddress` for what to hand out,
+ * `nextChangeIndex` for where change goes. Neither needs memory and neither
+ * can drift out of the window the gap limit defines, which is what the change
+ * index did for as long as it was a number chosen in the store. */

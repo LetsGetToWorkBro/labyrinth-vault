@@ -34,6 +34,7 @@ import type { Transport } from '../net/http';
 import { info } from '../net/monerod';
 import {
   scan,
+  topBlock,
   toSpendable,
   type MoneroAccount,
   type Received,
@@ -80,7 +81,8 @@ export interface FindOutcome {
   total: bigint;
   /** Where the walk got to, so a caller can say so or resume. */
   state: ScanState;
-  /** The tip the walk was measured against. */
+  /** The tip the walk was measured against: the highest block that exists,
+   *  which is one below the chain length the node reports. */
   tip: number;
   /** True when the walk reached the tip rather than stopping early. */
   caughtUp: boolean;
@@ -110,7 +112,11 @@ export async function findSpendable(
       state: { birth, height: birth }, tip: 0, caughtUp: false, blocks: 0, requests: 0,
     };
   }
-  const tip = head.value.height;
+  /* The node reports how long the chain is; the walk needs the index of its
+   * last block. Without the conversion every run ends by asking for a block
+   * that does not exist, and a script whose whole job is to say whether a coin
+   * is spendable yet reports a node error at the tip instead. */
+  const tip = topBlock(head.value.height);
 
   const found: Received[] = [];
   let state: ScanState = { birth, height: birth };
@@ -130,7 +136,7 @@ export async function findSpendable(
     if (options.enough !== undefined && stock.total >= options.enough) {
       return { ok: true, problem: null, ...stock, state, tip, caughtUp: false, blocks, requests };
     }
-    if (state.height >= tip) {
+    if (state.height > tip) {
       const problem = stock.outputs.length === 0
         ? `Walked ${blocks} blocks to the tip at ${tip} and found nothing spendable. ` +
           'Either this wallet has never been paid, or its birth height is above the block it was paid in.'
@@ -167,11 +173,11 @@ export async function findSpendable(
       };
     }
     found.push(...outcome.received);
+    /* Taken as `scan` left it, never clamped to the tip. A scan position is the
+     * next block to walk, so a finished walk sits one past the top block, and
+     * pulling it back to the tip would make the loop above rescan that block on
+     * every turn without ever satisfying its exit. */
     state = outcome.state;
-    /* `scan` reports caught up when it reaches the tip inside its budget; the
-     * loop's own tip check handles the rest, so this only avoids one wasted
-     * call. */
-    if (outcome.caughtUp) state = { ...state, height: tip };
 
     if (options.onProgress) {
       const now = takeStock();

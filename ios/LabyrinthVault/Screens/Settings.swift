@@ -101,18 +101,27 @@ struct SettingsView: View {
                         FieldRow(label: "APP VERSION", value: "0.1.0")
                         FieldRow(label: "WIRE", value: "LV1 · BC-UR")
                         /* A fact about this build rather than about the vault
-                         * at rest. The same vault opens either way; what
-                         * differs is whether opening it takes a second or a
-                         * minute.
+                         * at rest, and on the first screen because of how each
+                         * state fails.
                          *
-                         * On the first screen because of how it fails. The
-                         * native derivation is adopted through a string
-                         * literal shared between Swift and the bundle, and a
-                         * mismatch does not error: it falls back and the app
-                         * is merely slow. */
+                         * COMPILED and INTERPRETED are the same vault at
+                         * different speeds: a second against a minute, and
+                         * nothing else on the phone would say which happened,
+                         * because a derivation that fails to install is not an
+                         * error anywhere.
+                         *
+                         * NOT ARGON2ID is a different kind of statement and it
+                         * gets the refused tone. Something compiled is doing
+                         * the work, `deriveKey` is using it because the length
+                         * is right, and it is not the algorithm this vault
+                         * claims. Such a vault opens on this build and on no
+                         * other, which is data loss waiting for a phone to be
+                         * replaced. It read as INTERPRETED while the boolean
+                         * lasted, which described the wrong problem. */
                         FieldRow(label: "KEY STRETCHING",
-                                 value: vault.kdfIsNative ? "COMPILED" : "INTERPRETED",
-                                 tone: vault.kdfIsNative ? .verified : .dim)
+                                 value: vault.kdfSource.label,
+                                 tone: vault.kdfSource == .mismatch ? .refused
+                                     : vault.kdfSource == .native ? .verified : .dim)
                         FieldRow(label: "VAULT ID", value: vault.vaultID)
 
                         VStack(alignment: .leading, spacing: 10) {
@@ -316,9 +325,14 @@ struct RecoveryView: View {
                         }
                         .padding(.top, 24)
 
-                        Text("Erasing removes the sealed keys from this device's keychain. " +
-                             "Without the phrases above there is no way back, and no service " +
-                             "to ask.")
+                        /* Naming both items rather than saying "everything".
+                         * The stored passphrase lives in its own keychain
+                         * account and used to survive an erase, so the sentence
+                         * that lists what goes is also the sentence that would
+                         * read wrong if it ever stopped going. */
+                        Text("Erasing removes the sealed keys from this device's keychain, " +
+                             "and any passphrase stored here for biometric unlock. Without " +
+                             "the phrases above there is no way back, and no service to ask.")
                             .font(Type.body(13))
                             .lineSpacing(4)
                             .foregroundStyle(Ink.paperDim)

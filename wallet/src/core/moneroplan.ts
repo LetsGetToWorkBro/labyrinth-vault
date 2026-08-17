@@ -13,8 +13,8 @@
  * premise of cold signing.
  */
 
-import type { Transport } from '../net/http';
-import { info, outputDistribution, outs, type ChainOutput } from '../net/monerod';
+import type { Parsed, Transport } from '../net/http';
+import { info, outputDistribution, outs, type ChainOutput, type OutputDistribution } from '../net/monerod';
 import { makePicker, selectRing, RING_SIZE, SPENDABLE_AGE } from './decoys';
 import {
   assembleUnsigned,
@@ -44,6 +44,65 @@ export interface PlanParams {
 
 export type Plan = { ok: true; set: UnsignedTxSet } | { ok: false; problem: string };
 
+// ---------------------------------------------------------------------------
+// The output distribution, fetched once per block rather than once per attempt
+//
+// `get_output_distribution` from height zero is the largest single thing this
+// app ever asks a node for: at mainnet scale it is over two million entries and
+// roughly twenty megabytes of JSON, buffered whole under `http.ts`'s timeout.
+// It was being fetched on every press of REVIEW, so composing a payment,
+// backing out, and composing it again cost that twice on a phone connection.
+//
+// The cache is keyed on the node and on the exact height the distribution was
+// asked for, so it survives repeated attempts and expires the moment a block is
+// mined. That is deliberately tighter than a clock: a distribution that lags the
+// chain is one whose decoys can never be drawn from the newest outputs, and a
+// ring whose members all stop short of the real output's age is a ring that says
+// which member is real. Staleness here costs privacy quietly, which is the one
+// failure `decoys.ts` says this product is least willing to ship in silence.
+//
+// What it does not fix: the first fetch of a session still moves that twenty
+// megabytes. Narrowing `from_height` would truncate the array `blockOf`
+// searches, and the binary path is the epee format this repository has an
+// argued policy against decoding blind, so both of the cheap-looking answers
+// are worse than the problem. The honest state is one download per node per
+// block, and this is what holds it there.
+
+interface CachedDistribution {
+  node: string;
+  toHeight: number;
+  value: OutputDistribution;
+}
+
+let cachedDistribution: CachedDistribution | null = null;
+
+/**
+ * Drop the cached distribution.
+ *
+ * It is a large array (nineteen megabytes of numbers at mainnet scale) held for
+ * as long as the tip stands still, so a caller leaving the send flow or
+ * changing nodes has a way to hand the memory back rather than waiting for the
+ * next block to do it.
+ */
+export function forgetOutputDistribution(): void {
+  cachedDistribution = null;
+}
+
+async function distributionFor(
+  transport: Transport,
+  toHeight: number,
+): Promise<Parsed<OutputDistribution>> {
+  const cached = cachedDistribution;
+  if (cached && cached.node === transport.base && cached.toHeight === toHeight) {
+    return { ok: true, value: cached.value };
+  }
+  const fetched = await outputDistribution(transport, 0, toHeight);
+  /* Only a good answer is kept. Caching a failure would turn one bad minute on
+   * a node into a send path that refuses until the next block. */
+  if (fetched.ok) cachedDistribution = { node: transport.base, toHeight, value: fetched.value };
+  return fetched;
+}
+
 /**
  * Build the unsigned set for a spend, or say why it cannot be built.
  *
@@ -66,7 +125,14 @@ export async function planMoneroSpend(params: PlanParams): Promise<Plan> {
   if (!tip.ok) return { ok: false, problem: tip.problem };
   if (tip.value.syncing) return { ok: false, problem: 'That node is still catching up, so its output distribution is incomplete.' };
 
-  const dist = await outputDistribution(transport, 0, tip.value.height - SPENDABLE_AGE);
+  /* The chain's *length*, not the index of its top block, and deliberately so:
+   * Monero states spendability as `height + SPENDABLE_AGE <= blockchain
+   * height`, so the newest spendable block is `length - SPENDABLE_AGE` and both
+   * the distribution's end and the maturity check below are in those units.
+   * `topBlock` belongs on the chain walk, which reads blocks by index, and
+   * applying it here would move the ring's window by one block against
+   * consensus. */
+  const dist = await distributionFor(transport, tip.value.height - SPENDABLE_AGE);
   if (!dist.ok) return { ok: false, problem: dist.problem };
   const picker = makePicker(dist.value, tip.value.height);
   if (!picker) return { ok: false, problem: 'The chain does not have enough spendable history to build a ring.' };
