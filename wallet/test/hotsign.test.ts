@@ -70,7 +70,7 @@ function hotRecord(over: Partial<HotRecord> = {}): HotRecord {
     xmrSeed: null,
     btcMnemonic: WORDS,
     network: 'mainnet',
-    birth: 0,
+    createdAt: 0,
     ...over,
   };
 }

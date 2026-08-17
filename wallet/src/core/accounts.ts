@@ -122,7 +122,7 @@ export function accountsFrom(
         source: 'hot',
         chains: chains.sort(),
         signsHere: canSignHere('hot'),
-        since: hot.birth,
+        since: hot.createdAt,
       });
     }
   }

@@ -268,7 +268,7 @@ describe('the hot-signing loop end to end', () => {
       xmrSeed: revealSecretHex(sender.spendSecret),
       btcMnemonic: null,
       network: 'stagenet',
-      birth: 0,
+      createdAt: 0,
     };
   }
 

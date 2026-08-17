@@ -228,6 +228,24 @@ case-sensitivity assertion uppercased a string with no case to change and
 passed against a parser that had never been asked the question. Fixtures are
 varied now, and the case is spelled out rather than derived.
 
+## A units convention, now that there is one to break
+
+`birth` means Monero **block heights**, everywhere: `pairing.ts`, `persist.ts`,
+`moneroscan.ts` and `findcoins.ts` all mean blocks by it, and two of them bound
+the value at a hundred million to say so. `createdAt` means **milliseconds**,
+which is what `Draft.createdAt` already meant.
+
+`HotRecord` violated that for one commit, with a millisecond field named
+`birth` sitting next to four block-height ones of the same name and the same
+`number` type. It was passed straight into a scan as a height, which does not
+throw: it starts the scan at block 1,760,000,000,000, finds nothing, and reports
+zero for an account with money in it.
+
+The field is `createdAt` now, `watchOnlyFrom` is the one place the conversion
+happens, and `test/backup.test.ts` fails if a millisecond field named `birth`
+reappears or if the parser starts accepting one. Nothing had shipped with the
+old name, so this was free to fix and it was free exactly once.
+
 ## The limitation this work leaves behind
 
 **`NodeWatcher` holds one account key per chain.** A phone with a vault paired

@@ -147,7 +147,7 @@ describe('a vault account is watch-only here even beside a hot one', () => {
     /* Most protected first, which reads as a recommendation without printing
      * one, and stable so a hot wallet made later does not push a vault down a
      * screen somebody has learned the shape of. */
-    const later = { ...hot(), birth: 0 };
+    const later = { ...hot(), createdAt: 0 };
     expect(accountsFrom(paired(), later).map((a) => a.id)).toEqual(['vault', 'hot']);
   });
 });

@@ -32,7 +32,14 @@ import {
   type Creation,
   type CreationEvent,
 } from '../src/core/backup';
-import { makeHotRecord, openMonero, readPhrase, watchOnlyFrom, type HotRecord } from '../src/core/keyvault';
+import {
+  makeHotRecord,
+  openMonero,
+  parseHotRecord,
+  readPhrase,
+  watchOnlyFrom,
+  type HotRecord,
+} from '../src/core/keyvault';
 import { revealSecretHex, wipeWallet } from '@vault/keys/monero';
 import { addressAt, openWatch } from '@vault/keys/bitcoin';
 import { openBitcoin, closeBitcoin } from '../src/core/keyvault';
@@ -461,7 +468,7 @@ describe('the watch-only half a hot record can produce', () => {
 
   it('hands back a scan start in blocks, not the milliseconds the record stores', () => {
     /* The bug this test exists for, and it was live for exactly one commit.
-     * `HotRecord.birth` is a creation time in milliseconds; the Monero scan
+     * `HotRecord.createdAt` is a creation time in milliseconds; the Monero scan
      * start is a block height. Passing one where the other belongs does not
      * throw. It produces a scan beginning at block 1,760,000,000,000, which
      * finds nothing and reports zero for a wallet with money in it, forever.
@@ -473,7 +480,7 @@ describe('the watch-only half a hot record can produce', () => {
     if (!madeNow.ok) throw new Error(madeNow.problem);
     const watch = watchOnlyFrom(madeNow.record);
 
-    expect(madeNow.record.birth).toBe(WHEN);
+    expect(madeNow.record.createdAt).toBe(WHEN);
     expect(watch.xmr!.birth).toBeLessThan(100_000_000);
     expect(watch.xmr!.birth).toBeGreaterThan(1_000_000);
     expect(watch.xmr!.birth).not.toBe(WHEN);
@@ -485,7 +492,7 @@ describe('the watch-only half a hot record can produce', () => {
      * is slow and correct; starting anywhere later silently misses every coin
      * received before it. */
     const record = fresh();
-    expect(watchOnlyFrom({ ...record, birth: 0 }).xmr!.birth).toBe(0);
+    expect(watchOnlyFrom({ ...record, createdAt: 0 }).xmr!.birth).toBe(0);
   });
 
   it('backs the start off from the moment of creation, so the first payment is seen', () => {
@@ -498,6 +505,40 @@ describe('the watch-only half a hot record can produce', () => {
     expect(watchOnlyFrom(later.record).xmr!.birth).toBeGreaterThan(
       watchOnlyFrom(madeNow.record).xmr!.birth,
     );
+  });
+
+  it('keeps the two units under two different names, across the wallet', () => {
+    /* The rename that followed the bug, held as a rule rather than a habit.
+     * `birth` means Monero blocks everywhere in this codebase: `pairing.ts`,
+     * `persist.ts`, `moneroscan.ts` and `findcoins.ts` all mean blocks by it,
+     * and two of them bound it at a hundred million to say so. `createdAt`
+     * means milliseconds, which is what `Draft.createdAt` already meant.
+     *
+     * A millisecond field named `birth` sitting beside those is the trap that
+     * caught this work once. This fails if one reappears. */
+    const record = fresh();
+    expect(Object.keys(record)).toContain('createdAt');
+    expect(Object.keys(record), 'a millisecond field is named birth again').not.toContain('birth');
+
+    /* And the shape that carries the converted value keeps the block name, so
+     * the boundary between the two units is visible at the type. */
+    const watch = watchOnlyFrom(record);
+    expect(Object.keys(watch.xmr!)).toContain('birth');
+    expect(Object.keys(watch.xmr!), 'the height field picked up a ms name').not.toContain('createdAt');
+  });
+
+  it('refuses a stored record that still uses the old field name', () => {
+    /* Nothing shipped with the old name, so this is not a migration: it is the
+     * parser declining to guess. A record written by a build that called this
+     * `birth` would have a millisecond value, and reading it as anything would
+     * be reading a scan start six orders of magnitude wrong. */
+    const record = fresh();
+    const { createdAt, ...rest } = record;
+    const old = JSON.stringify({ ...rest, birth: createdAt });
+    const read = parseHotRecord(old);
+    expect(read.ok).toBe(false);
+    if (read.ok) throw new Error('unreachable');
+    expect(read.problem).toMatch(/creation time/);
   });
 
   it('says null for a chain the record does not hold', () => {

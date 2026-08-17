@@ -92,8 +92,25 @@ export interface HotRecord {
   btcMnemonic: string | null;
   /** Which Monero network this seed is for. */
   network: Network;
-  /** Milliseconds. Where a Monero scan may start, since a new wallet has no past. */
-  birth: number;
+  /**
+   * When this wallet was made, in **milliseconds**.
+   *
+   * Named `createdAt` and not `birth`, and the difference is not cosmetic.
+   * Every other `birth` in this codebase is a Monero **block height**:
+   * `pairing.ts`, `persist.ts`, `moneroscan.ts` and `findcoins.ts` all mean
+   * blocks by it, and two of them bound the value at a hundred million to say
+   * so. A field of the same name and the same `number` type meaning
+   * milliseconds sat next to those for exactly one commit, and in that commit
+   * it was passed straight into a scan as a height: the wallet would have
+   * started scanning at block 1,760,000,000,000, found nothing, and reported
+   * zero for an account with money in it.
+   *
+   * `Draft.createdAt` already meant milliseconds. This name joins that
+   * convention so the units are legible at every call site rather than in a
+   * comment somebody has to go and find. `watchOnlyFrom` is where it becomes a
+   * height.
+   */
+  createdAt: number;
 }
 
 export type ReadResult =
@@ -162,12 +179,12 @@ export function parseHotRecord(text: string | null): ReadResult {
     return { ok: false, problem: 'The stored keys do not say which network they are for.' };
   }
 
-  const birth = record['birth'];
-  if (typeof birth !== 'number' || !Number.isFinite(birth) || birth < 0) {
+  const createdAt = record['createdAt'];
+  if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt < 0) {
     return { ok: false, problem: 'The stored keys have no usable creation time.' };
   }
 
-  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, birth } };
+  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, createdAt } };
 }
 
 /** The text to hand the keychain. Separate from writing it, so it is testable. */
@@ -218,7 +235,7 @@ export function makeHotRecord(
     return { ok: false, problem: `Generated a Bitcoin phrase that does not check out: ${phrase.problem ?? 'unknown'}` };
   }
 
-  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, birth: when } };
+  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, createdAt: when } };
 }
 
 /**
@@ -306,7 +323,7 @@ export function watchOnlyFrom(record: HotRecord): WatchOnly {
        * few blocks late misses the first payment into it. Zero milliseconds is
        * before genesis and converts to zero, so a restored record keeps
        * scanning from the beginning. */
-      birth: restoreHeight(record.birth),
+      birth: restoreHeight(record.createdAt),
     };
     wipeWallet(monero);
   }
@@ -451,17 +468,17 @@ export function withRestored(
     xmrSeed: null,
     btcMnemonic: null,
     network,
-    /* A restored wallet has a past, and nobody typing a phrase knows the
-     * height it was made at. Zero means scan from the beginning, which is slow
-     * and correct; guessing a recent height would be fast and would silently
-     * miss every coin received before it. */
-    birth: 0,
+    /* A restored wallet has a past, and nobody typing a phrase knows when it
+     * was made. Zero converts to block zero, which means scan from the
+     * beginning: slow and correct, where guessing a recent point would be fast
+     * and would silently miss every coin received before it. */
+    createdAt: 0,
   };
 
   const record: HotRecord =
     restored.chain === 'xmr'
-      ? { ...base, xmrSeed: restored.xmrSeed, birth: existing ? base.birth : 0 }
-      : { ...base, btcMnemonic: restored.btcMnemonic, birth: existing ? base.birth : when };
+      ? { ...base, xmrSeed: restored.xmrSeed, createdAt: existing ? base.createdAt : 0 }
+      : { ...base, btcMnemonic: restored.btcMnemonic, createdAt: existing ? base.createdAt : when };
 
   return { ok: true, record };
 }

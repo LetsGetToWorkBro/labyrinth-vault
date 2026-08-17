@@ -166,9 +166,9 @@ describe('reading what is stored', () => {
       { ...record, btcMnemonic: 123 },
       { ...record, network: 'regtest' },
       { ...record, network: undefined },
-      { ...record, birth: -1 },
-      { ...record, birth: Number.NaN },
-      { ...record, birth: 'yesterday' },
+      { ...record, createdAt: -1 },
+      { ...record, createdAt: Number.NaN },
+      { ...record, createdAt: 'yesterday' },
       /* Neither half. A record that holds no keys at all is not a wallet, and
        * accepting one would produce an account with nothing behind it. */
       { ...record, xmrSeed: null, btcMnemonic: null },
@@ -324,11 +324,13 @@ describe('folding a restored phrase into what is already stored', () => {
     expect(folded.record.xmrSeed).toBe(record.xmrSeed);
   });
 
-  it('starts a restored Monero wallet at height zero', () => {
-    /* Nobody typing a phrase knows the height it was made at, and guessing a
-     * recent one silently misses every coin received before it. */
+  it('starts a restored Monero wallet at the beginning of the chain', () => {
+    /* Nobody typing a phrase knows when the wallet was made, and guessing a
+     * recent point silently misses every coin received before it. Zero
+     * milliseconds is before Monero's genesis, so `watchOnlyFrom` converts it
+     * to block zero: scan from the beginning. */
     const folded = withRestored(null, readPhrase(xmrWords), 'mainnet', WHEN);
-    expect(folded.ok && folded.record.birth).toBe(0);
+    expect(folded.ok && folded.record.createdAt).toBe(0);
   });
 
   it('refuses to fold a phrase it could not read', () => {
