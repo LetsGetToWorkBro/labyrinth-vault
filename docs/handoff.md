@@ -279,6 +279,15 @@ they still need hardware or a network this container does not have.
   the remaining human step is a funded stagenet address and one command.
 - **No physical device has run any of this.** `docs/testflight.md` is the plan,
   and it now covers the coin picker, the deposit screen and the status bar.
+
+  One correction to that plan, made after the owner reported an instant unlock:
+  **the native Argon2id port already shipped.** `host.ts` installs it and
+  `CArgon2` is in the build, so the vault's key derivation is compiled C and
+  test 4 no longer measures a gate. It was telling testers to expect a minute
+  and to treat anything under a second as a bug, which had inverted: a slow
+  unlock now means the native module did not load and the JavaScript fell in
+  behind it. The launch self-test reports the path, so the check is reading a
+  word rather than holding a stopwatch.
 - **No real Cake or Feather has imported a key-image file.** `wallet2` has, and
   `wallet2` is the library rather than the application.
 
