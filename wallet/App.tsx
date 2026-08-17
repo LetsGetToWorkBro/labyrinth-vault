@@ -37,6 +37,8 @@ import { MoneroFileScreen } from './src/screens/MoneroFile';
 import { SendScreen } from './src/screens/Send';
 import { ScanScreen } from './src/screens/Scan';
 import { PairScreen, SecurityScreen, VaultScreen } from './src/screens/Vault';
+import { BackupScreen, CreateWalletScreen } from './src/screens/Backup';
+import { RestoreScreen } from './src/screens/Restore';
 import { OnboardingScreen } from './src/screens/Onboarding';
 import { color } from './src/design/tokens';
 import type { Routes } from './src/nav/routes';
@@ -98,6 +100,9 @@ export default function App() {
               <Stack.Screen name="MoneroFile" component={MoneroFileScreen} />
                 <Stack.Screen name="Scan" component={ScanScreen} />
                 <Stack.Screen name="Pair" component={PairScreen} />
+                <Stack.Screen name="CreateWallet" component={CreateWalletScreen} />
+                <Stack.Screen name="Backup" component={BackupScreen} />
+                <Stack.Screen name="Restore" component={RestoreScreen} />
               </Stack.Group>
             </Stack.Navigator>
           </NavigationContainer>

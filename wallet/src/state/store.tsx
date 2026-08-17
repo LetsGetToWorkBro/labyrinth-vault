@@ -46,8 +46,9 @@ import { saveVaultFile } from './vaultFileStore';
 import { digestOf } from '@vault/airgap/envelope';
 import { EMPTY, load, save, type Persisted } from './persist';
 import { fileStore } from './fileStore';
-import { keychainStore } from './keychainStore';
+import { keychainStore, spendingKeyStore } from './keychainStore';
 import { clearPairing, loadPairing, savePairing } from './persistKeys';
+import { forgetHot, loadHot, saveHot, type HotRecord } from '../core/keyvault';
 import { transmit, Transmission } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
 
@@ -184,6 +185,33 @@ export interface Store {
   /** Write the waiting file and hand it to the share sheet. */
   saveMoneroFile(): Promise<{ ok: boolean; note: string }>;
 
+  /**
+   * This wallet's own spending keys, or null when it holds none.
+   *
+   * Null is the ordinary state and stays the ordinary state: a wallet paired
+   * to a vault never needs this, and `canSignHere` refuses a vault account
+   * whatever is stored here. See core/keyvault.ts, which is written as a
+   * security document because that is what it is.
+   */
+  hot: HotRecord | null;
+  /**
+   * Write a record to the keychain.
+   *
+   * Called at the end of creation, and only after the words have been shown:
+   * `core/backup.ts` holds that ordering in a transition table, so this
+   * function is the effect rather than the rule.
+   */
+  keepHot(record: HotRecord): Promise<void>;
+  /**
+   * Forget the spending keys on this device.
+   *
+   * `forget` rather than `delete`, the same word `keyvault.ts` chose and for
+   * the same reason: the coins stay on the chain and the words on paper still
+   * restore them. A screen that says "delete wallet" invites somebody to
+   * believe they destroyed something they did not.
+   */
+  forgetHotKeys(): Promise<void>;
+
   /** Pair with the stand-in vault. DEMO only; the real path is the camera. */
   pairVault(label: string): void;
   unpairVault(): void;
@@ -273,6 +301,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const scanStart = useRef<ScanState | null>(null);
 
   const keysStorage = useMemo(() => keychainStore(), []);
+  const spendingStorage = useMemo(() => spendingKeyStore(), []);
+
+  /* What this wallet can sign for itself. Read at launch beside the pairing,
+   * because a screen that offers to back up a wallet has to know whether there
+   * is one before it renders rather than after. */
+  const [hot, setHot] = useState<HotRecord | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void loadHot(spendingStorage).then((result) => {
+      /* A record that fails to parse loads as nothing, the same rule the node
+       * file and the pairing follow. The words on paper are what restores a
+       * wallet; a half-read record would derive addresses from a seed that is
+       * not the seed and then report zero for money that is there. */
+      if (current && result.ok) setHot(result.record);
+    });
+    return () => { current = false; };
+  }, [spendingStorage]);
 
   useEffect(() => {
     let current = true;
@@ -799,6 +845,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     syncStandInKeyImages,
     moneroFileWaiting,
     saveMoneroFile,
+    hot,
+    keepHot: async (record: HotRecord) => {
+      /* Written before the state moves, so a keychain that refuses leaves the
+       * app agreeing with the keychain. The other order gives a wallet that
+       * shows a funded account until it is relaunched, which is the worst
+       * possible time to find out nothing was saved. */
+      await saveHot(spendingStorage, record);
+      setHot(record);
+    },
+    forgetHotKeys: async () => {
+      await forgetHot(spendingStorage);
+      setHot(null);
+    },
+
     /* The demo pairing runs the stand-in's export through the same
      * acceptance path a scanned one takes, so the button exercises the real
      * checks rather than flipping a flag. */

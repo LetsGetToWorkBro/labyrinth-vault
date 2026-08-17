@@ -19,6 +19,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   beginCreation,
   creationHint,
@@ -266,6 +267,148 @@ describe('what a restore is about to do', () => {
     for (const existing of shapes) {
       expect(restoreEffect(existing, 'xmr')).toMatch(/Monero/);
       expect(restoreEffect(existing, 'btc')).toMatch(/Bitcoin/);
+    }
+  });
+});
+
+/*
+ * The screens.
+ *
+ * Everything above is the module. What follows holds the two screens to the
+ * rules that do not survive as comments, and all of it strips comments before
+ * looking, because this repository has now had five guards fire on the prose
+ * explaining the rule they enforce.
+ */
+
+/** Comments removed, so a guard never fires on its own documentation. */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+describe('the screens that show and take a phrase', () => {
+  const backup = readFileSync('src/screens/Backup.tsx', 'utf8');
+  const restore = readFileSync('src/screens/Restore.tsx', 'utf8');
+  const security = readFileSync('src/screens/Vault.tsx', 'utf8');
+  const app = readFileSync('App.tsx', 'utf8');
+
+  it('found the screens, so a pass means something', () => {
+    expect(backup).toMatch(/CreateWalletScreen/);
+    expect(restore).toMatch(/RestoreScreen/);
+  });
+
+  it('never puts the words on the pasteboard', () => {
+    /* The omission somebody will try to fix, and the reason it is an omission:
+     * the general pasteboard on iOS is readable by every app that comes to the
+     * foreground and is offered to a person's other devices over Handoff. A
+     * copy button here is a seed phrase in an unknown number of places. */
+    const code = codeOnly(backup);
+    for (const forbidden of ['Clipboard', 'setStringAsync', 'setString']) {
+      expect(code, `Backup.tsx reaches for ${forbidden}`).not.toMatch(new RegExp(`\\b${forbidden}\\b`));
+    }
+  });
+
+  it('does not let a word be selected, because selection offers Copy', () => {
+    /* Every other `Mono` in the app is selectable on purpose: an address a
+     * person cannot select is one they retype by hand. The words are the one
+     * exception, and it has to be explicit at every call site in the grid. */
+    const grid = /function WordGrid[\s\S]*?\n}/.exec(backup)?.[0] ?? '';
+    expect(grid, 'WordGrid not found').toBeTruthy();
+    const monos = grid.match(/<Mono\b[^>]*/g) ?? [];
+    expect(monos.length).toBeGreaterThan(0);
+    for (const mono of monos) {
+      expect(mono, `a Mono in the grid is selectable: ${mono}`).toMatch(/selectable=\{false\}/);
+    }
+  });
+
+  it('does not draw a concealed word at all', () => {
+    /* The divergence from the vault, which blurs. A blur is a view treatment
+     * over a string that is still in the view tree, still in a screenshot, and
+     * still in whatever the system captures when the app is backgrounded. The
+     * grid has to choose the word on `shown` rather than style it. */
+    const grid = codeOnly(/function WordGrid[\s\S]*?\n}/.exec(backup)?.[0] ?? '');
+    expect(grid).toMatch(/shown \? word :/);
+    expect(grid, 'a blur would leave the word in the tree').not.toMatch(/\bblur\b/i);
+  });
+
+  it('reaches the keychain only through the gate that requires the words to have been shown', () => {
+    /* The ordering, checked at the one place it could be bypassed. The screen
+     * may call `keepHot` exactly once, and `mayKeep` has to stand in front of
+     * it. A second unguarded call is how this rule dies. */
+    const code = codeOnly(backup);
+    expect(code).toMatch(/mayKeep\(creation\)/);
+    expect((code.match(/keepHot\(/g) ?? []).length, 'more than one path to the keychain').toBe(1);
+    expect(code).toMatch(/if \(!mayKeep\(creation\)\) return;/);
+  });
+
+  it('draws its entropy from the platform rather than from Math.random', () => {
+    const code = codeOnly(backup);
+    expect(code).toMatch(/crypto\.getRandomValues/);
+    expect(code, 'Math.random is not a source of key material').not.toMatch(/Math\.random/);
+  });
+
+  it('generates nothing on a phone that already holds a wallet', () => {
+    /* `saveHot` keeps exactly one record and overwriting is what it does, so
+     * the refusal is the screen's job. The check has to come before the draw:
+     * a version that generates first and refuses second is one edit away from
+     * saving what it generated. */
+    const guard = codeOnly(/export function CreateWalletScreen[\s\S]*?\n}/.exec(backup)?.[0] ?? '');
+    expect(guard, 'CreateWalletScreen not found').toBeTruthy();
+    expect(guard).toMatch(/hot !== null/);
+    expect(guard, 'the guard screen must not draw entropy').not.toMatch(/drawEntropy/);
+  });
+
+  it('folds a restored phrase through withRestored rather than building a record', () => {
+    /* The rule that a restore never discards the other chain lives in
+     * `withRestored`. A screen that assembled a record itself would be a
+     * second place for it to be got wrong, and the wrong version is a wipe
+     * wearing the word restore. */
+    const code = codeOnly(restore);
+    expect(code).toMatch(/withRestored\(hot, reading/);
+    expect(code, 'the screen must not assemble a record itself').not.toMatch(/xmrSeed:/);
+    expect(code, 'the screen must not assemble a record itself').not.toMatch(/btcMnemonic:/);
+  });
+
+  it('never corrects a word on its way in', () => {
+    /* A phrase with a typo has to fail loudly. Nudging a word to the nearest
+     * one in the list is how somebody restores an empty wallet and is told it
+     * worked. The field turns off every system feature that would do it. */
+    const code = codeOnly(restore);
+    expect(code).toMatch(/autoCorrect=\{false\}/);
+    expect(code).toMatch(/spellCheck=\{false\}/);
+    expect(code).toMatch(/autoCapitalize="none"/);
+    expect(code).toMatch(/autoComplete="off"/);
+  });
+
+  it('says what a restore will do before it does it', () => {
+    expect(codeOnly(restore)).toMatch(/restoreEffect\(hot, reading\.chain\)/);
+  });
+
+  it('stops claiming no key has ever been generated on this phone', () => {
+    /* This screen's strongest sentence was true until there was a key store,
+     * and a security screen that keeps printing a claim the app has outgrown
+     * is the worst copy in the product. It is conditional on what is actually
+     * stored now. */
+    const code = codeOnly(security);
+    expect(code, 'the unconditional claim is back').not.toMatch(/never been generated/);
+    expect(code).toMatch(/hot === null \?/);
+    expect(code).toMatch(/SOME ON THIS PHONE/);
+  });
+
+  it('still promises a vault account is watch-only, with a seed in the keychain', () => {
+    /* The one sentence that must survive the whole feature. `canSignHere` is
+     * what makes it true; this is the screen saying so in the presence of a
+     * hot seed, which is exactly when somebody would doubt it. */
+    expect(codeOnly(security)).toMatch(/WATCH-ONLY, ALWAYS/);
+  });
+
+  it('is reachable, so none of the above is a screen nobody can open', () => {
+    for (const route of ['CreateWallet', 'Backup', 'Restore']) {
+      expect(codeOnly(app), `${route} is not in the navigator`).toMatch(
+        new RegExp(`name="${route}"`),
+      );
+      expect(codeOnly(security), `nothing navigates to ${route}`).toMatch(
+        new RegExp(`navigate\\('${route}'\\)`),
+      );
     }
   });
 });

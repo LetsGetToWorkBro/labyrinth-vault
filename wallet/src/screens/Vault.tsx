@@ -314,7 +314,7 @@ function Step({ number, title, body }: { number: string; title: string; body: st
 // ---------------------------------------------------------- security center
 
 export function SecurityScreen({ navigation }: Nav<'Security'>) {
-  const { vault, now } = useStore();
+  const { vault, now, hot } = useStore();
 
   return (
     <Screen>
@@ -324,9 +324,36 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
         <Gap size={space.gap} />
 
         <View style={{ paddingHorizontal: space.gutter }}>
-          <Statement label="PRIVATE KEYS" value="VAULT ONLY" tone={color.good}>
-            No key, seed phrase or signature has ever been generated on this phone. There is no screen in
-            this application that imports one, and no field that would accept one.
+          {/* Two different true statements, and which one is shown is read
+              from what is actually stored rather than from what this app used
+              to be. Until there was a key store, this screen said no key had
+              ever been generated on this phone, full stop. That sentence was
+              the product, and it is now conditional: it is still true of a
+              wallet that only watches a vault, and false the moment somebody
+              makes a hot wallet. A security screen that kept printing the
+              stronger claim would be the worst copy in the application. */}
+          {hot === null ? (
+            <Statement label="PRIVATE KEYS" value="VAULT ONLY" tone={color.good}>
+              No key or seed phrase is stored on this phone. It watches accounts that are signed
+              for on a device with no network on it, and that is the whole design.
+            </Statement>
+          ) : (
+            <Statement label="PRIVATE KEYS" value="SOME ON THIS PHONE" tone={color.warn}>
+              This phone holds a spending seed for one wallet, in the keychain, under the device
+              passcode, and asks for Face ID before every signature. That is protection by the
+              device rather than by something you know, and it is a real reduction against the
+              vault. Anything worth more than this phone belongs on the other half.
+            </Statement>
+          )}
+
+          <Statement
+            label="ACCOUNTS PAIRED FROM A VAULT"
+            value="WATCH-ONLY, ALWAYS"
+            tone={color.good}
+          >
+            Unchanged by any of the above, and unchangeable. An account paired from a vault cannot
+            be signed for on this device even while a seed for a different wallet is sitting in this
+            phone's keychain. The two are unrelated wallets and this half refuses to confuse them.
           </Statement>
 
           <Statement label="THIS WALLET" value="WATCH AND BROADCAST" tone={color.bone}>
@@ -356,6 +383,32 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
             the destination and the fee precisely so that a compromised wallet cannot pay somebody else
             quietly, but nothing in either half substitutes for reading that screen.
           </Notice>
+
+          <Gap size={space.section} />
+          <SectionHead>KEYS ON THIS PHONE</SectionHead>
+          <Gap size={space.step} />
+          {hot === null ? (
+            <>
+              <Small tone={color.dim}>
+                A wallet this phone can spend from, for the amounts that are not worth a walk to
+                the vault. The words go on paper before anything is stored.
+              </Small>
+              <Gap size={space.step} />
+              <Action label="MAKE A WALLET" quiet onPress={() => navigation.navigate('CreateWallet')} />
+              <Gap size={space.snug} />
+              <Action label="RESTORE FROM WORDS" quiet onPress={() => navigation.navigate('Restore')} />
+            </>
+          ) : (
+            <>
+              <Small tone={color.dim}>
+                The words that restore this wallet are the only backup of it that exists.
+              </Small>
+              <Gap size={space.step} />
+              <Action label="SHOW THE RECOVERY WORDS" quiet onPress={() => navigation.navigate('Backup')} />
+              <Gap size={space.snug} />
+              <Action label="RESTORE ANOTHER CHAIN" quiet onPress={() => navigation.navigate('Restore')} />
+            </>
+          )}
 
           <Gap size={space.section} />
           <Action label="THE VAULT" quiet onPress={() => navigation.navigate('Vault')} />

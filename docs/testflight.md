@@ -526,6 +526,48 @@ in.
   the same screen plus a PAY FROM THIS WALLET lever. **Do not send anything**;
   this is a reading test, and the order can be abandoned.
 
+- **Recovery words.** SECURITY, then MAKE A WALLET. This is the companion
+  holding a spending seed of its own, so read the screen before touching
+  anything: it should say the words are the only copy not on the phone, and it
+  should warn against screenshotting them, which the vault's equivalent does
+  not need to say. Expect 25 Monero words and 12 Bitcoin words, numbered,
+  concealed as rows of dashes until you hold HOLD TO REVEAL, and concealed
+  again the moment you lift your finger.
+
+  **Try to finish without revealing them.** I HAVE WRITTEN THEM DOWN should be
+  dead until the words have actually been on screen. That is the one rule this
+  screen exists to enforce, and a build where the button works immediately is a
+  build that can store a seed nobody has written down.
+
+  **Watch for:** a word you can select, or a Copy item appearing on a long
+  press. Neither should be possible. Also watch the count: 25 and 12. A grid
+  rendering 24 is the same defect test 3 watches for on the vault, and it is
+  silent until somebody needs the backup.
+
+- **Restore from words.** This is the second test in this plan where a failure
+  costs money rather than time, and it is the other direction of test 12.
+
+  Write down the words from the step above, forget the wallet, and type them
+  back in on SECURITY, then RESTORE FROM WORDS. One field, no picker asking
+  which chain: it should work that out from the count. Expect the same Monero
+  address you saw before.
+
+  **Then do the part that actually proves something.** Type those same 25 words
+  into Feather or Cake and check the address matches. Our own software agreeing
+  with itself is not evidence; another implementation reaching the same address
+  is. Do the same for the 12 Bitcoin words in any BIP84 wallet.
+
+  **Watch for:** a phrase with one word deliberately mistyped being accepted, or
+  quietly corrected. It must fail, and the refusal should name the count it
+  found. Paste 24 words and expect a sentence saying it cannot tell whether that
+  is a Bitcoin phrase or a Monero phrase missing one, because that is genuinely
+  ambiguous and guessing sends somebody to check the wrong list.
+
+  **Watch for, hardest:** restoring a Monero phrase onto a phone that already
+  holds a Bitcoin one must leave the Bitcoin one alone. The screen says so
+  before you tap. If the Bitcoin wallet is gone afterward, that is a wipe
+  wearing the word restore, and it is the worst bug this screen could have.
+
 **Swap and its status screen are deliberately out of scope here.** They talk to
 third-party exchanges over the network, which is a different trust question
 from anything else in this document, and mixing it into an airgap test plan

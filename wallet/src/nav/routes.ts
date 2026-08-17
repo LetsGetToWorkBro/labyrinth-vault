@@ -120,6 +120,30 @@ export type Routes = {
   Vault: undefined;
   Pair: undefined;
   Security: undefined;
+  /**
+   * Making a wallet this phone can spend from.
+   *
+   * Its own route rather than a step of onboarding, because it is reachable
+   * long after onboarding is over: somebody who set the app up as the watching
+   * half of a vault and later wants a small hot balance takes this route from
+   * Security, not by reinstalling.
+   *
+   * It carries nothing. The record it makes exists only inside the screen
+   * until the words have been shown, which is the ordering `core/backup.ts`
+   * holds, and a route parameter would be a second place for a half-made
+   * wallet to live.
+   */
+  CreateWallet: undefined;
+  /**
+   * The words, for a wallet that already exists.
+   *
+   * No parameter, for the reason `SwapStatus` has none: the record is read
+   * from the store at render, so a deep link or a restored navigation state
+   * cannot resurrect a phrase for a wallet that has since been forgotten.
+   */
+  Backup: undefined;
+  /** Typing or pasting a phrase back in. */
+  Restore: undefined;
 };
 
 export type Nav<Route extends keyof Routes> = NativeStackScreenProps<Routes, Route>;
