@@ -27,7 +27,7 @@
  */
 
 import { HDKey } from '@scure/bip32';
-import { entropyToMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
+import { entropyToMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as btc from '@scure/btc-signer';
@@ -148,6 +148,45 @@ export function mnemonicFromEntropy(system: Uint8Array, extra: Uint8Array = new 
 export function mnemonicFromStoredEntropy(entropy: Uint8Array): string {
   if (entropy.length !== 16) throw new Error('BIP39 entropy for a 12-word phrase is 16 bytes.');
   return entropyToMnemonic(entropy, wordlist);
+}
+
+/**
+ * The words back to the sixteen bytes: the exact inverse of the function
+ * above, and it lives next to it so the pair can be round-tripped in one test.
+ *
+ * Twelve words only, and that is a narrowing rather than a limitation.
+ * `checkMnemonic` accepts 12 or 24 because it validates any phrase somebody
+ * might type; this reads the phrase a *vault* wrote, and a vault's is always
+ * 12 because `SECRET_BYTES` fixes the Bitcoin half at 16 bytes. A 24-word
+ * phrase would decode to 32 bytes, which is a valid seed for some other
+ * wallet and cannot be the one this blob was sealed from. Accepting it would
+ * produce a vault that opens, shows different words than were typed, and
+ * watches addresses nobody has ever been paid at.
+ *
+ * A sentence rather than a throw, because the caller is a person retyping
+ * twelve words from paper and the failure is nearly always one of them.
+ */
+export function storedEntropyFromMnemonic(
+  text: string,
+): { ok: true; entropy: Uint8Array } | { ok: false; problem: string } {
+  const checked = checkMnemonic(text);
+  if (!checked.ok || checked.words === undefined) {
+    return { ok: false, problem: checked.problem ?? 'Those words could not be read.' };
+  }
+  const count = checked.words.split(' ').length;
+  if (count !== 12) {
+    return {
+      ok: false,
+      problem: `A vault's Bitcoin phrase is 12 words and that is ${count}. ` +
+        'A longer phrase is a valid seed for other software and is not this vault.',
+    };
+  }
+  const entropy = mnemonicToEntropy(checked.words, wordlist);
+  if (entropy.length !== 16) {
+    wipe(entropy);
+    return { ok: false, problem: 'Those words do not decode to a 12-word seed.' };
+  }
+  return { ok: true, entropy };
 }
 
 /** Whitespace-normalize and checksum-check a typed seed phrase. */

@@ -9502,10 +9502,50 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     }
     return words;
   }
+  function decodeWords(words, wordlist2) {
+    awordlist(wordlist2);
+    const entLen = words.length / 3 * 4;
+    const bytes = new Uint8Array(entLen + 1);
+    let carry = 0;
+    let bits = 0;
+    let pos = 0;
+    for (const word of words) {
+      const index = wordlist2.indexOf(word);
+      if (index === -1)
+        throw new Error("Unknown word: " + word);
+      carry = carry << 11 | index;
+      bits += 11;
+      while (bits >= 8) {
+        bits -= 8;
+        bytes[pos++] = carry >>> bits & 255;
+      }
+      carry &= (1 << bits) - 1;
+    }
+    if (bits > 0)
+      bytes[pos] = carry << 8 - bits;
+    const entropy = bytes.subarray(0, entLen);
+    if (bytes[entLen] !== calcChecksum(entropy))
+      throw new Error("Invalid checksum");
+    return Uint8Array.from(entropy);
+  }
+  function mnemonicToEntropy(mnemonic, wordlist2) {
+    const { words } = normalize2(mnemonic);
+    const entropy = decodeWords(words, wordlist2);
+    aentropy(entropy);
+    return entropy;
+  }
   function entropyToMnemonic(entropy, wordlist2) {
     aentropy(entropy);
     const words = encodeWords(entropy, wordlist2);
     return words.join(isJapanese(wordlist2) ? "\u3000" : " ");
+  }
+  function validateMnemonic(mnemonic, wordlist2) {
+    try {
+      mnemonicToEntropy(mnemonic, wordlist2);
+    } catch (e) {
+      return false;
+    }
+    return true;
   }
   var psalt = (passphrase) => {
     if (typeof passphrase !== "string")
@@ -15488,6 +15528,37 @@ zoo`.split("\n"));
     if (entropy.length !== 16) throw new Error("BIP39 entropy for a 12-word phrase is 16 bytes.");
     return entropyToMnemonic(entropy, wordlist);
   }
+  function storedEntropyFromMnemonic(text) {
+    const checked = checkMnemonic(text);
+    if (!checked.ok || checked.words === void 0) {
+      return { ok: false, problem: checked.problem ?? "Those words could not be read." };
+    }
+    const count = checked.words.split(" ").length;
+    if (count !== 12) {
+      return {
+        ok: false,
+        problem: `A vault's Bitcoin phrase is 12 words and that is ${count}. A longer phrase is a valid seed for other software and is not this vault.`
+      };
+    }
+    const entropy = mnemonicToEntropy(checked.words, wordlist);
+    if (entropy.length !== 16) {
+      wipe(entropy);
+      return { ok: false, problem: "Those words do not decode to a 12-word seed." };
+    }
+    return { ok: true, entropy };
+  }
+  function checkMnemonic(text) {
+    const words = String(text ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+    if (!words) return { ok: false, problem: "Enter the seed words." };
+    const count = words.split(" ").length;
+    if (count !== 12 && count !== 24) {
+      return { ok: false, problem: `That is ${count} words; a Bitcoin seed is 12 (or 24).` };
+    }
+    if (!validateMnemonic(words, wordlist)) {
+      return { ok: false, problem: "Those words fail their own checksum. One is mistyped or out of order." };
+    }
+    return { ok: true, words };
+  }
   function openFromMnemonic(words) {
     const seed = mnemonicToSeedSync(words);
     try {
@@ -18857,6 +18928,86 @@ zoo`.split("\n"));
         wipe(secret, pass);
       }
     }),
+    /**
+     * Rebuild a vault from the two phrases it showed at setup.
+     *
+     * ## Why this is possible at all
+     *
+     * The vault secret is `btcEntropy || xmrSeed` and nothing else: `openSession`
+     * slices it in exactly that order, and `revealBackup` hands back the phrases
+     * those two runs of bytes encode. So the words on somebody's paper are a
+     * complete, lossless copy of the secret, and this is `create` with the
+     * randomness supplied instead of drawn.
+     *
+     * `deriveSecret` does not run here and does not need to. It turns a CSPRNG
+     * draw plus whatever a person contributed into the secret, once, at setup.
+     * What the phrases encode is its output, so restoring reads the answer
+     * rather than repeating the question. The `extra` entropy somebody typed at
+     * setup is not needed and could not be recovered: it was never a separate
+     * input to anything after that call.
+     *
+     * ## Both phrases, or none
+     *
+     * Every vault this engine has ever made holds both chains, because `create`
+     * fixes `SECRET_BYTES` at sixteen plus thirty-two. So a restore missing one
+     * phrase cannot rebuild the secret, and the tempting shortcut is to draw
+     * fresh bytes for the missing half: that produces a vault which opens, looks
+     * healthy, watches a Bitcoin account somebody recognizes, and silently has
+     * no relationship to their Monero. Refused instead, in a sentence.
+     *
+     * ## The proof
+     *
+     * The blob is opened before it is returned, as in `reseal`, and for the
+     * sharper version of the same reason: a caller is about to write this into
+     * the keychain as the one copy of a vault, on a device where the previous
+     * copy is already gone.
+     *
+     * @param randomHex `SEAL_RANDOM_BYTES` from the platform CSPRNG. The secret
+     *   is not drawn here, so this is the seal's randomness alone, which is what
+     *   makes the requirement smaller than `create`'s and worth reading twice.
+     */
+    restore: guarded(
+      "restore",
+      (bitcoinWords, moneroWords, passphrase, randomHex) => {
+        const random = fromHex2(randomHex);
+        if (!random || random.length !== SEAL_RANDOM_BYTES) {
+          return fail(`Restoring needs ${SEAL_RANDOM_BYTES} bytes of randomness.`);
+        }
+        const pass = passphraseFromWire(passphrase);
+        if (!pass) return fail(PASSPHRASE_CONTRACT);
+        const bitcoin = storedEntropyFromMnemonic(String(bitcoinWords ?? ""));
+        if (!bitcoin.ok) {
+          wipe(pass);
+          return fail(`Bitcoin phrase: ${bitcoin.problem}`);
+        }
+        const monero = seedFromMnemonic(String(moneroWords ?? ""));
+        if (monero.seed === null) {
+          wipe(pass, bitcoin.entropy);
+          return fail(`Monero phrase: ${monero.problem ?? "those words are not a Monero seed."}`);
+        }
+        if (monero.seed.length !== XMR_SEED_BYTES) {
+          wipe(pass, bitcoin.entropy, monero.seed);
+          return fail(`Monero phrase: a vault's seed is ${XMR_SEED_BYTES} bytes and that is not.`);
+        }
+        const secret = new Uint8Array(SECRET_BYTES);
+        try {
+          secret.set(bitcoin.entropy, 0);
+          secret.set(monero.seed, BTC_ENTROPY_BYTES);
+          const sealed = seal(secret, pass, random);
+          if (!sealed.ok || !sealed.sealed) {
+            return fail(sealed.problem ?? "Could not seal the restored vault.");
+          }
+          const proof = unseal(sealed.sealed, pass);
+          if (!proof.ok || !proof.secret) {
+            return fail("The restored vault did not open, so it was not returned.");
+          }
+          wipe(proof.secret);
+          return done({ sealed: toHex2(sealed.sealed) });
+        } finally {
+          wipe(secret, pass, bitcoin.entropy, monero.seed);
+        }
+      }
+    ),
     /**
      * Re-seal an existing vault under a different passphrase.
      *

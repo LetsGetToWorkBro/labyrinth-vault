@@ -73,12 +73,14 @@ import {
 import {
   closeWallet,
   mnemonicFromStoredEntropy,
+  storedEntropyFromMnemonic,
   openFromMnemonic,
   ZPUB_VERSIONS,
   type BtcWallet,
 } from '../keys/bitcoin';
 import {
   revealMnemonic,
+  seedFromMnemonic,
   walletFromSeed,
   wipeWallet,
   type Wallet as MoneroWallet,
@@ -389,6 +391,93 @@ export const api = {
       wipe(secret, pass);
     }
   }),
+
+  /**
+   * Rebuild a vault from the two phrases it showed at setup.
+   *
+   * ## Why this is possible at all
+   *
+   * The vault secret is `btcEntropy || xmrSeed` and nothing else: `openSession`
+   * slices it in exactly that order, and `revealBackup` hands back the phrases
+   * those two runs of bytes encode. So the words on somebody's paper are a
+   * complete, lossless copy of the secret, and this is `create` with the
+   * randomness supplied instead of drawn.
+   *
+   * `deriveSecret` does not run here and does not need to. It turns a CSPRNG
+   * draw plus whatever a person contributed into the secret, once, at setup.
+   * What the phrases encode is its output, so restoring reads the answer
+   * rather than repeating the question. The `extra` entropy somebody typed at
+   * setup is not needed and could not be recovered: it was never a separate
+   * input to anything after that call.
+   *
+   * ## Both phrases, or none
+   *
+   * Every vault this engine has ever made holds both chains, because `create`
+   * fixes `SECRET_BYTES` at sixteen plus thirty-two. So a restore missing one
+   * phrase cannot rebuild the secret, and the tempting shortcut is to draw
+   * fresh bytes for the missing half: that produces a vault which opens, looks
+   * healthy, watches a Bitcoin account somebody recognizes, and silently has
+   * no relationship to their Monero. Refused instead, in a sentence.
+   *
+   * ## The proof
+   *
+   * The blob is opened before it is returned, as in `reseal`, and for the
+   * sharper version of the same reason: a caller is about to write this into
+   * the keychain as the one copy of a vault, on a device where the previous
+   * copy is already gone.
+   *
+   * @param randomHex `SEAL_RANDOM_BYTES` from the platform CSPRNG. The secret
+   *   is not drawn here, so this is the seal's randomness alone, which is what
+   *   makes the requirement smaller than `create`'s and worth reading twice.
+   */
+  restore: guarded(
+    'restore',
+    (bitcoinWords: string, moneroWords: string, passphrase: unknown, randomHex: string) => {
+      const random = fromHex(randomHex);
+      if (!random || random.length !== SEAL_RANDOM_BYTES) {
+        return fail(`Restoring needs ${SEAL_RANDOM_BYTES} bytes of randomness.`);
+      }
+      const pass = passphraseFromWire(passphrase);
+      if (!pass) return fail(PASSPHRASE_CONTRACT);
+
+      /* Named per chain. "Those words fail their own checksum" in front of two
+       * fields is a sentence that sends somebody to re-read both. */
+      const bitcoin = storedEntropyFromMnemonic(String(bitcoinWords ?? ''));
+      if (!bitcoin.ok) {
+        wipe(pass);
+        return fail(`Bitcoin phrase: ${bitcoin.problem}`);
+      }
+
+      const monero = seedFromMnemonic(String(moneroWords ?? ''));
+      if (monero.seed === null) {
+        wipe(pass, bitcoin.entropy);
+        return fail(`Monero phrase: ${monero.problem ?? 'those words are not a Monero seed.'}`);
+      }
+      if (monero.seed.length !== XMR_SEED_BYTES) {
+        wipe(pass, bitcoin.entropy, monero.seed);
+        return fail(`Monero phrase: a vault's seed is ${XMR_SEED_BYTES} bytes and that is not.`);
+      }
+
+      const secret = new Uint8Array(SECRET_BYTES);
+      try {
+        secret.set(bitcoin.entropy, 0);
+        secret.set(monero.seed, BTC_ENTROPY_BYTES);
+
+        const sealed = seal(secret, pass, random);
+        if (!sealed.ok || !sealed.sealed) {
+          return fail(sealed.problem ?? 'Could not seal the restored vault.');
+        }
+        const proof = unseal(sealed.sealed, pass);
+        if (!proof.ok || !proof.secret) {
+          return fail('The restored vault did not open, so it was not returned.');
+        }
+        wipe(proof.secret);
+        return done({ sealed: toHex(sealed.sealed) });
+      } finally {
+        wipe(secret, pass, bitcoin.entropy, monero.seed);
+      }
+    },
+  ),
 
   /**
    * Re-seal an existing vault under a different passphrase.

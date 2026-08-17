@@ -1240,10 +1240,25 @@ describe('Swift calls only functions the engine actually has', () => {
      * documents describe the KDF as calibrated on the device, which no build
      * has ever done.
      *
-     * The allowlist is empty and should stay that way. An entry in it is a
-     * promise to wire something, written down where the next person will see
-     * it, rather than an export nobody can account for. */
-    const unwired = new Set<string>();
+     * The allowlist is for one thing and one thing only: an export whose Swift
+     * caller is a commit away, named here so the promise is written down where
+     * the next person will see it rather than left as an export nobody can
+     * account for. It is not a place to park something that was decided
+     * against; four of those were deleted rather than listed.
+     *
+     * `restore` is the only entry and it is that promise. The vault shows two
+     * recovery phrases and has never been able to take them back: the
+     * passphrase screen says forgetting it means recovering from the words on
+     * paper, and every route between `setup` and `recovery` goes past a door
+     * that does not exist. The engine half is here and proved, including that
+     * a restored vault produces the same account keys as the one it came from.
+     * What is missing is a setup stage with two phrase fields, which is the
+     * first typed key material this app has ever accepted and wants its own
+     * thinking about the pasteboard and the keyboard. `HOST_VERSION` goes to 8
+     * on both sides in the commit that adds that caller, not before: the pin
+     * exists to stop an app calling a function its bundle lacks, and no app
+     * calls this one yet. See docs/handoff.md, section 6. */
+    const unwired = new Set<string>(['restore']);
     const orphaned = [...hostFunctions].filter((name) => !swiftCalls.has(name) && !unwired.has(name)).sort();
     expect(orphaned, 'the engine exports these and no Swift call site names them').toEqual([]);
     expect([...unwired].filter((name) => swiftCalls.has(name)), 'this is wired now, take it off the list').toEqual([]);

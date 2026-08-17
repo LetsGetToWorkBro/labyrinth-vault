@@ -70,7 +70,7 @@ useful. Never leave key handling half-built in a tree that is on TestFlight.
 
 ## Before you commit
 
-    npm test                      # vault: 1063 tests, includes typecheck and swift-check
+    npm test                      # vault: 1078 tests, includes typecheck and swift-check
     cd wallet && npx vitest run   # companion: 963 tests
     cd wallet && npx tsc --noEmit
     cd worker && npm test         # the Worker: 68 tests, plus npm run typecheck

@@ -17,6 +17,8 @@ import {
   checkBtcAddress,
   checkExtendedKey,
   checkMnemonic,
+  mnemonicFromStoredEntropy,
+  storedEntropyFromMnemonic,
   formatBtc,
   isBtcAddress,
   closeWallet,
@@ -76,6 +78,40 @@ describe('seed words', () => {
     expect(wrong.ok).toBe(false);
     expect(wrong.problem).toMatch(/checksum|mistyped/i);
     expect(checkMnemonic('one two three').problem).toMatch(/3 words/);
+  });
+
+  it('goes to words and back to the same sixteen bytes', () => {
+    /* `mnemonicFromStoredEntropy` and `storedEntropyFromMnemonic` are the two
+     * halves of the vault's recovery: the first is what the RECOVERY screen
+     * shows, the second is what a restore reads. If they ever disagree, a
+     * vault rebuilt from its own words is a different vault, and the only
+     * symptom is a balance of zero. So the pair is round-tripped rather than
+     * each being checked against a fixture it might share.
+     *
+     * Several entropies, varied, because a single zero-filled one would give
+     * a phrase of one repeated word and prove nothing about ordering. */
+    for (const seed of [1, 7, 91, 200]) {
+      const entropy = Uint8Array.from({ length: 16 }, (_, i) => (i * seed + 11) & 0xff);
+      const words = mnemonicFromStoredEntropy(entropy);
+      expect(words.split(' ')).toHaveLength(12);
+
+      const back = storedEntropyFromMnemonic(words);
+      expect(back.ok, back.ok ? '' : back.problem).toBe(true);
+      if (back.ok) expect([...back.entropy]).toEqual([...entropy]);
+    }
+  });
+
+  it('will not read a phrase of a length no vault ever wrote', () => {
+    /* Twenty-four words are a valid BIP39 seed and are not this: a vault's
+     * Bitcoin half is 16 bytes, fixed by the engine's SECRET_BYTES. Reading
+     * one would build a vault that opens and shows different words back. */
+    const long = mnemonicFromStoredEntropy(Uint8Array.from({ length: 16 }, (_, i) => i * 3));
+    expect(storedEntropyFromMnemonic(long).ok).toBe(true);
+
+    const twentyFour = `${long} ${long}`;
+    const back = storedEntropyFromMnemonic(twentyFour);
+    expect(back.ok).toBe(false);
+    if (!back.ok) expect(back.problem).toMatch(/12 words|checksum/);
   });
 });
 
