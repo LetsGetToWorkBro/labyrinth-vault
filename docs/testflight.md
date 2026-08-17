@@ -120,46 +120,38 @@ your phone right now it does not exist, and the phrases are viewable exactly
 once, from the screen you are on. If you are still on the old build, do not
 leave this screen until the words are on paper.
 
-## 4. DEVICE ONLY: time an unlock
+## 4. DEVICE ONLY: time an unlock, and check which code ran
 
-This is the most important test in the document and it takes ten seconds.
+Background the app, reopen it, type your passphrase and time the tap on
+**UNLOCK** to the vault screen appearing.
 
-Background the app, reopen it, and when the passphrase screen appears type
-your passphrase and start the stopwatch as you tap **UNLOCK**. Stop it when
-the vault screen appears. The lever reads DERIVING KEY / ARGON2ID while it
-works.
+**Expect well under a second.** That is the answer, and it is a change from
+what this step used to say. Argon2id now runs as compiled C through
+`LabyrinthVaultKDF` rather than in JavaScriptCore, so the derivation that once
+cost tens of seconds is native. This document told you for several builds to
+expect a minute and to treat anything under a second as a bug; both were true
+before the port and neither is true now.
 
-**Record the number.** Then tell me what it is. It is the single most useful
-thing you can send back from this whole session.
+**A slow unlock is the defect now, not the expectation.** Tens of seconds means
+the native module did not load and the engine's JavaScript fell in behind it.
+The app works in that state and quietly costs a minute per unlock, which is
+exactly the kind of silent downgrade worth catching.
 
-**Do not assume it has hung.** Give it three minutes before you decide
-anything is wrong. The expectation is genuinely bad: the parameters are
-`t=3, m=64 MiB`, fixed, chosen on a build machine, and on the phone they run in
-an interpreter, because JavaScriptCore inside a third-party app gets no JIT.
-Measured against that same code with the compiler switched off, one derivation
-costs 57 seconds on a *server* CPU. See `docs/native-primitives.md`. A phone
-being slower, an unlock of a minute or more would not be a surprise.
+**The screen tells you which one ran, so you do not have to infer it from a
+stopwatch.** The launch self-test reports the KDF path from
+`nativeArgon2idInstalled()`. It should say **native**. If it says **engine**,
+the fallback is what you timed, and that is worth reporting whatever the number
+was.
 
-**What the number decides:**
+Do it three times and take the middle number. The first unlock after an install
+is not representative. Time the setup step too if you are creating a fresh
+vault: sealing runs the same derivation once.
 
-- **Tens of seconds**: expected, and it means the key derivation has to move
-  from JavaScript into native code. That work is already specified step by
-  step in `docs/native-primitives.md`, and this measurement is the gate it
-  waits on.
-- **A few seconds**: JavaScriptCore's interpreter is far better than V8's, the
-  port drops down the list, and we tune parameters instead.
-- **Under a second**: something is wrong. Nothing should be that fast, and the
-  first thing to check is whether the derivation ran at all.
-
-Whatever it says, the fix has to land **before anybody seals a vault with real
-keys in it**. Parameters live in the sealed blob's header, so changing them
-later does not touch a vault that already exists: that vault keeps its slow
-unlock forever, and the only way out of it is to erase and re-create from the
-recovery phrases.
-
-Do it three times and take the middle number. The first unlock after an
-install is not representative. Time the setup step too, if you are creating a
-fresh vault: sealing runs the same derivation once.
+**The parameters are still permanent.** `t=3, m=64 MiB` live in the sealed
+blob's header, so a vault created today keeps them forever. Changing them later
+does not touch a vault that already exists; the only way out is to erase and
+re-create from the recovery phrases. That was the reason this measurement was
+once a gate, and it is the reason the number is still worth writing down.
 
 ## 5. DEVICE ONLY: the no-passcode refusal
 
