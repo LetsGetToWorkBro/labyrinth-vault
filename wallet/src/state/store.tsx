@@ -432,12 +432,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ? {
             address: hotWatch.xmr.address,
             view: hotWatch.xmr.view,
-            /* Zero for a restored wallet, which is what `withRestored` stores
-             * and what `keyvault.ts` argues for: nobody typing a phrase knows
-             * their birth height, and guessing a recent one silently misses
-             * every coin received before it. A wallet made on this phone
-             * carries the moment it was made, so its scan starts there. */
-            birth: hot?.birth ?? 0,
+            /* Already a block height. `watchOnlyFrom` converts, because the
+             * record stores a creation time in milliseconds and this field is
+             * in blocks, and the two are six orders of magnitude apart. */
+            birth: hotWatch.xmr.birth,
           }
         : DEMO
           ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }

@@ -47,6 +47,7 @@
  */
 
 import {
+  restoreHeight,
   revealSecretHex,
   seedFromMnemonic,
   walletFromSeed,
@@ -263,12 +264,27 @@ export function openMonero(record: HotRecord) {
  * capability arriving by a shorter route.
  *
  * Both wallets are opened, read, and closed here. The caller gets strings.
+ *
+ * ## The unit that has to be converted here and not at the call site
+ *
+ * `HotRecord.birth` is **milliseconds**, because that is what a creation time
+ * is. A Monero scan start is a **block height**. Those are different numbers by
+ * six orders of magnitude, and passing one where the other is expected does not
+ * throw: it produces a scan that starts at block 1,760,000,000,000, finds
+ * nothing, and reports a balance of zero for a wallet with money in it. That is
+ * the exact failure `withRestored` refuses to risk by starting a restored
+ * wallet at zero, arriving by a different door.
+ *
+ * So the conversion happens here, once, and what comes out is a height. A
+ * record with no creation time, which is every restored one, converts to zero,
+ * which means scan from the beginning: slow and correct, rather than fast and
+ * silently short.
  */
 export interface WatchOnly {
   /** The BIP84 account key, or null when this record holds no Bitcoin. */
   zpub: string | null;
-  /** Address and private view key, or null when it holds no Monero. */
-  xmr: { address: string; view: string } | null;
+  /** Address, private view key, and a scan start **in blocks**. */
+  xmr: { address: string; view: string; birth: number } | null;
 }
 
 export function watchOnlyFrom(record: HotRecord): WatchOnly {
@@ -279,10 +295,19 @@ export function watchOnlyFrom(record: HotRecord): WatchOnly {
     closeBitcoin(btc);
   }
 
-  let xmr: { address: string; view: string } | null = null;
+  let xmr: { address: string; view: string; birth: number } | null = null;
   const monero = openMonero(record);
   if (monero !== null) {
-    xmr = { address: monero.address, view: revealSecretHex(monero.viewSecret) };
+    xmr = {
+      address: monero.address,
+      view: revealSecretHex(monero.viewSecret),
+      /* Milliseconds in, blocks out. `restoreHeight` also backs off by a week,
+       * which matters for a wallet made moments ago: an estimate that lands a
+       * few blocks late misses the first payment into it. Zero milliseconds is
+       * before genesis and converts to zero, so a restored record keeps
+       * scanning from the beginning. */
+      birth: restoreHeight(record.birth),
+    };
     wipeWallet(monero);
   }
 

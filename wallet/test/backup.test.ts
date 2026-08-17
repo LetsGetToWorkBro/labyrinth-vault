@@ -459,6 +459,47 @@ describe('the watch-only half a hot record can produce', () => {
     expect(JSON.stringify(watch)).not.toContain(record.xmrSeed!);
   });
 
+  it('hands back a scan start in blocks, not the milliseconds the record stores', () => {
+    /* The bug this test exists for, and it was live for exactly one commit.
+     * `HotRecord.birth` is a creation time in milliseconds; the Monero scan
+     * start is a block height. Passing one where the other belongs does not
+     * throw. It produces a scan beginning at block 1,760,000,000,000, which
+     * finds nothing and reports zero for a wallet with money in it, forever.
+     *
+     * Monero's tip is a few million. Anything above a hundred million is a
+     * timestamp wearing a height's clothes, which is the same bound
+     * `pairing.ts` puts on a height arriving over the camera. */
+    const madeNow = makeHotRecord(XMR_ENTROPY, BTC_ENTROPY, 'mainnet', WHEN);
+    if (!madeNow.ok) throw new Error(madeNow.problem);
+    const watch = watchOnlyFrom(madeNow.record);
+
+    expect(madeNow.record.birth).toBe(WHEN);
+    expect(watch.xmr!.birth).toBeLessThan(100_000_000);
+    expect(watch.xmr!.birth).toBeGreaterThan(1_000_000);
+    expect(watch.xmr!.birth).not.toBe(WHEN);
+  });
+
+  it('starts a restored wallet at the beginning, because it has a past', () => {
+    /* `withRestored` stores zero for a wallet whose creation time nobody
+     * knows, and that has to survive the conversion. Scanning from block zero
+     * is slow and correct; starting anywhere later silently misses every coin
+     * received before it. */
+    const record = fresh();
+    expect(watchOnlyFrom({ ...record, birth: 0 }).xmr!.birth).toBe(0);
+  });
+
+  it('backs the start off from the moment of creation, so the first payment is seen', () => {
+    /* An estimate that lands even slightly late misses a payment made into a
+     * brand new wallet, which is the most likely thing to happen to one. */
+    const later = makeHotRecord(XMR_ENTROPY, BTC_ENTROPY, 'mainnet', WHEN + 86_400_000);
+    if (!later.ok) throw new Error(later.problem);
+    const madeNow = makeHotRecord(XMR_ENTROPY, BTC_ENTROPY, 'mainnet', WHEN);
+    if (!madeNow.ok) throw new Error(madeNow.problem);
+    expect(watchOnlyFrom(later.record).xmr!.birth).toBeGreaterThan(
+      watchOnlyFrom(madeNow.record).xmr!.birth,
+    );
+  });
+
   it('says null for a chain the record does not hold', () => {
     const record = fresh();
     expect(watchOnlyFrom({ ...record, btcMnemonic: null }).zpub).toBeNull();
