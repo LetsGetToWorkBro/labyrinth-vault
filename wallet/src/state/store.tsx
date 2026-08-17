@@ -50,6 +50,8 @@ import { keychainStore, spendingKeyStore } from './keychainStore';
 import { clearPairing, loadPairing, savePairing } from './persistKeys';
 import { forgetHot, loadHot, saveHot, type HotRecord } from '../core/keyvault';
 import { accountsFrom, type Account } from '../core/accounts';
+import { signHere as signWithHotKeys } from '../core/hotsign';
+import { nativeGate } from './biometrics';
 import { transmit, Transmission } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
 
@@ -220,6 +222,20 @@ export interface Store {
    * believe they destroyed something they did not.
    */
   forgetHotKeys(): Promise<void>;
+
+  /**
+   * Sign the current draft with this phone's own keys.
+   *
+   * The whole of the hot path between review and a signature, where the vault
+   * path has a walk across a room. It asks Face ID, signs, and then puts what
+   * it produced through the *same* `offerSignature` a camera would: there is
+   * one gate into a broadcastable state and this does not add a second.
+   *
+   * Refuses for a vault account, twice over. `core/session.ts` has no
+   * transition for it and `core/hotsign.ts` checks `canSignHere` before it
+   * reads anything, so the airgap survives both a new button and a new caller.
+   */
+  signOnThisDevice(): Promise<void>;
 
   /** Pair with the stand-in vault. DEMO only; the real path is the camera. */
   pairVault(label: string): void;
@@ -597,6 +613,51 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [session.draft, watcher],
   );
 
+  /**
+   * Sign here, for an account whose keys are on this phone.
+   *
+   * Reads the source off the accounts list rather than from "is there a hot
+   * record", because those are different questions and only one of them is the
+   * airgap rule. A phone holding a seed while watching a vault answers yes to
+   * the second and must still answer no for the vault's account.
+   */
+  const signOnThisDevice = useCallback(async (): Promise<void> => {
+    const draft = session.draft;
+    if (!draft || hot === null) return;
+
+    const spending = accounts.find((account) => account.signsHere);
+    if (!spending) return;
+
+    dispatch({ type: 'sign-here', signsHere: true, at: Date.now() });
+
+    const signed = await signWithHotKeys({
+      source: spending.source,
+      record: hot,
+      draft,
+      gate: nativeGate(spending.source, `Sign this ${draft.asset} payment`),
+      /* The platform CSPRNG, the same source the decoy selection above draws
+       * from. Passed in rather than reached for inside the signer, so the
+       * signer can be run against a fixed input in a test. */
+      scalars: (count) =>
+        Array.from({ length: count }, () => {
+          const bytes = new Uint8Array(32);
+          crypto.getRandomValues(bytes);
+          return bytes;
+        }),
+    });
+
+    if (!signed.ok) {
+      refused();
+      dispatch({ type: 'failed', problem: signed.problem, at: Date.now() });
+      return;
+    }
+
+    /* Through the same door a camera's bytes go through. `offerSignature`
+     * runs `verifySigned`, and a signature this device made gets no more
+     * credit than one that arrived from across a room. */
+    offerSignature(signed.raw);
+  }, [session.draft, hot, accounts, offerSignature]);
+
   const broadcast = useCallback(() => {
     const verified = session.verified;
     if (!verified || !verified.ok) return;
@@ -878,6 +939,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     moneroFileWaiting,
     saveMoneroFile,
     accounts,
+    signOnThisDevice,
     hot,
     keepHot: async (record: HotRecord) => {
       /* Written before the state moves, so a keychain that refuses leaves the

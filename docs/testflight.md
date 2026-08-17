@@ -538,6 +538,24 @@ in.
   holding a seed for one wallet must never present the vault's account as
   something it can sign for, and these two lines are where a person sees that.
 
+- **Signing on the phone.** Only possible once a wallet made here holds coins,
+  so this comes after the restore test and after funding it. Compose a payment
+  from the account that signs here and read the review screen: it must say the
+  keys are on this phone and the button must say SIGN ON THIS PHONE, not SEND
+  TO VAULT. Expect a Face ID prompt, then the ordinary READY screen with the
+  transaction checked and not yet broadcast.
+
+  **The test that matters is the negative one.** With a vault paired as well,
+  compose a payment from the *vault's* account on the same phone. The review
+  screen must say the transaction is not signed and offer SEND TO VAULT. A
+  phone holding a seed for one wallet must never offer to sign for the other,
+  and if SIGN ON THIS PHONE ever appears there, stop and report it: that is the
+  airgap failing, and it is the most serious defect this app could have.
+
+  **Watch for:** a second Face ID prompt for one payment, or none at all. Also
+  cancel the prompt deliberately and expect a sentence saying nothing was
+  signed and the payment is still there, rather than a dead screen.
+
 - **Recovery words.** SECURITY, then MAKE A WALLET. This is the companion
   holding a spending seed of its own, so read the screen before touching
   anything: it should say the words are the only copy not on the phone, and it

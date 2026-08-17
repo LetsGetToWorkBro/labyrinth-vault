@@ -71,6 +71,11 @@ const COMPANION: Record<string, string | null> = {
    * one file is two steps in the plan and the map names the one the guard can
    * find by file name. */
   Accounts: '**Accounts.**',
+  /* The send flow is three files now: the spine, the vault handoff, and the
+   * one face where this phone signs. Two steps in the plan, because the two
+   * paths are two things to go and try. */
+  SendHandoff: 'Scan them back',
+  SendSigning: '**Signing on the phone.**',
   Backup: '**Recovery words.**',
   Restore: '**Restore from words.**',
   // The list the app opens on. Same reasoning as the vault's Home.

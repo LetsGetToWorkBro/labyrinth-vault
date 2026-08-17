@@ -48,6 +48,18 @@ export type Step =
   | 'review'
   /** Frames on the glass. The vault's camera is doing the work. */
   | 'transmit'
+  /**
+   * This device is signing, with its own key, behind a Face ID prompt.
+   *
+   * The whole of the hot path between `review` and a signature, standing where
+   * `transmit`, `awaiting` and `receive` stand on the vault path. It is one
+   * step rather than three because there is no room to walk to and nothing to
+   * point a camera at: the entire journey is a prompt and a key schedule.
+   *
+   * It cannot be reached for a vault account. `canSignHere` decides that, and
+   * `sign-here` is refused for any account it says no to.
+   */
+  | 'signing'
   /** Handed over. The vault is rendering it to a person. Nothing to do. */
   | 'awaiting'
   /** Our camera is open, reading the signature back. */
@@ -106,6 +118,16 @@ export type SessionEvent =
   | { type: 'fee'; value: Compose['feeKey'] }
   | { type: 'prepared'; draft: Draft; at: number }
   | { type: 'transmit'; transmission: Transmission; at: number }
+  /**
+   * Sign on this device instead of walking to a vault.
+   *
+   * Carries `signsHere`, read from the account rather than from the app's
+   * state, because the reducer has to be able to refuse this without knowing
+   * anything about accounts. Passing `false` is not an error to handle: it is
+   * the transition simply not existing, which is the same shape as every other
+   * refusal in this file.
+   */
+  | { type: 'sign-here'; signsHere: boolean; at: number }
   /** The person says the vault has it. There is no way to know from here. */
   | { type: 'handed-over'; at: number }
   | { type: 'read-back'; at: number }
@@ -150,6 +172,15 @@ export function reduce(state: SessionState, event: SessionEvent): SessionState {
       if (state.step !== 'review') return state;
       return { ...state, step: 'transmit', transmission: event.transmission, since: event.at };
 
+    case 'sign-here':
+      if (state.step !== 'review') return state;
+      /* The airgap, held in the transition table. A vault account has no route
+       * to this step at all, so there is no state a "sign it here anyway"
+       * button could lead to, which is the same reason `mismatch` is terminal
+       * rather than merely discouraged. */
+      if (!event.signsHere) return state;
+      return { ...state, step: 'signing', since: event.at };
+
     case 'handed-over':
       if (state.step !== 'transmit') return state;
       return { ...state, step: 'awaiting', since: event.at };
@@ -166,7 +197,13 @@ export function reduce(state: SessionState, event: SessionEvent): SessionState {
       return { ...state, capture: { have: event.have, total: event.total } };
 
     case 'returned': {
-      if (state.step !== 'receive') return state;
+      /* Both paths land here, and that is the point rather than a convenience.
+       * A signature made on this device goes through the same `verifySigned`
+       * gate as one that came back over a camera, so there is still exactly
+       * one route into `ready` and it still runs through a comparison against
+       * the draft recorded before anything was signed. A second route would be
+       * a second place for the check to be skipped. */
+      if (state.step !== 'receive' && state.step !== 'signing') return state;
       if (event.verified.ok) {
         return { ...state, step: 'ready', verified: event.verified, txid: null, since: event.at };
       }
@@ -202,6 +239,8 @@ export function reduce(state: SessionState, event: SessionEvent): SessionState {
           return { ...state, step: 'transmit' };
         case 'receive':
           return { ...state, step: 'awaiting', capture: null };
+        case 'signing':
+          return { ...state, step: 'review' };
         case 'failed':
           /* Back from a failed broadcast returns to the signed transaction,
            * not to the beginning: it is still signed, and making somebody
@@ -236,6 +275,11 @@ export function journeyReached(state: SessionState): number {
       return 1;
     case 'transmit':
       return 2;
+    /* Two, three and four at once: on this path there is no handing over and
+     * no reading back, so the glyph jumps rather than pretending to a journey
+     * that is not happening. */
+    case 'signing':
+      return 3;
     case 'awaiting':
       return 3;
     case 'receive':
