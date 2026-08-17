@@ -62,6 +62,39 @@ export type Accepted =
   | { ok: false; problem: string };
 
 /**
+ * Whether an accepted chain would replace one already paired, and with what.
+ *
+ * The defect this closes: `acceptPairing` merged whatever it accepted over the
+ * stored pairing with no branch on whether that chain was already there. One
+ * hostile ACCOUNT QR, scanned at any moment a camera was open, replaced the
+ * account key every receive address and every swap payout derives from. The
+ * label and the pairing age were carried over deliberately, so the vault
+ * screen went on showing the original device and the original date: nothing on
+ * any screen changed.
+ *
+ * Substitution has to be a decision somebody makes, so this reports it and the
+ * caller refuses. Re-scanning the *same* key is not a substitution and stays
+ * silent, because a person scanning their own vault twice has done nothing
+ * wrong and a prompt there teaches them to dismiss prompts.
+ */
+export function wouldReplace(
+  current: Pairing | null,
+  accepted: Accepted,
+): { replaces: true; chain: 'btc' | 'xmr'; was: string; now: string } | { replaces: false } {
+  if (!accepted.ok || current === null) return { replaces: false };
+
+  if (accepted.chain === 'btc' && current.btc) {
+    if (current.btc.zpub === accepted.btc.zpub) return { replaces: false };
+    return { replaces: true, chain: 'btc', was: current.btc.first, now: accepted.btc.first };
+  }
+  if (accepted.chain === 'xmr' && current.xmr) {
+    if (current.xmr.address === accepted.xmr.address) return { replaces: false };
+    return { replaces: true, chain: 'xmr', was: current.xmr.address, now: accepted.xmr.address };
+  }
+  return { replaces: false };
+}
+
+/**
  * Read an ACCOUNT payload and prove it before anything is kept.
  *
  * A refusal here is a sentence on the scan screen, at the moment somebody is

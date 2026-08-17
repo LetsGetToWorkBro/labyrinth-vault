@@ -30,12 +30,12 @@ import type { PendingSwap } from '../core/swaptrack';
 import type { ChainSnapshot, FeeOption } from '../core/chain';
 import { DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
-import { parseAmount } from '../core/units';
+import { elide, parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
 import type { OwnAddresses, SwapTransport } from '../core/swap';
 import type { NodeConfig, NodeKind } from '../core/nodes';
 import { openAccount, type ScanState } from '../core/moneroscan';
-import { acceptAccount, type Pairing } from '../core/pairing';
+import { acceptAccount, wouldReplace, type Pairing } from '../core/pairing';
 import { NodeWatcher, type MoneroStatus, type MoneroWatch, type RefreshResult, type WatcherNodes } from '../core/watcher';
 import { Watchers, emptySnapshot, problemsFrom, selected, type AccountKeys } from '../core/watchers';
 import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../core/demo';
@@ -857,6 +857,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!accepted.ok) return { ok: false, note: accepted.problem };
 
       const current = pairingRef.current;
+
+      /* A second, different key for a chain that is already paired is a
+       * substitution, and it is refused rather than merged. Scanned during any
+       * open camera, including the signature read-back mid-handoff, the old
+       * behavior swapped the account every receive address derives from while
+       * the vault screen went on showing the original device and date. */
+      const replacing = wouldReplace(current, accepted);
+      if (replacing.replaces) {
+        return {
+          ok: false,
+          note:
+            `This is a different ${replacing.chain === 'btc' ? 'Bitcoin' : 'Monero'} account from the one ` +
+            `already paired. This wallet is watching ${elide(replacing.was, 10, 6)} and that code carries ` +
+            `${elide(replacing.now, 10, 6)}. Forget the current vault first if you mean to replace it.`,
+        };
+      }
+
       const merged: Pairing = {
         btc: accepted.chain === 'btc' ? accepted.btc : current?.btc ?? null,
         xmr: accepted.chain === 'xmr' ? accepted.xmr : current?.xmr ?? null,

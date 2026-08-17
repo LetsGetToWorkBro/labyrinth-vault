@@ -562,3 +562,45 @@ describe('the watch-only half a hot record can produce', () => {
     ).not.toMatch(/pairing\?\.btc\?\.zpub \?\? hotWatch\?\.zpub/);
   });
 });
+
+describe('the words are behind the same check a payment is', () => {
+  /* This screen showed 25 Monero words and 12 Bitcoin words on a bare press,
+   * on a phone with no launch lock, while `signgate.ts` argued for a prompt
+   * before every signature. The threat it names is a phone taken while
+   * unlocked, and reading the seed off that phone is not one signature: it is
+   * every future signature, on any device, forever. */
+
+  const backup = codeOnly(readFileSync('src/screens/Backup.tsx', 'utf8'));
+
+  it('asks the gate before the record ever reaches the words', () => {
+    expect(backup).toMatch(/nativeGate\('hot'/);
+    const gateAt = backup.indexOf('nativeGate(');
+    const sheetAt = backup.indexOf('<BackupSheet');
+    expect(gateAt).toBeGreaterThan(0);
+    expect(sheetAt).toBeGreaterThan(gateAt);
+  });
+
+  it('shows nothing until the gate has said yes', () => {
+    /* An `unlocked` that starts true, or a screen that renders the sheet and
+     * then hides it, would put the words in the view tree regardless. */
+    expect(backup).toMatch(/const \[unlocked, setUnlocked\] = useState\(false\)/);
+    expect(backup).toMatch(/if \(!unlocked\)/);
+    /* And the sheet is only reachable past that branch, so the words are never
+     * put in the view tree and then hidden. */
+    const gateReturn = backup.indexOf('if (!unlocked)');
+    expect(backup.indexOf('<BackupSheet')).toBeGreaterThan(gateReturn);
+  });
+
+  it('says why it was refused rather than going blank', () => {
+    expect(backup).toMatch(/NOT SHOWN/);
+  });
+
+  it('leaves creation ungated, because nothing is stored yet', () => {
+    /* `CreateWalletScreen` reveals words for a record that exists only in
+     * memory and has not been saved. A gate there would ask somebody to
+     * authorize reading a secret they are in the middle of being given. */
+    const create = /export function CreateWalletScreen[\s\S]*?\n}/.exec(backup)?.[0] ?? '';
+    expect(create, 'CreateWalletScreen not found').toBeTruthy();
+    expect(create).not.toMatch(/nativeGate/);
+  });
+});

@@ -42,6 +42,7 @@ import { Header } from '../components/chrome';
 import { color, radius, space } from '../design/tokens';
 import { tap } from '../design/haptics';
 import { useStore } from '../state/store';
+import { nativeGate } from '../state/biometrics';
 import {
   beginCreation,
   creationHint,
@@ -219,6 +220,33 @@ function CreateSheet({
 export function BackupScreen({ navigation }: Nav<'Backup'>) {
   const { hot } = useStore();
 
+  /*
+   * The words are behind the same gate a signature is, and that is the point
+   * rather than symmetry.
+   *
+   * This screen showed 25 Monero words and 12 Bitcoin words on a bare press,
+   * on a phone with no launch lock, while `signgate.ts` argued at length for a
+   * prompt before every signature. The threat it names is a phone taken while
+   * unlocked. Reading the seed off that phone is not one signature, it is every
+   * future signature, on any device, forever. The prompt was guarding the
+   * smaller thing.
+   */
+  const [unlocked, setUnlocked] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const ask = async () => {
+    setAsking(true);
+    setRefusal(null);
+    try {
+      const allowed = await nativeGate('hot', 'Show your recovery words')();
+      if (allowed.ok) setUnlocked(true);
+      else setRefusal(allowed.problem);
+    } finally {
+      setAsking(false);
+    }
+  };
+
   if (hot === null) {
     return (
       <Refusal
@@ -229,6 +257,32 @@ export function BackupScreen({ navigation }: Nav<'Backup'>) {
           'nothing here to write down. The vault holding those keys has its own recovery screen.'
         }
       />
+    );
+  }
+
+  if (!unlocked) {
+    return (
+      <Screen>
+        <StatusBar style="light" />
+        <Header onBack={() => navigation.goBack()} overline="RECOVERY" title="The words on paper" />
+        <View style={{ paddingHorizontal: space.gutter }}>
+          <Body>
+            These are the words that restore this wallet anywhere. Anyone who reads them can spend
+            everything this phone holds, from any device, forever. That is why they are behind the
+            same check a payment is.
+          </Body>
+          {refusal !== null ? (
+            <>
+              <Gap size={space.gap} />
+              <Notice tone="alarm" title="NOT SHOWN">
+                {refusal}
+              </Notice>
+            </>
+          ) : null}
+          <Gap size={space.section} />
+          <Action label="SHOW THE WORDS" disabled={asking} onPress={() => void ask()} />
+        </View>
+      </Screen>
     );
   }
 

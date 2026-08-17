@@ -9,10 +9,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { bitcoinAccount, encodeAccount, moneroAccount } from '@vault/keys/account';
 import { openWatch } from '@vault/keys/bitcoin';
 import { revealSecretHex, walletFromSeed } from '@vault/keys/monero';
-import { acceptAccount, type Pairing } from '../src/core/pairing';
+import { acceptAccount, type Pairing , wouldReplace } from '../src/core/pairing';
 import { clearPairing, loadPairing, savePairing, KEYS_SCHEMA } from '../src/state/persistKeys';
 import { memoryStore } from '../src/state/persist';
 import { DEMO_ZPUB } from '../src/core/demo';
@@ -165,5 +166,56 @@ describe('the boundary between logic and keychain', () => {
     /* This-device-only: a watch-only key that quietly rides a backup onto
      * the next phone is a copy nobody decided to make. */
     expect(readFileSync('src/state/keychainStore.ts', 'utf8')).toMatch(/WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
+  });
+});
+
+describe('a second, different account key does not replace the paired one', () => {
+  /* One hostile ACCOUNT QR, scanned at any moment a camera was open, used to
+   * replace the account key that every receive address and every swap payout
+   * derives from. The label and the pairing age were carried over, so the
+   * vault screen went on showing the original device and the original date:
+   * nothing on any screen changed. */
+
+  const paired = (over: Partial<Pairing> = {}): Pairing => ({
+    btc: { zpub: 'zpub-one', first: 'bc1q-one' },
+    xmr: { address: '4-one', view: 'aa'.repeat(32), birth: 3_000_000 },
+    label: 'VAULT',
+    pairedAt: 1,
+    ...over,
+  });
+
+  it('reports a Bitcoin substitution, with both first addresses', () => {
+    const accepted = { ok: true, chain: 'btc', btc: { zpub: 'zpub-two', first: 'bc1q-two' } } as const;
+    const verdict = wouldReplace(paired(), accepted);
+    expect(verdict.replaces).toBe(true);
+    if (!verdict.replaces) throw new Error('unreachable');
+    expect(verdict.was).toBe('bc1q-one');
+    expect(verdict.now).toBe('bc1q-two');
+  });
+
+  it('reports a Monero substitution', () => {
+    const accepted = { ok: true, chain: 'xmr', xmr: { address: '4-two', view: 'bb'.repeat(32), birth: 1 } } as const;
+    expect(wouldReplace(paired(), accepted).replaces).toBe(true);
+  });
+
+  it('stays silent for the same key scanned twice', () => {
+    /* A person scanning their own vault again has done nothing wrong, and a
+     * prompt there teaches them to dismiss prompts. */
+    const same = { ok: true, chain: 'btc', btc: { zpub: 'zpub-one', first: 'bc1q-one' } } as const;
+    expect(wouldReplace(paired(), same).replaces).toBe(false);
+  });
+
+  it('stays silent for a chain that is not paired yet', () => {
+    /* Completing a pairing one chain at a time is the ordinary path. */
+    const accepted = { ok: true, chain: 'xmr', xmr: { address: '4-new', view: 'cc'.repeat(32), birth: 1 } } as const;
+    expect(wouldReplace(paired({ xmr: null }), accepted).replaces).toBe(false);
+    expect(wouldReplace(null, accepted).replaces).toBe(false);
+  });
+
+  it('is what the store actually refuses on', () => {
+    const store = readFileSync('src/state/store.tsx', 'utf8');
+    expect(store).toMatch(/wouldReplace\(current, accepted\)/);
+    expect(store).toMatch(/if \(replacing\.replaces\)/);
+    expect(store).toMatch(/Forget the current vault first/);
   });
 });
