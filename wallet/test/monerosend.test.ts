@@ -32,7 +32,10 @@ import {
   derivePublicKey,
   generateKeyDerivation,
 } from '@vault/keys/monerocrypto';
-import { fromHex, publicFromSecret, toHex, walletFromSeed, type Wallet } from '@vault/keys/monero';
+import { fromHex, publicFromSecret, revealSecretHex, toHex, walletFromSeed, wipeWallet, type Wallet } from '@vault/keys/monero';
+import { signHere } from '../src/core/hotsign';
+import { KEYVAULT_SCHEMA, openMonero, type HotRecord, type Source } from '../src/core/keyvault';
+import type { Draft } from '../src/core/model';
 import type { Reply, Request, Transport } from '../src/net/http';
 
 function det(seed: number): Uint8Array {
@@ -234,5 +237,146 @@ describe('the cold-signing loop end to end', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.stage).toBe('plan');
+  });
+});
+
+/*
+ * The same loop, with the signer that lives on this phone.
+ *
+ * Everything above hands the unsigned set to `signMoneroSpend` directly, which
+ * is the vault standing in for itself. This drives the identical loop through
+ * `core/hotsign.ts` instead: a real `HotRecord`, the Face ID gate as a
+ * parameter, and the record's own keys opened and wiped inside the signer.
+ *
+ * It exists because that join was the one thing in the hot-signing work with
+ * no end-to-end cover. The Bitcoin half had it, `hotsign.test.ts` proves the
+ * refusals for both, and the Monero signing loop was proved above with a
+ * different signer. What nothing proved until now is that the two fit: that a
+ * set this wallet plans is one the *hot* path can sign, and that the bytes it
+ * returns reach a node.
+ */
+
+describe('the hot-signing loop end to end', () => {
+  /** The sender's own keys, as they would sit in this phone's keychain. */
+  function senderRecord(): HotRecord {
+    return {
+      v: KEYVAULT_SCHEMA,
+      /* The reduced spend key, which is what `makeHotRecord` stores and what
+       * the twenty-five words encode. Reduction is idempotent, so re-deriving
+       * from it has to land on the same wallet, and the test below checks
+       * exactly that before trusting any signature it makes. */
+      xmrSeed: revealSecretHex(sender.spendSecret),
+      btcMnemonic: null,
+      network: 'stagenet',
+      birth: 0,
+    };
+  }
+
+  /** A draft carrying the unsigned set, which is all `signHere` reads. */
+  function draftFor(unsigned: Uint8Array): Draft {
+    return {
+      asset: 'XMR',
+      recipient: receiver.address,
+      amount: 1_000_000_000_000n,
+      fee: 0n,
+      feeRate: 10,
+      unsigned,
+      digest: '0'.repeat(64),
+      createdAt: 0,
+      inputs: [],
+      inputTotal: 2_000_000_000_000n,
+      changeAddresses: [sender.address],
+    };
+  }
+
+  function hotSigner(source: Source, seed = 0xa000) {
+    return async (unsignedBytes: Uint8Array): Promise<Uint8Array> => {
+      const signed = await signHere({
+        source,
+        record: senderRecord(),
+        draft: draftFor(unsignedBytes),
+        gate: async () => ({ ok: true }),
+        scalars: (count) => Array.from({ length: count }, (_, i) => det(seed + i)),
+      });
+      if (!signed.ok) throw new Error(signed.problem);
+      return signed.raw;
+    };
+  }
+
+  it('re-derives the same wallet from the stored seed, or nothing below means anything', () => {
+    /* The degenerate-fixture check for this file. If the record opened a
+     * different wallet, every assertion after it would be about a signature
+     * for somebody else's coins, and it would still pass. */
+    const opened = openMonero(senderRecord());
+    expect(opened).not.toBeNull();
+    expect(opened!.address).toBe(sender.address);
+    wipeWallet(opened!);
+  });
+
+  it('plans, signs with this phone, and broadcasts on stagenet', { timeout: 30_000 }, async () => {
+    const input = fundSender(2_000_000_000_000n, 1_500_010, 0xf10d);
+    const node = fakeNode(input);
+    const result = await executeMoneroSend({
+      transport: node.transport,
+      ownAddress: sender.address,
+      network: 'stagenet',
+      owned: [input],
+      destinations: [{ address: receiver.address, amount: 1_000_000_000_000n }],
+      feePerByte: 10n,
+      uniform: rng(0x4321),
+      sign: hotSigner('hot'),
+    });
+    expect(result.ok, result.ok ? '' : `${result.stage}: ${result.problem}`).toBe(true);
+    if (!result.ok) return;
+    expect(result.txid).toMatch(/^[0-9a-f]{64}$/);
+    expect(node.broadcasts).toHaveLength(1);
+    expect(result.tx.txid).toBe(result.txid);
+  });
+
+  it('refuses inside the real loop when the account is a vault one', { timeout: 30_000 }, async () => {
+    /* The airgap, checked where it actually has to hold rather than only in a
+     * unit test of the signer. The plan is built, the set reaches the signer,
+     * and the signature does not happen: nothing is broadcast. */
+    const input = fundSender(2_000_000_000_000n, 1_500_011, 0xf10e);
+    const node = fakeNode(input);
+    const result = await executeMoneroSend({
+      transport: node.transport,
+      ownAddress: sender.address,
+      network: 'stagenet',
+      owned: [input],
+      destinations: [{ address: receiver.address, amount: 1_000_000_000_000n }],
+      feePerByte: 10n,
+      uniform: rng(0x4321),
+      sign: hotSigner('vault'),
+    });
+    expect(result.ok).toBe(false);
+    expect(node.broadcasts, 'a vault account produced a broadcast').toHaveLength(0);
+  });
+
+  it('signs nothing when the Face ID prompt is refused', { timeout: 30_000 }, async () => {
+    const input = fundSender(2_000_000_000_000n, 1_500_012, 0xf10f);
+    const node = fakeNode(input);
+    const result = await executeMoneroSend({
+      transport: node.transport,
+      ownAddress: sender.address,
+      network: 'stagenet',
+      owned: [input],
+      destinations: [{ address: receiver.address, amount: 1_000_000_000_000n }],
+      feePerByte: 10n,
+      uniform: rng(0x4321),
+      sign: async (unsignedBytes) => {
+        const signed = await signHere({
+          source: 'hot',
+          record: senderRecord(),
+          draft: draftFor(unsignedBytes),
+          gate: async () => ({ ok: false, problem: 'Face ID was not recognized.' }),
+          scalars: (count) => Array.from({ length: count }, (_, i) => det(0xb000 + i)),
+        });
+        if (!signed.ok) throw new Error(signed.problem);
+        return signed.raw;
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(node.broadcasts).toHaveLength(0);
   });
 });

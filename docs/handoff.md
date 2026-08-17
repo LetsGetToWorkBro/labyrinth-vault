@@ -245,17 +245,23 @@ they still need hardware or a network this container does not have.
 Three more, added by the work above and stated plainly because the whole point
 of this section is that it is current:
 
-- **No hot signature has ever been broadcast.** The Bitcoin half is proved end
-  to end in `test/hotsign.test.ts`: a real draft, the vault's own `signPsbt`,
-  and the result through the real `verifySigned`. That is a strong claim about
-  the bytes and says nothing about whether a node accepts them.
-- **The Monero hot path is not proved end to end.** `hotsign.test.ts` covers
-  its refusals only. The signing loop underneath it is exercised against a fake
-  node in `monerosend.test.ts` through the same `signMoneroSpend`, so the gap
-  is the join rather than the cryptography, and closing it means driving
-  `executeMoneroSend` with `signHere` as its signer against the stagenet
-  harness that file already has. Worth doing before anybody spends real Monero
-  from a hot wallet.
+- **No hot signature has ever reached a real node.** Bitcoin is proved end to
+  end in `test/hotsign.test.ts`: a real draft, the vault's own `signPsbt`, and
+  the result through the real `verifySigned`. Monero is proved through the loop
+  described below. Both are strong claims about the bytes and neither says
+  anything about whether a daemon accepts them.
+- **The Monero hot path is proved to the same depth as the cold one, and no
+  further.** `monerosend.test.ts` now drives `executeMoneroSend` twice over the
+  same fake node: once handing the unsigned set straight to `signMoneroSpend`,
+  which is the vault standing in for itself, and once through `signHere` with a
+  real `HotRecord`, which is this phone. Both plan, sign and broadcast. The
+  same file checks that a `vault` source produces no broadcast at all inside
+  that loop, which is the airgap held where it has to hold rather than only in
+  a unit test of the signer.
+
+  What that still does not prove is a real node's acceptance, which is the same
+  gap the cold path has, closed by the same dry run:
+  `scripts/stagenet-send.ts` against a funded stagenet address.
 - **No phrase written by these screens has been typed into another wallet.**
   The words restore to the same address inside our own tests, which is our
   software agreeing with itself. `docs/testflight.md` has the step that would
