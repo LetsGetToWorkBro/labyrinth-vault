@@ -284,15 +284,37 @@ describe('the send flow, split and wired', () => {
     }
   });
 
-  it('offers the local route only for an account that signs here', () => {
-    /* Read from the accounts list, which reads it from `canSignHere`. Not from
-     * whether a hot record exists: those are different questions and only one
-     * of them is the airgap rule. */
+  it('offers the local route only for the account being paid from', () => {
+    /* The question has to be about *this* payment. An earlier version asked
+     * `accounts.some((a) => a.signsHere)`, which is whether any account signs
+     * here, and on a phone watching a vault and a hot wallet at once that
+     * answers yes for both: the vault's own payment would have been offered a
+     * SIGN ON THIS PHONE button. */
     const code = codeOnly(send);
-    expect(code).toMatch(/const signsHere = store\.accounts\.some\(\(account\) => account\.signsHere\)/);
-    expect(code).toMatch(/signsHere \?/);
+    expect(code).toMatch(
+      /const account = store\.accounts\.find\(\(entry\) => entry\.id === store\.selectedAccount\)/,
+    );
+    expect(code).toMatch(/const signsHere = account\?\.signsHere === true/);
+    expect(code, 'any-account is back, and it offers the wrong button').not.toMatch(
+      /accounts\.some\(\(account\) => account\.signsHere\)/,
+    );
     expect(code, 'the review screen must not decide this from the record').not.toMatch(
       /hot !== null|store\.hot/,
+    );
+  });
+
+  it('signs with the account being looked at, never merely one that can sign', () => {
+    /* The same hole one layer down. `signOnThisDevice` picked the first
+     * account that signs here, which on a two-account phone is the hot one
+     * whatever is on screen, and would have carried its source into a
+     * signature over the vault account's draft. */
+    const action = /const signOnThisDevice = useCallback\([\s\S]*?\n  \}, \[/.exec(store)?.[0] ?? '';
+    expect(action, 'signOnThisDevice not found').toBeTruthy();
+    const code = codeOnly(action);
+    expect(code).toMatch(/accounts\.find\(\(account\) => account\.id === selectedAccount\)/);
+    expect(code).toMatch(/if \(!spending \|\| !spending\.signsHere\) return;/);
+    expect(code, 'the first signable account is back').not.toMatch(
+      /accounts\.find\(\(account\) => account\.signsHere\)/,
     );
   });
 

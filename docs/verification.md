@@ -161,10 +161,25 @@ possible.
   answer normally. `wallet/scripts/stagenet-send.ts` is written for somebody on
   a normal network and now finds its own coins, so the remaining human step is
   a funded stagenet address and one command.
-- **No physical device.** The oracle proves bytes; it cannot prove a Coldcard
-  Q's camera resolves a QR on an iPhone's screen, or that a scan finishes in a
-  kitchen. `docs/testflight.md` is where that gets written once somebody has
-  done it.
+- **No physical device, with one exception now recorded.** The oracle proves
+  bytes; it cannot prove a Coldcard Q's camera resolves a QR on an iPhone's
+  screen, or that a scan finishes in a kitchen. `docs/testflight.md` is where
+  that gets written once somebody has done it.
+
+  **The exception is test 4, and it passed.** The owner ran an unlock on a
+  phone and reported it as near instant. That is the first measurement in this
+  project taken on real hardware rather than inferred from a server, and it
+  settles a question this repository had wrong in writing for several builds:
+  the vault's Argon2id runs as compiled C through `LabyrinthVaultKDF`, and it
+  is fast. The `57 seconds` figure that used to justify a great deal of
+  reasoning measured the derivation interpreted, before the native port, and it
+  should not be quoted again.
+
+  Worth being precise about what that does and does not settle. It settles that
+  the native module loads and runs on a real device, which is the thing a
+  self-test flag can claim and only hardware can confirm. It settles nothing
+  about the companion, whose Argon2id is still the engine's and which has no
+  native port.
 - **No real Cake or Feather has imported a file.** `wallet2` is the library
   all of them are built on and it is the code that decides, but it is not the
   application, and the transfers it held were put in memory by a harness.

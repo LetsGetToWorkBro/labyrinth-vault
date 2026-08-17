@@ -392,11 +392,15 @@ function Review({ onBack }: { onBack: () => void }) {
   const store = useStore();
   const draft = store.session.draft;
 
-  /* Read from the accounts list, which reads it from `canSignHere`. Not from
-   * `hot !== null`, which is a different question: a phone can hold a seed for
-   * one wallet while watching a vault for another, and only one of those two
-   * accounts may be signed for here. */
-  const signsHere = store.accounts.some((account) => account.signsHere);
+  /* The account being paid from, which is the one being looked at.
+   *
+   * `some((a) => a.signsHere)` was the earlier version and it asked the wrong
+   * question: whether *any* account signs here. On a phone watching a vault
+   * and a hot wallet at once that answers yes for both, so the vault's own
+   * payment would have been offered a SIGN ON THIS PHONE button. Reading the
+   * selected account is what makes the answer about this payment. */
+  const account = store.accounts.find((entry) => entry.id === store.selectedAccount) ?? null;
+  const signsHere = account?.signsHere === true;
 
   if (!draft) return null;
 
@@ -405,7 +409,11 @@ function Review({ onBack }: { onBack: () => void }) {
 
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
-      <Header onBack={onBack} overline="REVIEW" title="Before it goes to the vault" />
+      <Header
+        onBack={onBack}
+        overline={account ? `REVIEW · ${account.label.toUpperCase()}` : 'REVIEW'}
+        title={signsHere ? 'Before this phone signs it' : 'Before it goes to the vault'}
+      />
       <Gap size={space.gap} />
 
       <View style={{ paddingHorizontal: space.gutter }}>

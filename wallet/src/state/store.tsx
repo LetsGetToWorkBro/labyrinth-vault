@@ -716,8 +716,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const draft = session.draft;
     if (!draft || hot === null) return;
 
-    const spending = accounts.find((account) => account.signsHere);
-    if (!spending) return;
+    /*
+     * The account being looked at, and only that one.
+     *
+     * This used to be `accounts.find((a) => a.signsHere)`, which asks whether
+     * *any* account signs here. That was harmless while the wallet watched one
+     * account and became a hole the moment it watched two: with a vault
+     * selected and a hot wallet also present, it answered yes and would have
+     * carried the hot account's source into a signature over the vault
+     * account's draft. The keys would not have matched and no money would have
+     * moved, and the interface would still have offered to sign for an account
+     * whose whole promise is that this device cannot.
+     */
+    const spending = accounts.find((account) => account.id === selectedAccount);
+    if (!spending || !spending.signsHere) return;
 
     dispatch({ type: 'sign-here', signsHere: true, at: Date.now() });
 
@@ -747,7 +759,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
      * runs `verifySigned`, and a signature this device made gets no more
      * credit than one that arrived from across a room. */
     offerSignature(signed.raw);
-  }, [session.draft, hot, accounts, offerSignature]);
+  }, [session.draft, hot, accounts, selectedAccount, offerSignature]);
 
   const broadcast = useCallback(() => {
     const verified = session.verified;

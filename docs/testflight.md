@@ -548,6 +548,18 @@ in.
   cancel the prompt deliberately and expect a sentence saying nothing was
   signed and the payment is still there, rather than a dead screen.
 
+- **Which account an address belongs to.** With a vault paired *and* a wallet
+  on this phone, open RECEIVE from each in turn. The header must say RECEIVE
+  INTO followed by the account's name, and the same name must appear under the
+  address with SIGNS ON YOUR VAULT or SIGNS ON THIS PHONE beside it. **An
+  address with no account named on the screen is the defect**: money sent to it
+  lands in one account and nowhere else, and somebody funding the wrong one has
+  put it where they cannot spend from without the other device.
+
+  Switch accounts from ACCOUNTS and check the address changes. Two accounts
+  showing the same receiving address would mean the wallet is watching one of
+  them under both names.
+
 - **Recovery words.** SECURITY, then MAKE A WALLET. This is the companion
   holding a spending seed of its own, so read the screen before touching
   anything: it should say the words are the only copy not on the phone, and it

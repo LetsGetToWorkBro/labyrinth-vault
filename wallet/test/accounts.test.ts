@@ -241,6 +241,19 @@ describe('the accounts screen', () => {
     expect(code, 'the sentence must not be retyped in the screen').not.toMatch(/No accounts yet/);
   });
 
+  it('names the account on the screen that hands out an address', () => {
+    /* An address belongs to exactly one account, and money sent to it lands
+     * there and nowhere else. Somebody who means to fund the wallet on this
+     * phone and pastes the vault's address has put money somewhere they cannot
+     * spend from without the other device. Same argument as the coin picker
+     * naming its chain on every row: the thing that decides where money ends
+     * up goes on the glass, not behind a tap. */
+    const receive = codeOnly(readFileSync('src/screens/Receive.tsx', 'utf8'));
+    expect(receive).toMatch(/store\.accounts\.find\(\(entry\) => entry\.id === store\.selectedAccount\)/);
+    expect(receive).toMatch(/RECEIVE INTO/);
+    expect(receive).toMatch(/signingNote\(account\)/);
+  });
+
   it('leaves the home screen with no way to render a balance it does not have', () => {
     /* The finding, checked at the screen that used to carry it. */
     const code = codeOnly(home);

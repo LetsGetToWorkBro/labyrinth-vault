@@ -31,11 +31,17 @@ import { CopyIcon, OutIcon, CheckIcon } from '../components/icons';
 import { assetColor, color, space } from '../design/tokens';
 import { confirmed } from '../design/haptics';
 import { useStore } from '../state/store';
+import { signingNote } from '../core/accounts';
 import type { Asset } from '../core/model';
 import type { Nav } from '../nav/routes';
 
 export function ReceiveScreen({ navigation, route }: Nav<'Receive'>) {
   const store = useStore();
+  /* Which account this address belongs to. The wallet watches several and
+   * shows one at a time, so an address on this screen is one account's
+   * address and not the wallet's. See below for why that has to be on the
+   * glass rather than inferable. */
+  const account = store.accounts.find((entry) => entry.id === store.selectedAccount) ?? null;
   const [asset, setAsset] = useState<Asset>(route.params?.asset ?? 'BTC');
   const [copied, setCopied] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -61,7 +67,7 @@ export function ReceiveScreen({ navigation, route }: Nav<'Receive'>) {
       <ScrollView showsVerticalScrollIndicator={false}>
         <Header
           onBack={() => navigation.goBack()}
-          overline="RECEIVE"
+          overline={account ? `RECEIVE INTO ${account.label.toUpperCase()}` : 'RECEIVE'}
           title={asset === 'BTC' ? 'Bitcoin' : 'Monero'}
           right={
             <View style={{ flexDirection: 'row', gap: space.snug }}>
@@ -92,6 +98,33 @@ export function ReceiveScreen({ navigation, route }: Nav<'Receive'>) {
             <Chip tone={color.slate}>WATCH-ONLY</Chip>
           </View>
           <AddressBlock address={address.address} />
+
+          {/* Said twice, above the QR and under the address, and that is not
+              redundancy. This wallet holds more than one account now, and an
+              address belongs to exactly one of them: money sent to this one
+              lands in the account named here and nowhere else. Somebody who
+              means to fund the wallet on this phone and pastes the vault's
+              address has not lost anything, and has put it somewhere they
+              cannot spend from without the other device.
+
+              The same argument as the coin picker naming its chain on every
+              row: the thing that decides where money ends up goes in the row,
+              not behind a tap. */}
+          {account !== null ? (
+            <>
+              <Gap size={space.step} />
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.snug }}>
+                <Label tone={color.bone}>{account.label.toUpperCase()}</Label>
+                <Label tone={account.signsHere ? color.warn : color.good}>{signingNote(account)}</Label>
+                <View style={{ flex: 1 }} />
+                {store.accounts.length > 1 ? (
+                  <Press onPress={() => navigation.navigate('Accounts')}>
+                    <Label tone={color.slate}>ANOTHER ACCOUNT</Label>
+                  </Press>
+                ) : null}
+              </View>
+            </>
+          ) : null}
 
           <Gap size={space.gap} />
           <ActionRow>

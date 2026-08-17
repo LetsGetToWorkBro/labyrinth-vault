@@ -292,8 +292,13 @@ they still need hardware or a network this container does not have.
   `MONERO_SEND_BROADCAST_VERIFIED` is `false` and refuses a mainnet Monero
   spend. `scripts/stagenet-wallet.ts` now makes the wallet a faucet pays, so
   the remaining human step is a funded stagenet address and one command.
-- **No physical device has run any of this.** `docs/testflight.md` is the plan,
-  and it now covers the coin picker, the deposit screen and the status bar.
+- **No physical device has run any of this, except one unlock.** The owner
+  timed test 4 on a phone and it was near instant, which is the first hardware
+  measurement this project has and the confirmation that the vault's native
+  Argon2id loads and runs. `docs/verification.md` records it. Everything else
+  in `docs/testflight.md` is still unrun, and the plan now covers the coin
+  picker, the deposit screen, the status bar, the accounts list, the recovery
+  words and the restore.
 
   One correction to that plan, made after the owner reported an instant unlock:
   **the native Argon2id port already shipped.** `host.ts` installs it and
