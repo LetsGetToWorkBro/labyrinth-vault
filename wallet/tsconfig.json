@@ -8,17 +8,10 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
     "jsx": "react-jsx",
-    "types": [
-      "react",
-      "node"
-    ],
+    "types": ["react", "node"],
     "paths": {
-      "@vault/*": [
-        "../src/*"
-      ],
-      "@/*": [
-        "./src/*"
-      ]
+      "@vault/*": ["../src/*"],
+      "@/*": ["./src/*"]
     }
   },
   "include": [
