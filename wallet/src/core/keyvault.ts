@@ -248,6 +248,48 @@ export function openMonero(record: HotRecord) {
 }
 
 /**
+ * The watch-only half of a hot record, derived on demand.
+ *
+ * A wallet that can sign but has no addresses is not a wallet. Until this
+ * existed, a record made by the backup screens was listed, backed up,
+ * restorable and signable, and never *watched*: `store.tsx` read its account
+ * key and its Monero view key from the vault pairing alone, so a hot account
+ * had no balance, no receiving address, and no way to build a payment for the
+ * signer to sign. The keys were on the phone and the wallet could not see them.
+ *
+ * What comes back is exactly what a vault exports across the airgap: an account
+ * key and a view key. Neither can spend. Deriving them from a seed we already
+ * hold is not a widening of what this device knows, it is the same watching
+ * capability arriving by a shorter route.
+ *
+ * Both wallets are opened, read, and closed here. The caller gets strings.
+ */
+export interface WatchOnly {
+  /** The BIP84 account key, or null when this record holds no Bitcoin. */
+  zpub: string | null;
+  /** Address and private view key, or null when it holds no Monero. */
+  xmr: { address: string; view: string } | null;
+}
+
+export function watchOnlyFrom(record: HotRecord): WatchOnly {
+  let zpub: string | null = null;
+  const btc = openBitcoin(record);
+  if (btc !== null) {
+    zpub = btc.zpub;
+    closeBitcoin(btc);
+  }
+
+  let xmr: { address: string; view: string } | null = null;
+  const monero = openMonero(record);
+  if (monero !== null) {
+    xmr = { address: monero.address, view: revealSecretHex(monero.viewSecret) };
+    wipeWallet(monero);
+  }
+
+  return { zpub, xmr };
+}
+
+/**
  * Whether an account may be signed for on this device.
  *
  * The whole reason this file names a `Source`. A vault account is watch-only

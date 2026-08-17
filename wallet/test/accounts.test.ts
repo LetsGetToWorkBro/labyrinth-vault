@@ -19,6 +19,8 @@ import {
   accountsFrom,
   anySignsHere,
   signingNote,
+  unwatchedChains,
+  watchedSources,
   watchingNothing,
 } from '../src/core/accounts';
 import { makeHotRecord, type HotRecord } from '../src/core/keyvault';
@@ -147,6 +149,57 @@ describe('a vault account is watch-only here even beside a hot one', () => {
      * screen somebody has learned the shape of. */
     const later = { ...hot(), birth: 0 };
     expect(accountsFrom(paired(), later).map((a) => a.id)).toEqual(['vault', 'hot']);
+  });
+});
+
+describe('which account each chain is actually watched through', () => {
+  /* The hole this closes was mine. The backup screens could make a wallet, the
+   * accounts list showed it and the signer would sign for it, and nothing ever
+   * watched it: `store.tsx` read its account key and view key from the vault
+   * pairing alone, so a hot account had no balance, no receiving address, and
+   * no way to build a payment for the signer to sign. */
+
+  it('watches a hot account when there is no pairing', () => {
+    expect(watchedSources(null, hot())).toEqual({ BTC: 'hot', XMR: 'hot' });
+  });
+
+  it('watches nothing when there is nothing', () => {
+    expect(watchedSources(null, null)).toEqual({ BTC: null, XMR: null });
+  });
+
+  it('prefers the pairing, because that is what the watcher actually does', () => {
+    /* Mirrors the precedence in `store.tsx`. If these two ever disagree, the
+     * screen is describing a wallet the app is not running. */
+    expect(watchedSources(paired(), hot())).toEqual({ BTC: 'vault', XMR: 'vault' });
+  });
+
+  it('falls through per chain, not per account', () => {
+    /* A vault that exported only Bitcoin leaves Monero to the hot record. The
+     * precedence is a chain at a time because the watcher holds one key per
+     * chain, not one account overall. */
+    expect(watchedSources(paired({ xmr: null }), hot())).toEqual({ BTC: 'vault', XMR: 'hot' });
+    expect(watchedSources(paired({ btc: null }), hot())).toEqual({ BTC: 'hot', XMR: 'vault' });
+  });
+
+  it('names the chains an account is losing, so no balance goes silently missing', () => {
+    /* The case that needs a sentence: both kinds of account, same chains. One
+     * of them is not being watched, and a balance that is silently absent
+     * reads as a balance that is gone. */
+    const accounts = accountsFrom(paired(), hot());
+    const watching = watchedSources(paired(), hot());
+    const vault = accounts.find((a) => a.source === 'vault')!;
+    const phone = accounts.find((a) => a.source === 'hot')!;
+    expect(unwatchedChains(vault, watching)).toEqual([]);
+    expect(unwatchedChains(phone, watching)).toEqual(['BTC', 'XMR']);
+  });
+
+  it('says nothing when there is nothing to say', () => {
+    /* Almost every wallet. A warning that appears for everybody is a warning
+     * nobody reads. */
+    const hotOnly = accountsFrom(null, hot());
+    expect(unwatchedChains(hotOnly[0]!, watchedSources(null, hot()))).toEqual([]);
+    const vaultOnly = accountsFrom(paired(), null);
+    expect(unwatchedChains(vaultOnly[0]!, watchedSources(paired(), null))).toEqual([]);
   });
 });
 

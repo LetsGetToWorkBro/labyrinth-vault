@@ -228,6 +228,28 @@ case-sensitivity assertion uppercased a string with no case to change and
 passed against a parser that had never been asked the question. Fixtures are
 varied now, and the case is spelled out rather than derived.
 
+## The limitation this work leaves behind
+
+**`NodeWatcher` holds one account key per chain.** A phone with a vault paired
+*and* a seed of its own can therefore only watch one of them per chain, and
+`store.tsx` resolves that in favor of the pairing: it is the account somebody is
+more likely to have money in.
+
+That is a real limit rather than a bug, and it is handled by being said out
+loud. `watchedSources` in `core/accounts.ts` mirrors the store's precedence
+exactly, `unwatchedChains` turns it into the chains a row is losing, and the
+accounts screen prints a sentence on any row that is not being read. A guard in
+`test/backup.test.ts` fails if the store and that function ever disagree,
+because at that moment the screen starts describing a wallet the app is not
+running and an unwatched balance goes back to being silently absent, which is
+the failure the demo snapshot had pointing the other way.
+
+The fix is a watcher that holds more than one account per chain. It touches
+`watcher.ts`, the snapshot shape, and every screen that reads a single balance,
+so it is a piece of work rather than a line, and it should be done before this
+wallet is offered to somebody who will plausibly hold both kinds of account at
+once.
+
 ## Still true, still unverified
 
 Nothing in this session touched these. They are in `docs/verification.md` and

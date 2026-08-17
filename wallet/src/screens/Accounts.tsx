@@ -33,11 +33,23 @@ import { Body, Label, Small, Strong } from '../design/text';
 import { Header } from '../components/chrome';
 import { assetColor, color, space } from '../design/tokens';
 import { useStore } from '../state/store';
-import { NOTHING_WATCHED, signingNote, watchingNothing, type Account } from '../core/accounts';
+import {
+  NOTHING_WATCHED,
+  signingNote,
+  unwatchedChains,
+  watchedSources,
+  watchingNothing,
+  type Account,
+} from '../core/accounts';
 import type { Nav } from '../nav/routes';
 
 export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
-  const { accounts } = useStore();
+  const { accounts, pairing, hot } = useStore();
+
+  /* Which source each chain is actually read through. Computed from the same
+   * two values `store.tsx` computes its precedence from, so this cannot drift
+   * from what the watcher is really doing. */
+  const watching = watchedSources(pairing, hot);
 
   return (
     <Screen>
@@ -62,6 +74,7 @@ export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
                 <AccountRow
                   key={account.id}
                   account={account}
+                  unwatched={unwatchedChains(account, watching)}
                   onPress={() =>
                     /* A vault row opens the vault screen, which is still the
                        device manager it always was. A hot row opens the words,
@@ -115,7 +128,15 @@ export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
  * is looking for "where is my Monero", and the signing note is the loud half
  * of the row for the reason the whole screen exists.
  */
-function AccountRow({ account, onPress }: { account: Account; onPress: () => void }) {
+function AccountRow({
+  account,
+  unwatched,
+  onPress,
+}: {
+  account: Account;
+  unwatched: string[];
+  onPress: () => void;
+}) {
   return (
     <Press onPress={onPress}>
       <View style={{ paddingVertical: space.gap, gap: space.snug }}>
@@ -139,6 +160,15 @@ function AccountRow({ account, onPress }: { account: Account; onPress: () => voi
             Paired from a vault. This phone holds the watching half and nothing that can spend.
           </Small>
         )}
+        {/* Said out loud rather than shown as a missing balance. This wallet
+            reads one account key per chain, so with both kinds of account
+            holding the same chain, one of them is not being watched. A balance
+            that is silently absent reads as a balance that is gone. */}
+        {unwatched.length > 0 ? (
+          <Small tone={color.warn}>
+            {`Not being watched: ${unwatched.join(' and ')}. This wallet reads one account per chain and is reading the other one. Its coins are safe and its words still restore it elsewhere.`}
+          </Small>
+        ) : null}
       </View>
       <Rule />
     </Press>

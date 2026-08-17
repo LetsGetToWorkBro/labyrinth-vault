@@ -32,9 +32,9 @@ import {
   type Creation,
   type CreationEvent,
 } from '../src/core/backup';
-import { makeHotRecord, openMonero, readPhrase, type HotRecord } from '../src/core/keyvault';
-import { wipeWallet } from '@vault/keys/monero';
-import { addressAt } from '@vault/keys/bitcoin';
+import { makeHotRecord, openMonero, readPhrase, watchOnlyFrom, type HotRecord } from '../src/core/keyvault';
+import { revealSecretHex, wipeWallet } from '@vault/keys/monero';
+import { addressAt, openWatch } from '@vault/keys/bitcoin';
 import { openBitcoin, closeBitcoin } from '../src/core/keyvault';
 
 /* Varied rather than a repeated byte, for the reason `keyvault.test.ts`
@@ -410,5 +410,70 @@ describe('the screens that show and take a phrase', () => {
         new RegExp(`navigate\\('${route}'\\)`),
       );
     }
+  });
+});
+
+describe('the watch-only half a hot record can produce', () => {
+  /* A wallet that can sign but has no addresses is not a wallet. Until
+   * `watchOnlyFrom` existed, a record made by these screens was listed, backed
+   * up, restorable and signable, and never watched.
+   *
+   * The property that matters is that the watching keys watch the *same*
+   * wallet the words restore. Watch keys for a different account would show a
+   * balance that is not yours and a receiving address that sends money
+   * somewhere you cannot spend from. */
+
+  it('derives an account key for the same Bitcoin wallet the words open', () => {
+    const record = fresh();
+    const watch = watchOnlyFrom(record);
+    expect(watch.zpub).toMatch(/^zpub/);
+
+    const watched = openWatch(watch.zpub!);
+    expect(watched.ok).toBe(true);
+    const signing = openBitcoin(record)!;
+    /* Two independent routes to the same first address: one from the seed, one
+     * from the account key derived off it. */
+    expect(addressAt(watched.wallet!, 0, 0).address).toBe(addressAt(signing, 0, 0).address);
+    closeBitcoin(signing);
+  });
+
+  it('derives an address and view key for the same Monero wallet', () => {
+    const record = fresh();
+    const watch = watchOnlyFrom(record);
+    expect(watch.xmr).not.toBeNull();
+
+    const signing = openMonero(record)!;
+    expect(watch.xmr!.address).toBe(signing.address);
+    expect(watch.xmr!.view).toBe(revealSecretHex(signing.viewSecret));
+    wipeWallet(signing);
+  });
+
+  it('gives back a view key, which cannot spend, and never a spend key', () => {
+    /* The whole point of the shape. What comes out is exactly what a vault
+     * exports across the airgap, so deriving it here widens nothing. */
+    const record = fresh();
+    const watch = watchOnlyFrom(record);
+    const signing = openMonero(record)!;
+    expect(watch.xmr!.view).not.toBe(revealSecretHex(signing.spendSecret));
+    wipeWallet(signing);
+    expect(JSON.stringify(watch)).not.toContain(record.xmrSeed!);
+  });
+
+  it('says null for a chain the record does not hold', () => {
+    const record = fresh();
+    expect(watchOnlyFrom({ ...record, btcMnemonic: null }).zpub).toBeNull();
+    expect(watchOnlyFrom({ ...record, xmrSeed: null }).xmr).toBeNull();
+  });
+
+  it('is what the store actually watches through, in the same precedence', () => {
+    /* The guard against the screen and the app disagreeing. `watchedSources`
+     * tells the accounts screen which account each chain is read through, and
+     * it is only true if `store.tsx` resolves its keys the same way. If one
+     * side changes, the screen starts describing a wallet the app is not
+     * running, and an unwatched balance goes back to being silently absent. */
+    const store = readFileSync('src/state/store.tsx', 'utf8');
+    expect(store).toMatch(/watchOnlyFrom\(hot\)/);
+    expect(store).toMatch(/pairing\?\.btc\?\.zpub \?\? hotWatch\?\.zpub/);
+    expect(store).toMatch(/pairing\?\.xmr[\s\S]{0,120}hotWatch\?\.xmr/);
   });
 });

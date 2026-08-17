@@ -48,7 +48,7 @@ import { EMPTY, load, save, type Persisted } from './persist';
 import { fileStore } from './fileStore';
 import { keychainStore, spendingKeyStore } from './keychainStore';
 import { clearPairing, loadPairing, savePairing } from './persistKeys';
-import { forgetHot, loadHot, saveHot, type HotRecord } from '../core/keyvault';
+import { forgetHot, loadHot, saveHot, watchOnlyFrom, type HotRecord } from '../core/keyvault';
 import { accountsFrom, type Account } from '../core/accounts';
 import { signHere as signWithHotKeys } from '../core/hotsign';
 import { nativeGate } from './biometrics';
@@ -380,7 +380,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * refuses to prepare and the vault screen says to pair, which are the
    * right two consequences of that state.
    */
-  const accountKey = pairing?.btc?.zpub ?? (DEMO ? DEMO_ZPUB : null);
+  /*
+   * The watch-only half of whatever this phone holds its own keys for.
+   *
+   * Derived rather than stored, and memoized on the record so it is not a key
+   * schedule per render. `watchOnlyFrom` opens both wallets, reads an account
+   * key and a view key, and closes them; what it hands back cannot spend.
+   */
+  const hotWatch = useMemo(() => (hot === null ? null : watchOnlyFrom(hot)), [hot]);
+
+  /*
+   * The Bitcoin account key in effect, and the precedence is a real decision.
+   *
+   * A pairing wins. `NodeWatcher` watches one account key per chain, so a
+   * phone holding both a vault pairing and its own seed can only see one of
+   * them, and the vault is the one somebody is more likely to have money in.
+   * The accounts screen says which is being watched rather than leaving the
+   * other showing nothing and explaining nothing, because a balance that is
+   * silently absent reads as a balance that is gone.
+   *
+   * Watching both needs a watcher that holds more than one account, which is
+   * a real change rather than a line here, and it is written down in
+   * `docs/handoff.md` as the limitation it is.
+   */
+  const accountKey = pairing?.btc?.zpub ?? hotWatch?.zpub ?? (DEMO ? DEMO_ZPUB : null);
 
   /* What exists, for every screen that used to ask "is this app paired". The
    * stand-in flag is passed rather than read inside `accountsFrom`, so that
@@ -405,9 +428,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const moneroWatch = useMemo(() => {
     const source = pairing?.xmr
       ? { address: pairing.xmr.address, view: pairing.xmr.view, birth: pairing.xmr.birth }
-      : DEMO
-        ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }
-        : null;
+      : hotWatch?.xmr
+        ? {
+            address: hotWatch.xmr.address,
+            view: hotWatch.xmr.view,
+            /* Zero for a restored wallet, which is what `withRestored` stores
+             * and what `keyvault.ts` argues for: nobody typing a phrase knows
+             * their birth height, and guessing a recent one silently misses
+             * every coin received before it. A wallet made on this phone
+             * carries the moment it was made, so its scan starts there. */
+            birth: hot?.birth ?? 0,
+          }
+        : DEMO
+          ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }
+          : null;
     if (!source) return null;
     const opened = openAccount(source.address, source.view);
     if (!opened.ok) return null;
@@ -422,7 +456,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const scanFrom = stored && stored.birth >= birth ? stored : { birth, height: birth };
     return { account: opened.account, scan: scanFrom };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restored, pairing]);
+  }, [restored, pairing, hotWatch]);
 
   /**
    * The watcher, which is the fixture until a node is set and the node after.
