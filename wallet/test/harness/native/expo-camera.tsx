@@ -17,7 +17,7 @@
  * started at "granted" would never render it.
  */
 
-import { useCallback, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
 export interface Permission {
   granted: boolean;
@@ -61,7 +61,7 @@ export function useCameraPermissions(): [Permission | null, () => Promise<Permis
 
 type Scanned = (result: { data: string; type: string }) => void;
 
-/** Every mounted camera's frame handler. A screen mounts one. */
+/** Every *currently mounted* camera's frame handler, in mount order. */
 const readers: Scanned[] = [];
 
 /** Hand the mounted camera a QR payload, the way the real module does. */
@@ -83,11 +83,31 @@ export function CameraView({
   onBarcodeScanned,
   ...rest
 }: Record<string, unknown> & { onBarcodeScanned?: Scanned }): ReactElement {
-  /* Registered during render rather than in an effect. `scan()` is called from
-   * a test that has already rendered, so by then this has run either way, and
-   * an effect would make the registration depend on whether the caller
-   * remembered to flush them. */
-  if (onBarcodeScanned && !readers.includes(onBarcodeScanned)) readers.push(onBarcodeScanned);
+  /*
+   * Registered in an effect, with the cleanup, so `readers` means what it
+   * says.
+   *
+   * The first version pushed during render and never removed, which made
+   * `reading()` answer "has a camera ever been mounted in this process". That
+   * is the same answer as the truth right up until a test asks the question
+   * after unmounting one, and then it is silently wrong in the direction that
+   * passes. `Scan`'s handler is a `useCallback` over the store, so it is also
+   * a new function on every store update: push-only meant the list grew for
+   * the life of a test.
+   *
+   * The effect runs before any test can call `scan()`, because `mount` creates
+   * inside `act`, which is the same reason it was safe to do during render and
+   * is not a reason to keep doing it there.
+   */
+  useEffect(() => {
+    if (!onBarcodeScanned) return undefined;
+    readers.push(onBarcodeScanned);
+    return () => {
+      const at = readers.indexOf(onBarcodeScanned);
+      if (at >= 0) readers.splice(at, 1);
+    };
+  }, [onBarcodeScanned]);
+
   const Host = 'CameraView' as unknown as (props: Record<string, unknown>) => ReactElement;
   return <Host {...rest} />;
 }

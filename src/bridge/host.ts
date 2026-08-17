@@ -332,8 +332,16 @@ function requireSession(): Session {
  * `fileRandomBytes`. An app built against 7 offers a second wire on the key
  * image screen; a bundle built at 6 has neither the function nor the field, so
  * the button would be there and answer nothing.
+ *
+ * 8: `restore` exists. An app built against 8 offers a setup stage that takes
+ * two recovery phrases; a bundle built at 7 has no such function, so pressing
+ * RESTORE against one would fail on the far side of the bridge with somebody's
+ * seed words already typed into a device that then did nothing with them.
+ * Four functions left in the same release and are deliberately not a version:
+ * `calibrate`, `checkAddress`, `checkPhrase` and `checkExtendedKey` had no
+ * caller in any build, so no app can ask a newer bundle for them.
  */
-export const HOST_VERSION = 7;
+export const HOST_VERSION = 8;
 
 /**
  * The restore height a vault that does not know its own age must claim.

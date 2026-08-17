@@ -22,6 +22,7 @@ struct SetupView: View {
         case .boundary: BoundaryView()
         case .passphrase: PassphraseView()
         case .entropy: EntropyView()
+        case .restore: RestoreView()
         case .created: CreatedView()
         }
     }
@@ -386,10 +387,179 @@ private struct PassphraseView: View {
                     confirmed = ""
                 }
                 .padding(.horizontal, 24)
+                /* The other way through, and it is a branch rather than a
+                 * step: somebody with words already has no use for the
+                 * generation stage. Offered here rather than at the start of
+                 * setup because restoring a vault onto a phone needs that
+                 * phone airgapped exactly as much as making one does, and the
+                 * four screens before this are what establish that.
+                 *
+                 * The fields are cleared on the way out. A passphrase typed
+                 * for a vault that is about to be restored under a different
+                 * one is a String this screen has no further use for, and
+                 * `Passphrase.swift` is the argument for how briefly those
+                 * should exist. */
+                Lever(title: "I ALREADY HAVE A RECOVERY PHRASE", style: .quiet) {
+                    chosen = ""
+                    confirmed = ""
+                    vault.go(.setup(.restore))
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 10)
                 .padding(.bottom, 12)
             }
         }
         .onAppear { field = .entry }
+    }
+}
+
+// MARK: 06b — restoring from words
+
+/// The other way to have a vault: two phrases, typed back.
+///
+/// ## One screen, four fields, one press
+///
+/// The words and the passphrase are on the same screen deliberately, and the
+/// screen is long because of it. The alternative is two screens, and two
+/// screens means one of them holds key material in a model property while the
+/// other is on the glass. `Passphrase.swift` is the argument: a `String`
+/// cannot be wiped, so the only available move is to narrow the window, and a
+/// window that spans a navigation transition is not narrow. Everything here
+/// lives in `@State` on one view and goes to the engine in one call.
+///
+/// ## What this screen decides and what it does not
+///
+/// It counts words, through `RestoreEntry`, which compiles and is tested on
+/// Linux precisely because this file is not. Whether the words are *right* is
+/// the engine's answer: `restore` reads the Bitcoin phrase through BIP39's
+/// checksum and the Monero phrase through Monero's and says which one is
+/// wrong. A checksum reimplemented here would be a second opinion about
+/// somebody else's format, and the second opinion is the one that is wrong at
+/// the worst possible moment.
+///
+/// So the lever turns on at twelve and twenty-five words and the refusal, when
+/// there is one, arrives as a sentence from the engine on the stage after this.
+private struct RestoreView: View {
+    @EnvironmentObject private var vault: Vault
+    @State private var bitcoin = ""
+    @State private var monero = ""
+    @State private var chosen = ""
+    @State private var confirmed = ""
+    /* Two focus states, not one, and not a binding that maps between them.
+     *
+     * `PassphraseField` focuses on `PassphraseFocus` and the word fields on
+     * `PhraseFocus`, so this screen holds both and hands each field the one it
+     * was written for. The coordination that costs is `moveTo`, below: SwiftUI
+     * will happily have two focus states both non-nil, which shows up as a
+     * keyboard that will not go where the return key sent it, so whichever is
+     * not wanted is cleared in the same statement. */
+    @FocusState private var word: PhraseFocus?
+    @FocusState private var pass: PassphraseFocus?
+
+    private var reading: RestoreEntry.Reading { RestoreEntry.read(bitcoin: bitcoin, monero: monero) }
+    private var passphrasesMatch: Bool { !chosen.isEmpty && chosen == confirmed }
+    private var mayRestore: Bool { reading.mayRestore && passphrasesMatch }
+
+    var body: some View {
+        Screen {
+            VStack(alignment: .leading, spacing: 0) {
+                VaultBar()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Statement("TYPE YOUR", "PHRASES.", size: 44).padding(.top, 18)
+                        Text("Both of them, from the paper you wrote them on. They rebuild the same "
+                             + "vault this device had: the same Bitcoin account, the same Monero "
+                             + "address, watched by the same wallet.")
+                            .font(Type.body())
+                            .lineSpacing(5)
+                            .foregroundStyle(Ink.paperDim)
+                            .padding(.top, 14)
+                            .padding(.bottom, 26)
+
+                        PhraseField(label: "BITCOIN · 12 WORDS",
+                                    hint: RestoreEntry.hint(for: reading.bitcoin, chain: "Bitcoin"),
+                                    text: $bitcoin,
+                                    focus: $word,
+                                    equals: .bitcoin) { moveTo(word: .monero) }
+
+                        PhraseField(label: "MONERO · 25 WORDS",
+                                    hint: RestoreEntry.hint(for: reading.monero, chain: "Monero"),
+                                    text: $monero,
+                                    focus: $word,
+                                    equals: .monero) { moveTo(passphrase: .entry) }
+                            .padding(.top, 26)
+
+                        Text("A NEW PASSPHRASE")
+                            .font(Type.mono(11))
+                            .kerning(1.6)
+                            .foregroundStyle(Ink.paperFaint)
+                            .padding(.top, 34)
+                        /* New, not the old one, and the screen says so. The
+                         * passphrase is not in the words and is not recoverable
+                         * from them: it sealed a blob that is gone. Somebody
+                         * expecting their old one to be required here would
+                         * conclude the restore had failed. */
+                        Text("The phrases do not carry your old passphrase, and nothing can: it "
+                             + "sealed a file that is no longer on this device. Choose one now.")
+                            .font(Type.body(13))
+                            .lineSpacing(4)
+                            .foregroundStyle(Ink.paperDim)
+                            .padding(.top, 8)
+                            .padding(.bottom, 18)
+
+                        PassphraseField(label: "PASSPHRASE",
+                                        text: $chosen,
+                                        focus: $pass,
+                                        equals: .entry,
+                                        contentType: .newPassword,
+                                        submitLabel: .next) { moveTo(passphrase: .again) }
+
+                        PassphraseField(label: "AGAIN",
+                                        text: $confirmed,
+                                        focus: $pass,
+                                        equals: .again,
+                                        contentType: .newPassword,
+                                        submitLabel: .done)
+                            .padding(.top, 22)
+
+                        if !confirmed.isEmpty && !passphrasesMatch {
+                            Text("The two entries do not match yet.")
+                                .font(Type.body(13))
+                                .foregroundStyle(Ink.attention)
+                                .padding(.top, 12)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 28)
+                }
+                Lever(title: "RESTORE THIS VAULT",
+                      hint: "STEP 5 / 6",
+                      enabled: mayRestore) {
+                    vault.beginRestore(bitcoin: reading.bitcoinWords,
+                                       monero: reading.moneroWords,
+                                       passphrase: chosen)
+                    bitcoin = ""
+                    monero = ""
+                    chosen = ""
+                    confirmed = ""
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+            }
+        }
+        .onAppear { moveTo(word: .bitcoin) }
+    }
+
+    /// Move the keyboard to a word field, and out of the passphrase ones.
+    private func moveTo(word next: PhraseFocus) {
+        pass = nil
+        word = next
+    }
+
+    /// Move the keyboard to a passphrase field, and out of the word ones.
+    private func moveTo(passphrase next: PassphraseFocus) {
+        word = nil
+        pass = next
     }
 }
 
@@ -527,7 +697,13 @@ private struct EntropyView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Spacer()
-                Statement("GENERATING", "KEY MATERIAL", size: 32)
+                /* Restoring generates nothing: the key material was made
+                 * years ago and is being read off paper. Announcing otherwise
+                 * for the whole of an Argon2id pass is this app inventing a
+                 * fact about itself on the one screen a person stares at. */
+                Statement(vault.vaultWasRestored ? "REBUILDING" : "GENERATING",
+                          vault.vaultWasRestored ? "YOUR VAULT" : "KEY MATERIAL",
+                          size: 32)
                 FieldRow(label: "ENTROPY COLLECTED", value: "\(bits) / 256 BITS")
                     .padding(.top, 10)
                 FieldRow(label: "ARGON2ID",
@@ -595,8 +771,14 @@ private struct EntropyView: View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer()
             VStack(alignment: .leading, spacing: 0) {
-                Eyebrow("NOT CREATED", color: Ink.refused)
-                Statement("NO KEYS", "WERE MADE.", size: 40).padding(.top, 16)
+                /* "NO KEYS WERE MADE" is a relief on the create path and
+                 * frightening nonsense on the restore one, where the keys
+                 * exist, are fine, and are in the person's hand. */
+                Eyebrow(vault.vaultWasRestored ? "NOT RESTORED" : "NOT CREATED", color: Ink.refused)
+                Statement(vault.vaultWasRestored ? "NO VAULT" : "NO KEYS",
+                          vault.vaultWasRestored ? "WAS REBUILT." : "WERE MADE.",
+                          size: 40)
+                    .padding(.top, 16)
                 Text(sentence)
                     .font(Type.body())
                     .lineSpacing(5)
@@ -623,7 +805,15 @@ private struct CreatedView: View {
                 Spacer()
                 VStack(alignment: .leading, spacing: 0) {
                     Eyebrow("COMPLETE", color: Ink.verified)
-                    Statement("KEY MATERIAL", "CREATED.", size: 40).padding(.top, 16).padding(.bottom, 26)
+                    /* Restoring makes no key material and saying it did would
+                     * be this app inventing a fact about itself, which is the
+                     * class of sentence it exists to refuse. The rest of this
+                     * screen is true either way: the vault is sealed, it is on
+                     * this device only, and there is no copy anywhere else. */
+                    Statement(vault.vaultWasRestored ? "VAULT" : "KEY MATERIAL",
+                              vault.vaultWasRestored ? "RESTORED." : "CREATED.",
+                              size: 40)
+                        .padding(.top, 16).padding(.bottom, 26)
                     /* The id is derived from the account key the engine just
                      * returned — reading it here is the proof that what sits
                      * in the keychain unlocked, not a card that always says
@@ -632,9 +822,13 @@ private struct CreatedView: View {
                     FieldRow(label: "AT REST", value: "SEALED · ARGON2ID + XCHACHA20", tone: .verified)
                     FieldRow(label: "KEYCHAIN CLASS", value: "PASSCODE-BOUND · THIS DEVICE ONLY")
                     FieldRow(label: "COPIES ELSEWHERE", value: "NONE")
-                    Text("There is no cloud backup, because there is no cloud. If you lose this " +
-                         "phone without a recovery phrase written down, the keys are gone. That " +
-                         "is the trade you made when you took the SIM out.")
+                    Text(vault.vaultWasRestored
+                         ? "The same account key, the same Monero address, sealed under the new "
+                           + "passphrase you just chose. Keep the paper: it is still the only copy "
+                           + "that is not on this device."
+                         : "There is no cloud backup, because there is no cloud. If you lose this "
+                           + "phone without a recovery phrase written down, the keys are gone. That "
+                           + "is the trade you made when you took the SIM out.")
                         .font(Type.body(14))
                         .lineSpacing(5)
                         .foregroundStyle(Ink.paperDim)

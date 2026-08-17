@@ -149,7 +149,7 @@ describe('the built bundle', () => {
      * no native derivation and said so. On the phone the same call answers
      * "native", and a build where it does not is a build that silently kept
      * the minute-long unlock. */
-    expect(call(api, 'version')).toEqual({ ok: true, version: 7, kdf: 'engine', cryptonight: 'absent' });
+    expect(call(api, 'version')).toEqual({ ok: true, version: 8, kdf: 'engine', cryptonight: 'absent' });
   });
 
   it('passes its own self-test inside the bundle', () => {
@@ -468,7 +468,7 @@ describe('the bundle adopts a host derivation when there is one', () => {
      * to be able to say no. */
     expect(call(load(() => null), 'version')).toEqual({
       ok: true,
-      version: 7,
+      version: 8,
       kdf: 'engine',
       cryptonight: 'absent',
     });
@@ -482,7 +482,7 @@ describe('the bundle adopts a host derivation when there is one', () => {
       Array.from(argon2id(Uint8Array.from(passphrase), Uint8Array.from(salt), { t, m, p, dkLen }));
     expect(call(load(working), 'version')).toEqual({
       ok: true,
-      version: 7,
+      version: 8,
       kdf: 'native',
       cryptonight: 'absent',
     });

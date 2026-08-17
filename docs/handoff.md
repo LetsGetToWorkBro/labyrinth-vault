@@ -10,7 +10,7 @@ most of them are not recoverable from the diff.
 
 ## The state of the tree
 
-All three suites pass: **1078 vault, 963 companion, 68 Worker.** `npx tsc
+All three suites pass: **1079 vault, 967 companion, 68 Worker.** `npx tsc
 --noEmit` is clean in `wallet/` and in `worker/`, and the vault's own typecheck
 runs inside `npm test`. All three now run on push: the Worker's suite and
 typecheck were missing from `.github/workflows/tests.yml`, and the Worker's
@@ -217,20 +217,20 @@ one of them uploads: `true` in a manifest is what made Apple refuse four
 uploads of the vault. Both apps answer YES in App Store Connect per build now,
 and both are rows on one BIS report.
 
-### 6. Restoring the vault from its own words (**engine half built**)
+### 6. Restoring the vault from its own words (**built, never compiled by Xcode**)
 
 Found by reading the Swift for uncalled bridge wrappers. Not planned by anyone:
-it is a hole, and the sentence on the passphrase screen is what makes it one.
+it was a hole, and the sentence on the passphrase screen is what made it one.
 
 The vault could be created and its words could be read, and nothing took them
-back. `Route` goes `setup` then `recovery` with nothing between, `host.ts` had
-`create` and no `restore`, and the only field a person can type into in the
-whole app is the passphrase. Meanwhile the passphrase screen says, of a
+back. `Route` went `setup` then `recovery` with nothing between, `host.ts` had
+`create` and no `restore`, and the only field a person could type into in the
+whole app was the passphrase. Meanwhile the passphrase screen says, of a
 forgotten passphrase, "there is no reset: forgetting it means recovering from
 the words on paper."
 
 **Nobody's money was ever at risk.** Those words restore both wallets into
-Sparrow, Cake or Feather today, because they are ordinary BIP39 and Monero seed
+Sparrow, Cake or Feather, because they are ordinary BIP39 and Monero seed
 phrases, and the vanished-vault screen already says exactly that. What was
 missing was any way back to an *airgap*, which is the thing the product is for:
 a lost or wiped vault phone meant spending keys on a networked device, or a new
@@ -238,51 +238,71 @@ vault and an on-chain move that costs fees and links the old outputs to the new
 ones. The keychain items are passcode-bound and device-only, so a phone backup
 does not carry them either.
 
-**`restore` is in `host.ts`, and `test/restore.test.ts` proves it.** The vault
-secret is `btcEntropy || xmrSeed` and nothing else: `openSession` slices it in
-that order and `revealBackup` hands back the phrases those bytes encode, so the
-words are a complete, lossless copy. Restoring is `create` with the randomness
-supplied rather than drawn. `deriveSecret` does not run and does not need to,
-because what the phrases encode is its output; the `extra` entropy somebody
-typed at setup is not recoverable and is not wanted.
+#### What is here
 
-The test that matters is first in that file: create a vault, read its words,
-seal a new one from them under a *different* passphrase, and compare the
-account keys. A restore that produced a different vault would open, look
-healthy, and watch addresses nobody has ever been paid at. Landed red twice, by
-taking the Monero half from randomness instead of the phrase, and by accepting
-a 24-word Bitcoin phrase.
+`restore` in `host.ts`. The vault secret is `btcEntropy || xmrSeed` and nothing
+else: `openSession` slices it in that order and `revealBackup` hands back the
+phrases those bytes encode, so the words are a complete, lossless copy.
+Restoring is `create` with the randomness supplied rather than drawn.
+`deriveSecret` does not run and does not need to, because what the phrases
+encode is its output; the `extra` entropy typed at setup is not recoverable and
+is not wanted. Forty bytes of randomness, not eighty-eight.
 
-`storedEntropyFromMnemonic` in `keys/bitcoin.ts` is the exact inverse of
-`mnemonicFromStoredEntropy` and lives beside it so the pair round-trips in one
-test. It takes 12 words only. `checkMnemonic` accepts 12 or 24 because it
-judges any phrase a person might type; this reads the phrase a vault wrote, and
-24 words decode to 32 bytes, which is a real seed for other software and cannot
-be the one this blob was sealed from.
+`test/restore.test.ts` leads with the test that matters, because a restore
+producing a vault which merely opens is worthless: create a vault, read its
+words, seal a new one from them under a *different* passphrase, and compare the
+account keys. Landed red twice, by taking the Monero half from randomness and
+by accepting a 24-word Bitcoin phrase.
 
-**What is left is the Swift, and it needs a Mac.**
+`RestoreEntry` in `Model/RestoreEntry.swift` is everything the screen decides,
+and it is on `Package.swift`'s `sources` list, so it compiles for real on Linux
+and its twelve tests run on every push. It counts words and nothing else:
+whether the words are right is the engine's answer, because a checksum
+reimplemented in Swift would be a second opinion about somebody else's format.
 
-- A setup stage taking two phrase fields, and an `Engine.swift` wrapper for
-  `restore`. The wrapper is one line.
-- `HOST_VERSION` goes to 8 on both sides **in that commit and not before**. The
-  pin exists to stop an app calling a function its bundle lacks, and no app
-  calls this one yet.
-- `restore` is the single entry in the `unwired` allowlist in
-  `app-wiring.test.ts`, which is what that allowlist is for: an export whose
-  caller is a commit away, named where the next person will see it. Take it off
-  the list in the same commit.
-- It is the first screen in this app that accepts typed key material, and it
-  wants its own thinking: no pasteboard read, `.textInputAutocapitalization`
-  off, autocorrect off, and a field that is not restored by the system's state
-  restoration. The vault's own recovery screen is the model for how carefully
-  this app treats words on glass.
-- The three `check` bridge functions were deleted for having no caller. That
-  screen may want one back; `checkPhrase` is the one, and adding it back is
-  adding a caller in the same commit rather than restoring an orphan.
+`Vault.sealAndOpen` is the shared tail of `beginCreate` and `beginRestore`.
+Shared rather than copied deliberately: what is in there is the device half of
+the passphrase, the read-back that proves the blob at rest opens, and the erase
+that stops a half-made vault surviving to the next launch. Two copies of that
+would be two places to fix, and the copy nobody edits is always the one on the
+path nobody walks.
 
-Until that lands, the setup screen's sentence is the one thing to weigh. It is
-true that the words are the recovery; it does not say into what, and the
-vanished-vault screen does. Whoever builds the stage should make the two agree.
+`RestoreView` is one screen with four fields and one press. The alternative is
+two screens, and two screens means one of them parks key material in a model
+property while the other is on the glass. `PhraseField` in `Theme.swift` is a
+separate control from `PassphraseField` for the same reason it shows what is
+typed: twenty-five words copied from paper is a transcription task, and hiding
+it means everybody taps SHOW. Autocorrect is the sharp one there, not
+autocapitalization: iOS turns an unknown wordlist entry into the nearest
+dictionary word silently, and a corrected phrase fails its checksum while
+reading perfectly.
+
+`HOST_VERSION` is 8 on both sides, in the same commit as the caller, which is
+what that pin is for.
+
+#### What has never happened
+
+**No Xcode has compiled any of it.** `Setup.swift`, `Theme.swift` and
+`Vault.swift` are on the exclude list because they import SwiftUI and Combine,
+so all three are parsed for syntax by `scripts/swift-check.sh` and type-checked
+by nobody. Three Mac-only build errors have reached `main` this way before. The
+specific things to expect on the first build:
+
+- `RestoreView` holds two `@FocusState` properties, one per focus enum, because
+  `PassphraseField` is written against `PassphraseFocus` and the word fields
+  against `PhraseFocus`. `moveTo` clears one when setting the other. If SwiftUI
+  disagrees about a `FocusState` binding's type here, this is where.
+- `PhraseField` uses `TextField(_:text:axis:)` with `lineLimit(2...6)`, which
+  is iOS 16 and up. Check the deployment target.
+- `Vault.sealAndOpen` is a `nonisolated` instance method called from a
+  detached task, and it hops back with `await MainActor.run` exactly where
+  `beginCreate` did before the extraction. It took a progress closure at
+  first, which is the shape Swift 6's concurrency checking has the most
+  opinions about; the closure is gone for that reason and this is still the
+  most likely place in the change to need an adjustment.
+
+And nothing has run: no vault has been restored on a device, which is the only
+place the whole path exists at once.
 
 ## Three things this session learned the hard way
 
@@ -407,13 +427,13 @@ they still need hardware or a network this container does not have.
   word rather than holding a stopwatch.
 - **No real Cake or Feather has imported a key-image file.** `wallet2` has, and
   `wallet2` is the library rather than the application.
-- **No screen can restore a vault from its words yet.** The engine can:
-  `restore` is in `host.ts` and `test/restore.test.ts` proves a rebuilt vault
-  has the same account keys as the one its words came from. What has never run
-  is the Swift, because there is no setup stage that takes a phrase, so the
-  claim "a person can put their words back into this app" is still untested in
-  the only place that counts. Section 6 under "What is not built" has what
-  remains and what it needs to be careful about.
+- **No vault has been restored on a device.** Every piece exists and the
+  engine half is proved: `test/restore.test.ts` shows a rebuilt vault has the
+  same account keys as the one its words came from, and `RestoreEntry`'s twelve
+  tests compile and run on Linux. What has never happened is a build: the
+  screen, the model method and the field control are all in files Xcode
+  type-checks and nothing else does. Section 6 lists the three specific things
+  to expect on the first compile.
 
 Three more, added by the work above and stated plainly because the whole point
 of this section is that it is current:

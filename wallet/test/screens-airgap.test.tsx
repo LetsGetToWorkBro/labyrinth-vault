@@ -31,7 +31,10 @@ import { bitcoinAccount, encodeAccount, moneroAccount } from '@vault/keys/accoun
 import { openWatch } from '@vault/keys/bitcoin';
 import { walletFromSeed } from '@vault/keys/monero';
 import { encodeParts } from '@vault/airgap/envelope';
+import Svg, { Path } from 'react-native-svg';
+import { View } from 'react-native';
 import { camera, haptics, mount, navigator, resetNative } from './harness/render';
+import { QrCanvas } from '../src/qr/QrCanvas';
 import { StoreProvider } from '../src/state/store';
 import { ScanScreen } from '../src/screens/Scan';
 import { AccountsScreen } from '../src/screens/Accounts';
@@ -227,6 +230,57 @@ describe('what the camera refuses', () => {
 
     for (const frame of bitcoinFrames()) await ui.act(() => camera.scan(frame));
     expect(ui.shows('CHECKSUM VERIFIED'), 'a stray code poisoned the scanner').toBe(true);
+  });
+});
+
+describe('the airgap going the other way', () => {
+  it('resolves react-native without swallowing react-native-svg', () => {
+    /* `vitest.config.mts` claims the alias list matches a specifier only when
+     * it is equal or begins with it plus a slash, which is what keeps
+     * `react-native` from taking `react-native-svg` with it. That is a claim
+     * about somebody else's resolver, so it is checked rather than trusted: if
+     * it were wrong, `Svg` would be undefined and every QR in this app would
+     * render as nothing, silently. */
+    expect(Svg).toBe('Svg');
+    expect(Path).toBe('Path');
+    expect(View).toBe('View');
+  });
+
+  it('draws a QR with real geometry in it', () => {
+    /* The outbound half. Everything a vault reads off this phone goes through
+     * `QrCanvas`, and until a screen could be mounted the only thing tested
+     * was `matrix.ts` deciding which modules are dark. This is that decision
+     * arriving as a path a renderer would draw. */
+    const ui = mount(<QrCanvas value="bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq" size={300} />);
+    expect(ui.all('Svg').length, 'the QR canvas drew no Svg').toBeGreaterThan(0);
+
+    const paths = ui.all('Path');
+    expect(paths.length, 'the QR canvas drew no path').toBeGreaterThan(0);
+    expect(
+      String(paths[0]!.props['d'] ?? '').length,
+      'the path is on the screen with no geometry in it',
+    ).toBeGreaterThan(100);
+  });
+});
+
+describe('the camera stand-in, held honest', () => {
+  it('stops reading when the screen that mounted it goes away', async () => {
+    /* `reading()` is what three tests in this file assert on, and its first
+     * version answered "has a camera ever been mounted in this process"
+     * because the handler was registered during render and never removed.
+     * That is the same answer as the truth until somebody asks after an
+     * unmount, and then it is wrong in the direction that passes. */
+    const { props } = navigator();
+    const ui = mount(
+      <StoreProvider>
+        <ScanScreen {...props<'Scan'>({ purpose: 'wire' })} />
+      </StoreProvider>,
+    );
+    await ui.settle();
+    expect(camera.reading()).toBe(true);
+
+    ui.unmount();
+    expect(camera.reading(), 'a camera nobody has mounted is still reading').toBe(false);
   });
 });
 

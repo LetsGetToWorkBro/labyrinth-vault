@@ -40,7 +40,7 @@ import Security
 final class Engine {
     /// Must match `HOST_VERSION` in src/bridge/host.ts. A bundle from a
     /// different contract is refused rather than called optimistically.
-    static let expectedVersion = 7
+    static let expectedVersion = 8
 
     private let context: JSContext
     private let api: JSValue
@@ -273,6 +273,22 @@ final class Engine {
     /// trap rather than a courtesy.
     func create(randomHex: String, passphrase: [UInt8], extraHex: String = "") throws -> CreateReply {
         try call("create", [randomHex, passphrase, extraHex])
+    }
+
+    /// Rebuild a vault from the two phrases it showed at setup.
+    ///
+    /// Forty bytes of randomness, not eighty-eight: the secret is on somebody's
+    /// paper rather than drawn here, so this is the seal's salt and nonce
+    /// alone. Passing `create`'s amount is refused at the bridge by length.
+    ///
+    /// The words are `String`s and unwipeable, the same limit `Passphrase`
+    /// states about typed text. They arrive already normalized by
+    /// `RestoreEntry`, so what the screen counted is what is restored, and
+    /// whether they are the *right* words is the engine's answer alone: it
+    /// reads each phrase through its own checksum and names which is wrong.
+    func restore(bitcoinWords: String, moneroWords: String, passphrase: [UInt8],
+                 randomHex: String) throws -> CreateReply {
+        try call("restore", [bitcoinWords, moneroWords, passphrase, randomHex])
     }
 
     /// Re-seal a vault under a different passphrase, without opening a session.

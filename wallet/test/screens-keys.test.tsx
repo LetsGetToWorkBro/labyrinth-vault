@@ -138,6 +138,33 @@ describe('making a wallet on this phone', () => {
 });
 
 describe('getting the words back, on a phone that has been relaunched', () => {
+  it('is a real relaunch, and not a store remembering across a mount', async () => {
+    /* The test this whole describe rests on, so it goes first.
+     *
+     * Every case below makes a wallet in one mounted tree and reads it back in
+     * another, and the claim is that nothing passes between them but the
+     * keychain. If the store kept its record in module state instead, all of
+     * them would pass without a byte ever being stored, and the suite would be
+     * reporting on itself. So: empty the keychain between the two mounts and
+     * check that the second one finds nothing. */
+    await makeAWallet();
+    expect(keychain.contents().size, 'nothing was stored, so the relaunch proves nothing').toBeGreaterThan(0);
+
+    keychain.reset();
+
+    const { props } = navigator();
+    const ui = mount(
+      <StoreProvider>
+        <BackupScreen {...props<'Backup'>()} />
+      </StoreProvider>,
+    );
+    await ui.settle();
+    expect(
+      ui.shows('No keys are stored on this phone'),
+      'a fresh store found a wallet that is not in the keychain, so it is reading module state',
+    ).toBe(true);
+  });
+
   it('asks for the same check a payment does before it draws anything', async () => {
     await makeAWallet();
 

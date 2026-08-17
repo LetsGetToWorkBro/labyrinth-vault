@@ -22,6 +22,16 @@
  * what `.github/workflows/tests.yml` does on every push. A missing report is a
  * suite that has not been run, and this says so rather than passing.
  *
+ * ## What it does not catch, stated rather than implied
+ *
+ * A report is refused when it covers fewer test files than the suite has, so
+ * `vitest run one-file.test.ts` cannot be mistaken for a run. Nothing here
+ * checks *freshness* beyond that: a full run, then an edit that adds a test to
+ * an existing file, then this, and the answer is yesterday's. Deliberately not
+ * solved with file timestamps, which would make a check about test counts fail
+ * for reasons about filesystems. CI runs this immediately after the three
+ * suites, in one job, which is where the guarantee actually comes from.
+ *
  * ## Why it can write
  *
  * `--write` updates the numbers in place. A guard that can only refuse leaves

@@ -1246,22 +1246,57 @@ describe('Swift calls only functions the engine actually has', () => {
      * account for. It is not a place to park something that was decided
      * against; four of those were deleted rather than listed.
      *
-     * `restore` is the only entry and it is that promise. The vault shows two
-     * recovery phrases and has never been able to take them back: the
-     * passphrase screen says forgetting it means recovering from the words on
-     * paper, and every route between `setup` and `recovery` goes past a door
-     * that does not exist. The engine half is here and proved, including that
-     * a restored vault produces the same account keys as the one it came from.
-     * What is missing is a setup stage with two phrase fields, which is the
-     * first typed key material this app has ever accepted and wants its own
-     * thinking about the pasteboard and the keyboard. `HOST_VERSION` goes to 8
-     * on both sides in the commit that adds that caller, not before: the pin
-     * exists to stop an app calling a function its bundle lacks, and no app
-     * calls this one yet. See docs/handoff.md, section 6. */
-    const unwired = new Set<string>(['restore']);
+     * It is empty again. `restore` was its one entry for exactly as long as
+     * the Swift took to catch up, which is the shape an entry here should
+     * have: if one is still sitting here in a month, the promise was not one. */
+    const unwired = new Set<string>();
     const orphaned = [...hostFunctions].filter((name) => !swiftCalls.has(name) && !unwired.has(name)).sort();
     expect(orphaned, 'the engine exports these and no Swift call site names them').toEqual([]);
     expect([...unwired].filter((name) => swiftCalls.has(name)), 'this is wired now, take it off the list').toEqual([]);
+  });
+
+  it('passes each function its arguments in the order that function declares', () => {
+    /* The fourth direction, and the one that survives both checks above.
+     *
+     * `call` takes `[Any]`, so Swift can hand four strings across in any order
+     * it likes and both sides compile. `restore` is the worked example:
+     * swapping its first two arguments is a one-character edit that produces
+     * "Bitcoin phrase: those words fail their own checksum" against a phrase
+     * that is perfectly correct, on a screen somebody has just typed
+     * thirty-seven words into, with no way to tell which half is lying. Two
+     * `String` parameters next to each other is all it takes, and `sign`,
+     * `reseal` and `create` all have that shape too.
+     *
+     * Both sides name the same things the same way, so the check is simply
+     * that the lists are equal. That is a convention rather than a law, and if
+     * a future function has a good reason to break it, this test is where the
+     * reason gets written down. */
+    const swiftArguments = new Map<string, string[]>();
+    for (const found of codeOnly(engine).matchAll(/call\w*\(\s*'?"(\w+)"\s*,\s*\[([^\]]*)\]/g)) {
+      swiftArguments.set(
+        found[1]!,
+        found[2]!.split(',').map((piece) => piece.trim()).filter(Boolean),
+      );
+    }
+
+    const hostParameters = new Map<string, string[]>();
+    const body = host.slice(host.indexOf('export const api = {'));
+    for (const found of body.matchAll(/^  (\w+): guarded\(\s*'\w+',\s*\n?\s*\(([^)]*)\)/gm)) {
+      hostParameters.set(
+        found[1]!,
+        found[2]!.split(',').map((piece) => piece.trim().split(':')[0]!.trim()).filter(Boolean),
+      );
+    }
+
+    /* Only the functions that take arguments can have them out of order, so
+     * the floor is about those rather than about the whole api. */
+    expect(swiftArguments.size, 'no argument lists found in Engine.swift').toBeGreaterThan(10);
+
+    for (const [name, passed] of swiftArguments) {
+      const declared = hostParameters.get(name);
+      expect(declared, `host.ts declares no parameters for ${name}`).toBeDefined();
+      expect(passed, `Engine.swift passes ${name} its arguments in a different order`).toEqual(declared);
+    }
   });
 
   it('has a caller for every method it wraps', () => {

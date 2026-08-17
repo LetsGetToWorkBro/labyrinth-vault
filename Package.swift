@@ -93,6 +93,7 @@ let package = Package(
                 "Model/Refusal.swift",
                 "Model/Flow.swift",
                 "Model/Identity.swift",
+                "Model/RestoreEntry.swift",
                 "Support/EngineReplies.swift",
                 "Support/Passphrase.swift",
                 "Support/BundleDigest.swift",

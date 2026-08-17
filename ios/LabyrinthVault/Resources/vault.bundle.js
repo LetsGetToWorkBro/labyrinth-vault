@@ -18883,7 +18883,7 @@ zoo`.split("\n"));
     if (!session) throw new Error("The vault is locked.");
     return session;
   }
-  var HOST_VERSION = 7;
+  var HOST_VERSION = 8;
   var SCAN_FROM_GENESIS = 0;
   var api = {
     version: guarded("version", () => done({

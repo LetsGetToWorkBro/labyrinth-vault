@@ -164,7 +164,12 @@ enum Route: Equatable {
 }
 
 enum SetupStage: Equatable {
-    case declaration, radios, verify, boundary, passphrase, entropy, created
+    /* `restore` is a branch off `passphrase` rather than a step between two
+     * others: somebody with words already has no use for the generation
+     * stage, and somebody making a vault has no use for two phrase fields.
+     * Both paths land on `created`, which is the same screen because the
+     * outcome is the same vault. */
+    case declaration, radios, verify, boundary, passphrase, entropy, restore, created
 }
 
 // MARK: - The model
@@ -462,6 +467,7 @@ final class Vault: ObservableObject {
     /// leaves the device exactly as it was: setup can be walked again.
     func beginCreate(passphrase pass: String) {
         guard creation != .working && creation != .done else { return }
+        vaultWasRestored = false
         go(.setup(.entropy))
         guard let engine else {
             creation = .failed("The vault engine is not loaded.")
@@ -474,65 +480,213 @@ final class Vault: ObservableObject {
         creation = .working
         sealing = .sealing
         Task.detached(priority: .userInitiated) { [weak self] in
-            var problem: String?
-            var sealed: String?
-            var opened: Engine.UnlockReply?
-            /* The device half of the passphrase, made now and kept for the
-             * life of this vault. If the keychain will not hold it, no vault
-             * is made: sealing under the typed passphrase alone would be a
-             * weaker vault than the one being asked for, and doing that
-             * silently is the trade this whole project refuses. */
-            let deviceHex = SealedStore.deviceSecretHex(orMakeWith: Engine.freshRandomBytes)
-            if deviceHex == nil {
-                problem = "This device would not store the key that protects your vault. No keys were made."
-            } else if let randomHex = Engine.freshRandomHex(bytes: Vault.createRandomBytes),
-                      let deviceHex {
-                do {
-                    let startedSealing = Date()
-                    let created = try Passphrase.withLayeredBytes(deviceHex: deviceHex, user: pass) { bytes in
-                        try engine.create(randomHex: randomHex, passphrase: bytes)
-                    }
-                    /* Measured rather than guessed, and measured on this
-                     * phone. The reopen below is the same derivation over the
-                     * same parameters, so the pass that just finished is the
-                     * estimate for the pass about to start. */
-                    let sealSeconds = Date().timeIntervalSince(startedSealing)
-                    /* Kept, because the unlock screen has no other way to know
-                     * what a pass costs on this particular phone, and would
-                     * otherwise show a spinner and no number for over a
-                     * minute, every single time. */
-                    SealedStore.rememberPassSeconds(sealSeconds)
-                    await MainActor.run { [weak self] in
-                        self?.sealing = .reopening(afterSeconds: sealSeconds)
-                    }
-                    if let storeProblem = SealedStore.save(created.sealed) {
-                        problem = storeProblem
-                    } else if case .found(let storedHex) = SealedStore.load() {
-                        /* Unlock from the read-back, not from the reply: what
-                         * this proves is that the blob at rest opens, which is
-                         * the thing a relaunch depends on. */
-                        opened = try Passphrase.withLayeredBytes(deviceHex: deviceHex, user: pass) { bytes in
-                            try engine.unlock(sealedHex: storedHex, passphrase: bytes)
-                        }
-                        sealed = storedHex
-                    } else {
-                        problem = "The keychain accepted the vault and then could not return it."
-                    }
-                } catch {
-                    problem = error.localizedDescription
+            guard let outcome = await self?.sealAndOpen(
+                engine: engine,
+                pass: pass,
+                randomBytes: Vault.createRandomBytes,
+                make: { randomHex, bytes in
+                    try engine.create(randomHex: randomHex, passphrase: bytes)
                 }
-            } else {
-                problem = "The device would not produce randomness. No keys were made."
-            }
-            if problem != nil {
-                /* A half-made vault — stored but unopenable, or unopened —
-                 * must not survive to be found by the next launch. */
-                SealedStore.erase()
-            }
-            await MainActor.run { [problem, sealed, opened] in
-                self?.finishCreate(problem: problem, sealed: sealed, opened: opened)
+            ) else { return }
+            await MainActor.run { [outcome] in
+                self?.finishCreate(problem: outcome.problem, sealed: outcome.sealed, opened: outcome.opened)
             }
         }
+    }
+
+    /// What host.ts's `restore` demands: the seal's salt and nonce, and
+    /// nothing more. The 48 bytes `create` also needs are the two wallet
+    /// secrets, and on this path those are on somebody's paper rather than
+    /// drawn here, which is the whole of what restoring means. Passing
+    /// `createRandomBytes` would be refused at the bridge by length, which is
+    /// the failure being made loud rather than the one worth relying on.
+    private static let restoreRandomBytes = 40
+
+    /// True when the vault on this device came from words rather than from a
+    /// CSPRNG. Set when the attempt *starts*, by both paths, and read by the
+    /// two setup screens that would otherwise announce the wrong thing: the
+    /// generation stage says GENERATING KEY MATERIAL, and its failure face
+    /// says NO KEYS WERE MADE, neither of which is true when the keys were
+    /// already made years ago and are on somebody's paper.
+    ///
+    /// Set at entry rather than on success, for two reasons. The stage is on
+    /// the glass for the whole of an Argon2id pass, so a flag set at the end
+    /// would be a screen that lies for the entire time anybody is looking at
+    /// it. And the failure copy needs it too, which is the case where there
+    /// is no success to hang it on.
+    ///
+    /// `beginCreate` clears it, and that is not tidiness: a person who
+    /// restores a vault, erases it, and makes a fresh one would otherwise be
+    /// told their new vault was restored.
+    @Published private(set) var vaultWasRestored = false
+
+    /// Rebuild the vault from the two phrases it showed at setup.
+    ///
+    /// The same shape as `beginCreate` and for the same reasons: the words and
+    /// the passphrase live only inside the running task, nothing is parked in
+    /// a model property between screens, and the blob is read back out of the
+    /// keychain and opened before anything says it worked.
+    ///
+    /// The words arrive already normalized by `RestoreEntry`, which is what
+    /// the screen counted, so what a person was shown as twelve words is what
+    /// is restored. They are still `String`s and still unwipeable, which is
+    /// the same limit `Passphrase.swift` states about typed text: narrowing
+    /// the window is the available move.
+    ///
+    /// Whether those words are the *right* words is not decided here and
+    /// cannot be. `restore` in the engine reads the Bitcoin phrase through
+    /// BIP39's checksum and the Monero phrase through Monero's, and names
+    /// which one is wrong. A second opinion in Swift would be a second
+    /// implementation of somebody else's format.
+    func beginRestore(bitcoin: String, monero: String, passphrase pass: String) {
+        guard creation != .working && creation != .done else { return }
+        vaultWasRestored = true
+        go(.setup(.entropy))
+        guard let engine else {
+            creation = .failed("The vault engine is not loaded.")
+            return
+        }
+        guard !pass.isEmpty else {
+            creation = .failed("No passphrase was chosen. Go back and set one.")
+            return
+        }
+        creation = .working
+        sealing = .sealing
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let outcome = await self?.sealAndOpen(
+                engine: engine,
+                pass: pass,
+                randomBytes: Vault.restoreRandomBytes,
+                make: { randomHex, bytes in
+                    try engine.restore(bitcoinWords: bitcoin, moneroWords: monero,
+                                       passphrase: bytes, randomHex: randomHex)
+                }
+            ) else { return }
+            await MainActor.run { [outcome] in
+                self?.finishCreate(problem: outcome.problem, sealed: outcome.sealed, opened: outcome.opened)
+            }
+        }
+    }
+
+    /// What a sealing attempt came back as. Three optionals rather than a
+    /// `Result`, because `finishCreate` has always read them this way and the
+    /// point of this type is to stop that reading happening in two places.
+    private struct Sealed {
+        let problem: String?
+        let sealed: String?
+        let opened: Engine.UnlockReply?
+    }
+
+    /// Everything a vault needs after somebody has decided what it is made of.
+    ///
+    /// Shared by `beginCreate` and `beginRestore`, and shared deliberately
+    /// rather than copied. What is in here is the dangerous part: the device
+    /// half of the passphrase, the read-back that proves the blob at rest
+    /// opens, and the erase that stops a half-made vault surviving to be found
+    /// by the next launch. Two copies of that would be two places to fix the
+    /// day one of them is wrong, and the copy nobody edits is always the one
+    /// on the path nobody walks: restoring.
+    ///
+    /// `make` is the only difference between the two callers. Create draws 88
+    /// bytes and lets the engine invent a secret; restore draws 40 and hands
+    /// the engine words. Everything after the blob exists is identical,
+    /// because a vault is a vault.
+    ///
+    /// `nonisolated` so it runs off the main actor, on the detached task its
+    /// callers already start: an Argon2id pass is seconds of work and doing it
+    /// on the main actor is a frozen screen. An instance method rather than a
+    /// static one taking a progress closure, so the hop back to the main actor
+    /// to move `sealing` is written here exactly as `beginCreate` wrote it
+    /// before this was extracted, rather than as a closure crossing an actor
+    /// boundary, which is the shape Swift 6's concurrency checking has the
+    /// most opinions about.
+    private nonisolated func sealAndOpen(
+        engine: Engine,
+        pass: String,
+        randomBytes: Int,
+        make: (String, [UInt8]) throws -> Engine.CreateReply
+    ) async -> Sealed {
+        var problem: String?
+        var sealed: String?
+        var opened: Engine.UnlockReply?
+
+        /*
+         * Nothing here overwrites a vault that already exists.
+         *
+         * `SealedStore.save` replaces whatever is at that keychain account, so
+         * until this guard the rule "setup cannot destroy a vault" was held
+         * entirely by navigation: the launch gate routes to `.unlock` when it
+         * finds a blob, and ERASE erases before it sends anybody back to
+         * setup. That is true today and is one screen away from not being. A
+         * future route into setup with a vault present would take somebody's
+         * keys with no error and no undo, and the words that would recover
+         * them are exactly the words a person who never wrote them down does
+         * not have.
+         *
+         * `unreadable` is deliberately not a refusal. It means the keychain
+         * answered with something that is not a blob, which the launch gate
+         * already reports as a real problem, and treating it as "a vault is
+         * here" would leave a device that can never make one.
+         */
+        if case .found = SealedStore.load() {
+            return Sealed(
+                problem: "A vault already exists on this device. Erase it from Settings before "
+                    + "making or restoring another one.",
+                sealed: nil,
+                opened: nil
+            )
+        }
+
+        /* The device half of the passphrase, made now and kept for the life of
+         * this vault. If the keychain will not hold it, no vault is made:
+         * sealing under the typed passphrase alone would be a weaker vault
+         * than the one being asked for, and doing that silently is the trade
+         * this whole project refuses. */
+        let deviceHex = SealedStore.deviceSecretHex(orMakeWith: Engine.freshRandomBytes)
+        if deviceHex == nil {
+            problem = "This device would not store the key that protects your vault. No keys were made."
+        } else if let randomHex = Engine.freshRandomHex(bytes: randomBytes), let deviceHex {
+            do {
+                let startedSealing = Date()
+                let created = try Passphrase.withLayeredBytes(deviceHex: deviceHex, user: pass) { bytes in
+                    try make(randomHex, bytes)
+                }
+                /* Measured rather than guessed, and measured on this phone.
+                 * The reopen below is the same derivation over the same
+                 * parameters, so the pass that just finished is the estimate
+                 * for the pass about to start. */
+                let sealSeconds = Date().timeIntervalSince(startedSealing)
+                /* Kept, because the unlock screen has no other way to know
+                 * what a pass costs on this particular phone, and would
+                 * otherwise show a spinner and no number for over a minute,
+                 * every single time. */
+                SealedStore.rememberPassSeconds(sealSeconds)
+                await MainActor.run { self.sealing = .reopening(afterSeconds: sealSeconds) }
+                if let storeProblem = SealedStore.save(created.sealed) {
+                    problem = storeProblem
+                } else if case .found(let storedHex) = SealedStore.load() {
+                    /* Unlock from the read-back, not from the reply: what this
+                     * proves is that the blob at rest opens, which is the
+                     * thing a relaunch depends on. */
+                    opened = try Passphrase.withLayeredBytes(deviceHex: deviceHex, user: pass) { bytes in
+                        try engine.unlock(sealedHex: storedHex, passphrase: bytes)
+                    }
+                    sealed = storedHex
+                } else {
+                    problem = "The keychain accepted the vault and then could not return it."
+                }
+            } catch {
+                problem = error.localizedDescription
+            }
+        } else {
+            problem = "The device would not produce randomness. No keys were made."
+        }
+        if problem != nil {
+            /* A half-made vault — stored but unopenable, or unopened — must
+             * not survive to be found by the next launch. */
+            SealedStore.erase()
+        }
+        return Sealed(problem: problem, sealed: sealed, opened: opened)
     }
 
     private func finishCreate(problem: String?, sealed: String?, opened: Engine.UnlockReply?) {

@@ -278,6 +278,81 @@ struct Lever: View {
 /// and setup so both can use one field component.
 enum PassphraseFocus { case entry, again }
 
+/// Which word field on the restore stage has the keyboard. The passphrase
+/// fields on that screen keep their own `PassphraseFocus`, because the control
+/// they use is written against that one; `RestoreView.moveTo` is what stops
+/// both being non-nil at once.
+enum PhraseFocus { case bitcoin, monero }
+
+/// A field for a recovery phrase.
+///
+/// ## Why not `PassphraseField`
+///
+/// That control is built around hiding what is typed and revealing it on a
+/// tap, which is right for a passphrase somebody is *choosing* and wrong for
+/// one they are *copying*. Twenty-five words retyped from paper into a field
+/// showing dots is a transcription task with the transcription hidden, and the
+/// first thing a person would do is tap SHOW and leave it shown.
+///
+/// So this shows what is typed, always, and the screen carries the warning
+/// about who else can see the glass. The words are already on paper in the
+/// person's hand; the risk here is a mistake, not a watcher.
+///
+/// ## What is switched off, and why each one matters
+///
+/// Autocapitalization changes what was typed: BIP39 and Monero wordlists are
+/// lowercase, and while `RestoreEntry.normalize` lowercases before anything is
+/// counted or sent, a field that visibly capitalizes every word tells somebody
+/// their paper is wrong.
+///
+/// Autocorrection is worse than cosmetic. iOS will happily turn `aisle` into
+/// `Aisle`, `abandon` into `abandoned`, and any wordlist entry it does not
+/// know into the nearest dictionary word, silently, as the next space is
+/// typed. A corrected phrase fails its checksum, and the person is looking at
+/// words that read correctly.
+///
+/// `.textContentType(.none)` keeps the keychain from offering to fill or save
+/// this, and `.spellChecking` off keeps the red underlines off twenty-five
+/// perfectly good words.
+struct PhraseField: View {
+    let label: String
+    let hint: String?
+    @Binding var text: String
+    var focus: FocusState<PhraseFocus?>.Binding
+    let equals: PhraseFocus?
+    var submitLabel: SubmitLabel = .next
+    var onSubmit: () -> Void = {}
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Eyebrow(label, color: Ink.paperFaint)
+
+            TextField("", text: $text, axis: .vertical)
+                .lineLimit(2...6)
+                .font(Type.mono(15))
+                .foregroundStyle(Ink.paper)
+                .tint(Ink.paper)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textContentType(.none)
+                .keyboardType(.asciiCapable)
+                .focused(focus, equals: equals)
+                .submitLabel(submitLabel)
+                .onSubmit(onSubmit)
+                .padding(.vertical, 12)
+
+            Hairline(weight: 1, color: focus.wrappedValue == equals ? Ink.ruleHeavy : Ink.rule)
+
+            if let hint {
+                Text(hint)
+                    .font(Type.body(12))
+                    .foregroundStyle(Ink.paperDim)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
+
 /// A passphrase field with a way to look at what you typed.
 ///
 /// ## Why a reveal control belongs on a vault in particular
