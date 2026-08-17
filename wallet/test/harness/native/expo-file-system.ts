@@ -77,10 +77,22 @@ export class File {
   }
 
   create(options?: { overwrite?: boolean }): void {
-    /* The real one throws when the file is there and `overwrite` is not set.
-     * Kept, because `vaultFileStore.ts` deletes first specifically to avoid
-     * it, and a stand-in that shrugged would let that deliberate line be
-     * removed with every test still green. */
+    /*
+     * Strict about `overwrite`, and strict on purpose rather than on evidence.
+     *
+     * Expo's types say `CreateOptions.overwrite` means "whether to overwrite
+     * the file if it exists"; what the native side does when it is absent and
+     * the file is already there is not written down anywhere that can be read
+     * from here, and asserting it in a comment would be the kind of confident
+     * sentence this project keeps finding to be wrong.
+     *
+     * So this refuses, because of the two ways to be wrong that is the safe
+     * one. If the real `create` silently overwrites, a test fails here against
+     * code that works on a phone, and somebody investigates. If it throws and
+     * this shrugged, the deliberate delete-first line in `vaultFileStore.ts`
+     * could be removed with every test still green, and the failure would show
+     * up as a key image export that stops working on a device.
+     */
     if (files.has(this.uri) && options?.overwrite !== true) {
       throw new Error(`${this.uri} exists and create was not told to overwrite`);
     }

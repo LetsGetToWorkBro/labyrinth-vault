@@ -7,9 +7,17 @@
  * test that ran it, because nothing could deliver a frame.
  *
  * `scan()` here is that delivery: it calls whatever `onBarcodeScanned` the
- * mounted `CameraView` was given, in the shape the real module calls it. A
- * test can therefore hand the screen a vault's frames one at a time, or hand
- * it frames from two different transmissions and watch it refuse.
+ * mounted `CameraView` was given. A test can therefore hand the screen a
+ * vault's frames one at a time, or hand it frames from two different
+ * transmissions and watch it refuse.
+ *
+ * Two of `BarcodeScanningResult`'s fields, not all of them. The real one also
+ * carries `cornerPoints`, `bounds` and an Android-only `raw`, all of which are
+ * documented as sometimes absent and none of which anything here reads. Adding
+ * them would be inventing plausible geometry, which is worse than not having
+ * it: a screen that started reading `bounds` would be tested against numbers
+ * this file made up. If one ever does, it fails on `undefined` rather than
+ * passing on fiction, which is the direction to be wrong in.
  *
  * Permission is a state machine with three positions, and the first one is
  * null: the hook returns `[null, request]` before it has asked the system.
@@ -64,7 +72,7 @@ type Scanned = (result: { data: string; type: string }) => void;
 /** Every *currently mounted* camera's frame handler, in mount order. */
 const readers: Scanned[] = [];
 
-/** Hand the mounted camera a QR payload, the way the real module does. */
+/** Hand the mounted camera a QR payload. */
 export function scan(data: string): void {
   const reader = readers[readers.length - 1];
   if (reader === undefined) {

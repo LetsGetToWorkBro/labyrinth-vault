@@ -16,7 +16,9 @@
  * The one thing modeled with care is `useSharedValue`. It has to be stable
  * across renders: a fresh box every render would make `useAnimatedStyle` read
  * the initial value forever, and `Dot`'s effect writes to it from a dependency
- * array that names it. A ref is exactly the real thing's storage.
+ * array that names it. A ref holds one box for the life of a mount, which is
+ * the property being relied on; the real one is a shared value the UI thread
+ * can also write, and nothing here has a UI thread.
  */
 
 import { useRef, type ComponentType, type ReactElement } from 'react';
