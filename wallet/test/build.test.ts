@@ -22,7 +22,9 @@ import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { addressAt, openFromMnemonic } from '@vault/keys/bitcoin';
 import { describePsbt } from '@vault/keys/psbt';
-import { DUST, estimateVsize, feeFor, maxSendable, prepare, selectCoins, verifySigned } from '../src/core/build';
+import { DUST, estimateVsize, feeFor, maxSendable, nextChangeIndex, prepare, selectCoins, verifySigned } from '../src/core/build';
+import { GAP_LIMIT } from '../src/core/discover';
+import { readFileSync } from 'node:fs';
 import type { Utxo } from '../src/core/chain';
 import { DEMO_ZPUB, DemoWatcher } from '../src/core/demo';
 
@@ -391,5 +393,87 @@ describe('the demo wallet is really derived, not typed in', () => {
   it('holds exactly the balance the home screen claims', () => {
     const balance = utxos.reduce((sum: bigint, utxo: Utxo) => sum + utxo.value, 0n);
     expect(balance).toBe(48_273_100n);
+  });
+});
+
+describe('where change goes, and the gap limit it has to stay inside', () => {
+  /* The defect this covers lost money in the only way this app can lose it:
+   * silently. The store chose an absolute change index of 24, `discover.ts`
+   * walks the change branch from zero and stops after `GAP_LIMIT` consecutive
+   * unused addresses, and nothing at 0..23 was ever used, so the gap never
+   * reset and 1/24 was never queried. Every change output the app made was
+   * outside the scan window forever, on every rescan. The coins were real and
+   * the vault signed them: only this half could not see them. */
+
+  it('starts at zero when the scan knows nothing', () => {
+    /* An unscanned wallet has used no change addresses. Zero is the answer
+     * rather than a fallback, and it is what keeps the first one inside the
+     * window. */
+    expect(nextChangeIndex([])).toBe(0);
+  });
+
+  it('stays inside the gap limit for a fresh wallet, which is the whole defect', () => {
+    /* The direct regression. Any index at or past `GAP_LIMIT` on a branch with
+     * nothing used is an address the scanner will never ask about. */
+    expect(nextChangeIndex([])).toBeLessThan(GAP_LIMIT);
+    const receiveOnly = [
+      { path: '0/0', used: true },
+      { path: '0/1', used: false },
+    ];
+    expect(nextChangeIndex(receiveOnly)).toBeLessThan(GAP_LIMIT);
+  });
+
+  it('goes past every used change address rather than into the first hole', () => {
+    /* Reusing a free lower index would publish the link between two payments,
+     * which is the thing this function exists to avoid. */
+    const addresses = [
+      { path: '1/0', used: true },
+      { path: '1/1', used: false },
+      { path: '1/2', used: true },
+      { path: '1/3', used: false },
+    ];
+    expect(nextChangeIndex(addresses)).toBe(3);
+  });
+
+  it('ignores the receive branch entirely', () => {
+    /* `0/9` used says nothing about where change should go, and counting it
+     * would push change past the gap on a wallet that has merely been paid a
+     * few times. */
+    const addresses = [
+      { path: '0/9', used: true },
+      { path: '1/0', used: false },
+    ];
+    expect(nextChangeIndex(addresses)).toBe(0);
+  });
+
+  it('moves on for a second draft prepared before the next refresh', () => {
+    /* Two payments composed back to back must not land change on one address.
+     * The offset covers exactly the window between a draft and the refresh
+     * that would notice it. */
+    const addresses = [{ path: '1/0', used: true }];
+    expect(nextChangeIndex(addresses, 0)).toBe(1);
+    expect(nextChangeIndex(addresses, 1)).toBe(2);
+  });
+
+  it('survives paths that are missing or malformed', () => {
+    /* `path` is null for Monero and the snapshot is shared. A parse that threw
+     * or counted junk would put change somewhere arbitrary. */
+    const addresses = [
+      { path: null, used: true },
+      { path: 'nonsense', used: true },
+      { path: '1/x', used: true },
+      { path: '1/0', used: true },
+    ];
+    expect(nextChangeIndex(addresses)).toBe(1);
+  });
+
+  it('is what the store actually asks for', () => {
+    /* The guard against the absolute index coming back. The store must derive
+     * from the snapshot rather than carry a number of its own. */
+    const store = readFileSync('src/state/store.tsx', 'utf8');
+    expect(store).toMatch(/nextChangeIndex\(\s*\n?\s*snapshot\.assets\.BTC\.addresses/);
+    expect(store, 'an absolute change index is back and change will vanish').not.toMatch(
+      /changeIndex = useRef\(\d+\)/,
+    );
   });
 });

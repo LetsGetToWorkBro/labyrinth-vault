@@ -23,7 +23,7 @@ import type { ReactNode } from 'react';
  * React Native's own, not a dependency: on iOS a `url` pointing at a file
  * opens the sheet with the file attached, which is the one thing needed. */
 import { Share } from 'react-native';
-import { prepare, verifySigned } from '../core/build';
+import { nextChangeIndex, prepare, verifySigned } from '../core/build';
 import { prepareMoneroDraft, verifySignedMonero } from '../core/monerodraft';
 import { readStatus, type SwapOrder, type SwapStatus } from '../core/swap';
 import type { PendingSwap } from '../core/swaptrack';
@@ -289,7 +289,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * export right after the Monero one lands two accepts before React commits
    * the first, and merging against the committed state would drop a chain. */
   const pairingRef = useRef<Pairing | null>(null);
-  const changeIndex = useRef(24);
+  /**
+   * How many change addresses this session has used beyond what the scan has
+   * seen, per account.
+   *
+   * An offset rather than an index, and that is the fix to a defect that lost
+   * money in the only way this app can lose it: silently. It used to be
+   * `useRef(24)`, an absolute index chosen before the scanner existed.
+   * `discover.ts` walks the change branch from zero and stops after
+   * `GAP_LIMIT` consecutive unused addresses, so 1/24 was never queried, and
+   * because 0..23 were never used the gap never reset. Every change output the
+   * app ever made stayed outside the scan window, on every rescan, forever.
+   * The coins were real and the vault signed them happily, since `psbt.ts`
+   * scans to depth 200 and recognized the change as its own.
+   *
+   * So the index comes from the scan now, the way the receive address already
+   * did, and this only covers the gap between a draft and the refresh that
+   * would notice it: two payments composed back to back must not land change
+   * on one address, because that publishes the link between them to anybody
+   * reading the chain.
+   */
+  const changeAhead = useRef<Record<string, number>>({});
 
   /* Twenty seconds is slow enough to cost nothing and fast enough that "Just
    * now" becomes "1m ago" while somebody is still looking at the screen. */
@@ -560,6 +580,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       scanStarts.current = { ...scanStarts.current, ...positions };
       setMoneroScans((current) => ({ ...current, ...positions }));
       setMoneroStatus(watchers.watcherFor(selectedAccount)?.moneroProgress() ?? null);
+      /* The scan has now seen whatever the last drafts spent, so the derived
+       * change index is authoritative again and the in-session offset would
+       * only push new change further past the gap. */
+      changeAhead.current = {};
     } finally {
       setRefreshing(false);
       setFetched((count) => count + 1);
@@ -622,7 +646,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       utxos: view.utxos,
       balance: view.spendable,
       zpub: accountKeyOf(selectedAccount) ?? '',
-      change: { index: changeIndex.current },
+      change: {
+        index: nextChangeIndex(
+          snapshot.assets.BTC.addresses,
+          selectedAccount === null ? 0 : changeAhead.current[selectedAccount] ?? 0,
+        ),
+      },
       now: Date.now(),
     });
 
@@ -630,8 +659,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     /* A new change address for the next payment. Reusing one is not a bug that
      * shows up on any screen, which is exactly why it has to be handled here:
      * every payment landing change on the same address publishes the link
-     * between them to anybody reading the chain. */
-    changeIndex.current += 1;
+     * between them to anybody reading the chain. Cleared on the next refresh,
+     * once the scan has seen what this draft spent. */
+    if (selectedAccount !== null) {
+      changeAhead.current[selectedAccount] = (changeAhead.current[selectedAccount] ?? 0) + 1;
+    }
     dispatch({ type: 'prepared', draft: result.draft, at: Date.now() });
     return null;
   }, [session.compose, asset, snapshot, feeOption, selectedAccount, watcher]);

@@ -114,6 +114,50 @@ export interface Selection {
  * payment produces a two-output-free transaction that leaks nothing about
  * change at all, and it is smaller, so it is cheaper.
  */
+/**
+ * Where the next change output should go, read from the scan.
+ *
+ * The defect this replaces was an absolute index chosen in the store before
+ * the scanner existed: change went to 1/24, and `discover.ts` walks the change
+ * branch from zero and stops after `GAP_LIMIT` consecutive unused addresses.
+ * Nothing at 0..23 was ever used, so the gap never reset, so 1/24 was never
+ * queried and every change output the app made was invisible to it forever.
+ * The coins were on the chain and the vault recognized them; only this half
+ * could not see them.
+ *
+ * So the index is derived rather than chosen, exactly the way the receive
+ * address already is: the first index on the change branch that the scan has
+ * not seen a payment to. `ahead` is how many drafts have been prepared since
+ * the last refresh, because two payments composed back to back must not land
+ * change on one address, which would publish the link between them.
+ *
+ * Zero when the scan knows nothing. That is the correct answer rather than a
+ * fallback: an unscanned wallet has used no change addresses, and starting at
+ * zero is what keeps every one of them inside the window.
+ */
+export function nextChangeIndex(
+  addresses: readonly { path: string | null; used: boolean }[],
+  ahead = 0,
+): number {
+  let highestUsed = -1;
+  let firstUnused: number | null = null;
+  for (const entry of addresses) {
+    if (entry.path === null) continue;
+    const match = /^1\/(\d+)$/.exec(entry.path);
+    if (!match) continue;
+    const index = Number.parseInt(match[1]!, 10);
+    if (!Number.isSafeInteger(index)) continue;
+    if (entry.used) highestUsed = Math.max(highestUsed, index);
+    else if (firstUnused === null || index < firstUnused) firstUnused = index;
+  }
+
+  /* Past every used one, not merely at the first gap. A wallet whose change at
+   * 1/2 is used while 1/1 is free would otherwise reuse 1/1, and address reuse
+   * is the thing this function exists to avoid. */
+  const base = firstUnused !== null && firstUnused > highestUsed ? firstUnused : highestUsed + 1;
+  return Math.max(0, base) + Math.max(0, ahead);
+}
+
 export function selectCoins(utxos: readonly Utxo[], amount: Atoms, rate: number): Selection {
   const none: Selection = { chosen: [], fee: 0n, change: 0n, changeToFee: false, problem: null };
   if (amount <= 0n) return { ...none, problem: 'Enter an amount.' };
