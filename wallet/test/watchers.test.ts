@@ -169,3 +169,39 @@ describe('the store keeps them, rather than keeping one', () => {
     expect(store).toMatch(/selected\(accounts\.map\(\(account\) => account\.id\), wantedAccount\)/);
   });
 });
+
+describe('a resumed scan must carry its findings, or it reports zero', () => {
+  /* The defect: `NodeWatcher.found` is in memory by design, because a list of
+   * somebody's incoming payments on disk is what the view key was protecting.
+   * The scan height was persisted anyway, so a relaunch resumed past every
+   * funded block with an empty output set and reported a balance of zero,
+   * under a caveat reading "this total is what arrived". Rescanning could not
+   * recover it either: the key image request is built from the outputs the
+   * scan found, so an empty set makes the vault round trip return nothing. */
+
+  const store = readFileSync('src/state/store.tsx', 'utf8');
+
+  it('only resumes from a position this process produced', () => {
+    expect(store).toMatch(/sessionScans = useRef<Record<string, ScanState>>/);
+    expect(store).toMatch(/const resumable = sessionScans\.current\[id\]/);
+  });
+
+  it('starts a freshly loaded account at its birth height', () => {
+    /* The disk position alone must not be enough. If this comparison goes
+     * back to trusting `stored` on its own, the zero balance returns. */
+    expect(store).toMatch(/resumable && stored && resumable === stored/);
+    expect(store, 'the disk position is being trusted on its own again').not.toMatch(
+      /const scan = stored && stored\.birth >= birth \? stored :/,
+    );
+  });
+
+  it('records a position as resumable only after a real refresh', () => {
+    /* Written where the outputs that go with it are still in memory, and
+     * nowhere else. */
+    expect(store).toMatch(/sessionScans\.current = \{ \.\.\.sessionScans\.current, \.\.\.positions \}/);
+    const loadAt = store.indexOf('scanStarts.current = stored.moneroScans');
+    const sessionAt = store.indexOf('sessionScans.current = {');
+    expect(loadAt).toBeGreaterThan(0);
+    expect(sessionAt).toBeGreaterThan(loadAt);
+  });
+});

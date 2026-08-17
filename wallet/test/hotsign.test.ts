@@ -26,6 +26,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 import { prepare, verifySigned } from '../src/core/build';
 import { signHere, type GateResult } from '../src/core/hotsign';
+import { hotKeyImages } from '../src/core/hotimages';
 import { KEYVAULT_SCHEMA, type HotRecord } from '../src/core/keyvault';
 import { DEMO_ZPUB, DemoWatcher } from '../src/core/demo';
 import type { Draft } from '../src/core/model';
@@ -370,5 +371,64 @@ describe('the send flow, split and wired', () => {
     };
     walk('src');
     expect(importers).toEqual(['src/state/biometrics.ts']);
+  });
+});
+
+describe('a hot Monero account computes its own key images', () => {
+  /* The defect: a Monero coin is spendable only once the wallet holds its key
+   * image, and the image book had exactly one writer, a payload scanned off a
+   * vault. `moneroSpendable` filters to outputs an image covers, so a
+   * phone-only wallet's spendable set was always empty and the refusal told it
+   * to go and scan a vault it does not have. The signer was built, tested end
+   * to end, and unreachable.
+   *
+   * A hot account does not need the trip: computing an image needs the spend
+   * key, and on this account the spend key is here. That is exactly the
+   * difference the airgap exists to create. */
+
+  const XMR_SEED = 'ab'.repeat(32);
+
+  it('refuses a vault account, and says where its images do come from', () => {
+    /* First and absolute, the same order every other file in this feature
+     * uses. A vault account's spend key is not here, so there is nothing to
+     * compute from and a function that tried would fail confusingly or, worse,
+     * succeed against the wrong keys. */
+    const result = hotKeyImages('vault', hotRecord({ xmrSeed: XMR_SEED }), new Uint8Array([1]));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.problem).toMatch(/over the camera/);
+  });
+
+  it('refuses when the phone holds no Monero half', () => {
+    const result = hotKeyImages('hot', hotRecord(), new Uint8Array([1]));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.problem).toMatch(/twenty-five words/);
+  });
+
+  it('parses the request rather than trusting bytes it made itself', () => {
+    /* A local path that skipped the parse would be the one place the wire
+     * format is not checked, which is where a format bug survives. */
+    const result = hotKeyImages('hot', hotRecord({ xmrSeed: XMR_SEED }), new Uint8Array([9, 9, 9]));
+    expect(result.ok).toBe(false);
+  });
+
+  it('goes through the same payload and the same door a vault does', () => {
+    /* Writing images straight into the book would be shorter and would be a
+     * second way in. `offerReply` refuses images for outputs this wallet has
+     * not seen and keeps the book's accounting honest; a path that skipped it
+     * is the path nobody tests against a real vault. */
+    const source = codeOnly(readFileSync('src/core/hotimages.ts', 'utf8'));
+    expect(source).toMatch(/encodeKeyImageReply/);
+    expect(source, 'a local writer into the book is back').not.toMatch(/offerReply|new KeyImageBook/);
+
+    const store = codeOnly(readFileSync('src/state/store.tsx', 'utf8'));
+    expect(store).toMatch(/hotKeyImages\(account\.source, hot, request\.payload\)/);
+    expect(store).toMatch(/watcher\.importKeyImages\(computed\.payload\)/);
+  });
+
+  it('wipes the wallet it opened, whatever happened', () => {
+    const source = codeOnly(readFileSync('src/core/hotimages.ts', 'utf8'));
+    expect(source).toMatch(/finally \{\s*\n?\s*wipeWallet\(wallet\)/);
   });
 });

@@ -52,6 +52,7 @@ import { clearPairing, loadPairing, savePairing } from './persistKeys';
 import { forgetHot, loadHot, saveHot, watchOnlyFrom, type HotRecord } from '../core/keyvault';
 import { accountsFrom, type Account } from '../core/accounts';
 import { signHere as signWithHotKeys } from '../core/hotsign';
+import { hotKeyImages } from '../core/hotimages';
 import { nativeGate } from './biometrics';
 import { transmit, Transmission } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
@@ -357,6 +358,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * advances: that would throw away the outputs it has found and restart the
    * scan, forever, on every refresh. */
   const scanStarts = useRef<Record<string, ScanState>>({});
+  /* The positions this process actually produced, as opposed to the ones read
+   * off disk. Only these are safe to resume from, because only these have the
+   * findings that go with them still in memory. */
+  const sessionScans = useRef<Record<string, ScanState>>({});
 
   /* Which account the interface is looking at, as asked for rather than as
    * resolved. `selected` turns it into one that exists; keeping the raw wish
@@ -465,9 +470,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
        * first, which reads as money that did not turn up. */
       const birth = source.birth ?? restoreHeight();
       const stored = scanStarts.current[id];
-      /* A stored position from an earlier pairing of the same id must not skip
-       * this account's early blocks: resume only from at or after this birth. */
-      const scan = stored && stored.birth >= birth ? stored : { birth, height: birth };
+      /*
+       * Resume only where the findings survived, which across a launch they do
+       * not.
+       *
+       * `NodeWatcher.found` is in memory by design: a list of somebody's
+       * incoming payments on disk is exactly what the view key was protecting.
+       * The height was persisted anyway, so a relaunch resumed past every
+       * funded block with an empty output set and reported a balance of zero,
+       * under a caveat that says "this total is what arrived". Rescanning that
+       * account also could not recover it, because the key image request is
+       * built from the outputs the scan found.
+       *
+       * So the position is only honored inside the session that produced it.
+       * `sessionScans` is populated by a refresh in this process; anything
+       * loaded from disk starts at the birth height. Slow and correct, which
+       * is the trade this project makes everywhere else it appears.
+       */
+      const resumable = sessionScans.current[id];
+      const scan =
+        resumable && stored && resumable === stored && stored.birth >= birth
+          ? stored
+          : { birth, height: birth };
       return { account: opened.account, scan };
     };
 
@@ -578,7 +602,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (progress) positions[id] = progress.scan;
       }
       scanStarts.current = { ...scanStarts.current, ...positions };
+      sessionScans.current = { ...sessionScans.current, ...positions };
       setMoneroScans((current) => ({ ...current, ...positions }));
+      /*
+       * A hot account computes its own key images, because its spend key is
+       * here. Without this the coins are found and never become spendable:
+       * `moneroSpendable` filters to outputs an image covers, and the only
+       * writer of the book was a payload scanned off a vault. A phone-only
+       * wallet was told to go and scan a vault it does not have.
+       *
+       * Done after the scan rather than on a button, because there is nothing
+       * for a person to decide: the keys are already here and the trip a vault
+       * needs is the thing this account does not have to make.
+       */
+      if (hot !== null) {
+        for (const account of accounts) {
+          if (!account.signsHere) continue;
+          const watcher = watchers.watcherFor(account.id);
+          const request = watcher?.keyImageRequest();
+          if (!watcher || !request || !request.ok || !request.payload) continue;
+          const computed = hotKeyImages(account.source, hot, request.payload);
+          if (computed.ok) watcher.importKeyImages(computed.payload);
+        }
+      }
+
       setMoneroStatus(watchers.watcherFor(selectedAccount)?.moneroProgress() ?? null);
       /* The scan has now seen whatever the last drafts spent, so the derived
        * change index is authoritative again and the in-session offset would
@@ -588,7 +635,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setRefreshing(false);
       setFetched((count) => count + 1);
     }
-  }, [watchers, accounts, selectedAccount]);
+  }, [watchers, accounts, selectedAccount, hot]);
 
   /* One refresh when a node is set, and none on a timer. Polling a node every
    * thirty seconds is a wallet telling somebody's node operator exactly when
