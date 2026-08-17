@@ -10,7 +10,7 @@ most of them are not recoverable from the diff.
 
 ## The state of the tree
 
-All three suites pass: **1060 vault, 963 companion, 68 Worker.** `npx tsc
+All three suites pass: **1063 vault, 963 companion, 68 Worker.** `npx tsc
 --noEmit` is clean in `wallet/` and in `worker/`, and the vault's own typecheck
 runs inside `npm test`. All three now run on push: the Worker's suite and
 typecheck were missing from `.github/workflows/tests.yml`, and the Worker's

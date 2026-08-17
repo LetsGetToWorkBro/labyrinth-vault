@@ -593,6 +593,54 @@ describe('every suite in this repository runs when nobody remembers to run it', 
     );
   });
 
+  it('checks the test counts CLAUDE.md documents, after all three have run', () => {
+    /* The counts exist so a suite quietly shrinking is visible, and nothing
+     * checked them: they read 1015 and 631 while the suites held 1060 and 905.
+     * The check cannot be a test, because a test that knew its own suite's
+     * total would have to run that suite inside itself, so the suites write
+     * JSON reports from their own configs and a script compares the three.
+     *
+     * Ordered, not just present. Running it before a suite is running it
+     * against that suite's previous report, which is a check that passes on
+     * yesterday's number. */
+    expect(workflow, 'nothing compares the documented counts against the real ones').toContain(
+      'node scripts/test-counts.mjs',
+    );
+    const counts = workflow.indexOf('node scripts/test-counts.mjs');
+    for (const [marker, suite] of [
+      ['working-directory: wallet', 'companion'],
+      ['working-directory: worker', 'Worker'],
+    ] as const) {
+      expect(
+        workflow.indexOf(marker),
+        `the counts are checked before the ${suite} suite has run, so it reads a stale report`,
+      ).toBeLessThan(counts);
+    }
+  });
+
+  it('has every suite write the report that check reads', () => {
+    /* Written from each vitest config rather than a flag on the CI command,
+     * so a person running a suite the ordinary way produces it too. A check
+     * that exists only in CI tells you about a mistake after you pushed it. */
+    for (const config of ['vitest.config.ts', 'wallet/vitest.config.mts', 'worker/vitest.config.ts']) {
+      const text = readFileSync(config, 'utf8');
+      expect(text, `${config} no longer writes a JSON report, so the count check has nothing to read`)
+        .toMatch(/reporters:\s*\['default',\s*'json'\]/);
+      expect(text, `${config} names no output file for its report`).toMatch(
+        /outputFile:\s*\{\s*json:\s*'\.counts\//,
+      );
+    }
+  });
+
+  it('keeps those reports out of the tree', () => {
+    /* A run's own arithmetic, regenerated every time. Committed, it would be
+     * one more number to keep in step, which is the problem being solved. */
+    const ignored = readFileSync('.gitignore', 'utf8');
+    for (const dir of ['.counts/', 'wallet/.counts/', 'worker/.counts/']) {
+      expect(ignored, `${dir} is written by every run and is not ignored`).toContain(dir);
+    }
+  });
+
   it('caches against every lockfile it installs from', () => {
     /* Three `npm ci` runs, three lockfiles. A missing one is not a failure,
      * it is a slow job forever, which nobody files. */

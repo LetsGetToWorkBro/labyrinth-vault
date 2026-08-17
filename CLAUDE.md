@@ -70,18 +70,28 @@ useful. Never leave key handling half-built in a tree that is on TestFlight.
 
 ## Before you commit
 
-    npm test                      # vault: 1060 tests, includes typecheck and swift-check
+    npm test                      # vault: 1063 tests, includes typecheck and swift-check
     cd wallet && npx vitest run   # companion: 963 tests
     cd wallet && npx tsc --noEmit
     cd worker && npm test         # the Worker: 68 tests, plus npm run typecheck
 
 The counts are there so that a suite quietly shrinking is visible, not as a
 target. They were 1015 and 631 for long enough to be wrong by two hundred
-tests, which is the failure this line exists to catch pointed at itself. All
-three now run on push: `.github/workflows/tests.yml` had one job that stopped
-after the companion, so every guard under `worker/test` was enforced only by
-whoever remembered, and `cd worker && npm run typecheck` had never once been
-run. `test/shipping.test.ts` fails if a suite falls out of that file again.
+tests, which is the failure this line exists to catch pointed at itself.
+
+They are no longer kept by hand. Each vitest config writes a JSON report as it
+runs, and after all three suites `node scripts/test-counts.mjs` compares the
+three totals against these lines and against `docs/handoff.md`. Run it with
+`--write` when a count changes on purpose; it edits both files. It is not a
+test, because a test that knew its own suite's total would have to run that
+suite inside itself, and a report from a partial run is refused rather than
+believed.
+
+All three suites run on push: `.github/workflows/tests.yml` had one job that
+stopped after the companion, so every guard under `worker/test` was enforced
+only by whoever remembered, and `cd worker && npm run typecheck` had never once
+been run. `test/shipping.test.ts` fails if a suite falls out of that file
+again, or if the count check stops running after them.
 
 `npm test` also rebuilds the engine bundle and writes its SHA-256 into
 `ios/LabyrinthVault/Support/BundleDigest.swift`. Skipping it and then building

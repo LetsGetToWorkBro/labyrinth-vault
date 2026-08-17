@@ -52,6 +52,18 @@ export default defineConfig({
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     environment: 'node',
     /**
+     * A JSON report beside the default one, so the count is a fact rather than
+     * something read off a terminal.
+     *
+     * `scripts/test-counts.mjs` reads it and compares against the number
+     * CLAUDE.md documents for this suite. Written from the config rather than
+     * a CI flag so that a person running the suite the ordinary way produces
+     * it too: a check that only exists in CI is a check that tells you about a
+     * mistake after you pushed it. The directory is ignored by git.
+     */
+    reporters: ['default', 'json'],
+    outputFile: { json: '.counts/wallet.json' },
+    /**
      * One line, dropped, and only that one.
      *
      * React 19 prints a deprecation notice when `react-test-renderer` is

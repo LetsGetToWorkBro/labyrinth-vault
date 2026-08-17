@@ -12,6 +12,10 @@
 # one job that stopped after the companion, so every guard under worker/test
 # passed or failed on somebody's laptop and nowhere else.
 #
+# After the three, the test counts CLAUDE.md documents are checked against
+# what the three runs reported. That step runs no tests: the suites write JSON
+# reports from their own configs and scripts/test-counts.mjs reads them.
+#
 # The Swift toolchain comes from scripts/install-swift.sh, the same script a
 # person runs, with the same two non-optional checks: the Swift project's
 # signature and this repository's pinned digest. The unpacked toolchain is
@@ -86,6 +90,15 @@ jobs:
           npm ci
           npm test
           npm run typecheck
+
+      - name: The counts in CLAUDE.md are the counts
+        # Nothing here runs a test. Each of the three vitest configs writes a
+        # JSON report as it runs, so by this point all three exist, and this
+        # reads them and compares against the numbers CLAUDE.md documents per
+        # suite. Those numbers were wrong by two hundred tests for long enough
+        # that the line admitting it is the failure the line exists to catch,
+        # pointed at itself. Now something checks.
+        run: node scripts/test-counts.mjs
 
       - name: The tree is what the pipeline produces
         # A build whose regenerated artifacts differ from what was committed
