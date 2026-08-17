@@ -51,5 +51,24 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     environment: 'node',
+    /**
+     * One line, dropped, and only that one.
+     *
+     * React 19 prints a deprecation notice when `react-test-renderer` is
+     * imported. It is true and it is answered in the harness header: the two
+     * renderers React points at instead need either a React Native jest
+     * preset or `react-native-web`, and neither runs against this package's
+     * pinned versions. The renderer is a deliberate choice, written down, and
+     * printing the notice once per test file turns it into scenery.
+     *
+     * Matched exactly rather than by keyword. A filter on "deprecated" would
+     * eventually swallow a notice about something in this repository, which is
+     * the failure this narrowness exists to prevent. Everything else a screen
+     * prints, including every React warning about keys, state and effects,
+     * goes to the console.
+     */
+    onConsoleLog(log) {
+      return log.includes('react-test-renderer is deprecated') ? false : undefined;
+    },
   },
 });

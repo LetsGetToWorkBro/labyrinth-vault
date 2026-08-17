@@ -14,6 +14,22 @@
  * boundary: read the head of `native/react-native.tsx` for what a passing test
  * here does and does not prove. In short, this runs JavaScript and not layout.
  *
+ * ## The renderer, and its deprecation
+ *
+ * `react-test-renderer` prints a notice on import saying React has deprecated
+ * it. The notice is true. The two things React points at instead are
+ * `@testing-library/react-native`, which needs the React Native jest preset
+ * and the Babel transform that comes with it, and `react-dom` against a DOM,
+ * which needs `react-native-web` to have anything to render into. Neither is
+ * installable against this package's pinned versions without pulling in a
+ * second toolchain, and a harness that needed one would be a harness nobody
+ * could run from `npx vitest run`.
+ *
+ * So it is a deliberate choice with a known expiry rather than an oversight,
+ * and `vitest.config.mts` drops that one line so it does not become scenery.
+ * When it finally goes, what replaces it has to keep the vocabulary below;
+ * nothing in any test file names the renderer.
+ *
  * ## The vocabulary
  *
  * Screens are asked about in the words a person would use. `shows` is what is
