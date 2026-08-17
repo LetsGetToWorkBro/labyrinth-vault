@@ -71,7 +71,7 @@ useful. Never leave key handling half-built in a tree that is on TestFlight.
 ## Before you commit
 
     npm test                      # vault: 1060 tests, includes typecheck and swift-check
-    cd wallet && npx vitest run   # companion: 905 tests
+    cd wallet && npx vitest run   # companion: 946 tests
     cd wallet && npx tsc --noEmit
     cd worker && npm test         # the Worker: 68 tests, plus npm run typecheck
 
@@ -92,13 +92,30 @@ in Xcode produces an app that correctly refuses to launch.
 until it is regenerated, and the errors that produces name entirely different
 files.
 
+## Mounting a screen
+
+`wallet/test/harness/` runs the companion's screens under Node. `mount(...)`
+returns something you ask in a person's words: `shows`, `press`, `type`,
+`controls`. Every screen `App.tsx` registers is mounted by
+`wallet/test/screens-mounted.test.tsx`, and a screen added there without being
+added here fails that file.
+
+The modules a phone provides and Node does not are stood in for under
+`test/harness/native/`, aliased in `vitest.config.mts`. Read the head of
+`native/react-native.tsx` before trusting a result: this runs JavaScript, not
+layout. A control it can press may be under another view on a real screen.
+`wallet/test/harness.test.ts` keeps the stand-ins honest, including the rule
+that reaching for an unmodeled member throws rather than yielding `undefined`.
+
 ## What the suite cannot see
 
 `Package.swift` builds the platform-free half of the vault for real, but
 `Vault.swift` and every screen are on its `exclude:` list because they import
 SwiftUI. They are parsed for syntax and type-checked by nobody until Xcode
 opens. Three Mac-only build errors reached `main` through a green suite. Two
-specific holes now have guards; the general one needs a Mac in CI.
+specific holes now have guards; the general one needs a Mac in CI. This is now
+the only layer of either app where nothing runs the interface: the companion's
+screens are mounted, the vault's are not.
 
 The same shape of gap at other layers is listed under "Still true, still
 unverified" in `docs/handoff.md`: no daemon has accepted a broadcast, no
