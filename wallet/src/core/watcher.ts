@@ -216,7 +216,7 @@ export function historyFrom(
   return out;
 }
 
-const EMPTY_VIEW = (asset: Asset): AssetView => ({
+export const EMPTY_VIEW = (asset: Asset): AssetView => ({
   asset,
   balance: 0n,
   spendable: 0n,

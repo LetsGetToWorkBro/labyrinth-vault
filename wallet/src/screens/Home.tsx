@@ -40,7 +40,7 @@ import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon, S
 import { assetColor, color, space } from '../design/tokens';
 import { fiatCents, formatFiat, hasPrice } from '../core/units';
 import { useStore } from '../state/store';
-import { NOTHING_WATCHED, watchingNothing } from '../core/accounts';
+import { NOTHING_WATCHED, signingNote, watchingNothing } from '../core/accounts';
 import type { Nav } from '../nav/routes';
 
 /* The gutter is 24 either side, so the readout column is whatever is left.
@@ -49,7 +49,8 @@ import type { Nav } from '../nav/routes';
 const COLUMN = Dimensions.get('window').width - space.gutter * 2;
 
 export function HomeScreen({ navigation }: Nav<'Home'>) {
-  const { snapshot, vault, now, setAsset, accounts } = useStore();
+  const { snapshot, vault, now, setAsset, accounts, selectedAccount } = useStore();
+  const looking = accounts.find((account) => account.id === selectedAccount) ?? null;
   const bitcoin = snapshot.assets.BTC;
   const monero = snapshot.assets.XMR;
 
@@ -109,6 +110,27 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
 
           <Gap size={space.snug} />
           <VaultStatus vault={vault} now={now} onPress={() => navigation.navigate('Accounts')} />
+
+          {/* Which account this screen is about, said above the number rather
+              than inferred from it. The wallet watches every account and shows
+              one at a time, because a vault account and an account on this
+              phone are different wallets and one total over both would hide
+              the only distinction the product exists to make. */}
+          {looking !== null ? (
+            <>
+              <Gap size={space.step} />
+              <Press onPress={() => navigation.navigate('Accounts')}>
+                <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.snug }}>
+                  <Label tone={color.bone}>{looking.label.toUpperCase()}</Label>
+                  <Label tone={looking.signsHere ? color.warn : color.good}>
+                    {signingNote(looking)}
+                  </Label>
+                  <View style={{ flex: 1 }} />
+                  {accounts.length > 1 ? <Label tone={color.slate}>SWITCH</Label> : null}
+                </View>
+              </Press>
+            </>
+          ) : null}
         </View>
 
         <Rule />

@@ -125,7 +125,12 @@ describe('a wallet with no chain behind it says so, everywhere it shows a number
      * flag that no longer exists. */
     const store = codeOnly(readFileSync('src/state/store.tsx', 'utf8'));
     expect(store, 'the demo watcher is back in the running app').not.toMatch(/DemoWatcher/);
-    expect(store).toMatch(/new NodeWatcher\(nodes, accountKey/);
+    /* One watcher per account, built from the real keys. The fixture cannot
+     * come back through here without this line changing. */
+    expect(store).toMatch(/new Watchers\(nodes, accountKeys/);
+    const watchers = codeOnly(readFileSync('src/core/watchers.ts', 'utf8'));
+    expect(watchers).toMatch(/new NodeWatcher\(nodes, account\.zpub/);
+    expect(watchers, 'the fixture reached the watcher layer').not.toMatch(/DemoWatcher/);
 
     const chain = readFileSync('src/core/chain.ts', 'utf8');
     expect(chain, 'ChainSnapshot has a demo flag again').not.toMatch(/demo: boolean/);
@@ -159,7 +164,8 @@ describe('a wallet with no chain behind it says so, everywhere it shows a number
     expect(nodes).toMatch(/No keys and no payment history/);
     const persisted = readFileSync('src/state/persist.ts', 'utf8');
     expect(persisted).toMatch(/nodes: \{ btc: NodeConfig \| null; xmr: NodeConfig \| null \}/);
-    expect(persisted).toMatch(/moneroScan: \{ height: number; birth: number \} \| null/);
+    expect(persisted).toMatch(/moneroScans: Record<string, ScanPosition>/);
+    expect(persisted).toMatch(/height: number;\n  birth: number;/);
   });
 
   it('offers a way to throw the stored file away', () => {

@@ -33,23 +33,11 @@ import { Body, Label, Small, Strong } from '../design/text';
 import { Header } from '../components/chrome';
 import { assetColor, color, space } from '../design/tokens';
 import { useStore } from '../state/store';
-import {
-  NOTHING_WATCHED,
-  signingNote,
-  unwatchedChains,
-  watchedSources,
-  watchingNothing,
-  type Account,
-} from '../core/accounts';
+import { NOTHING_WATCHED, signingNote, watchingNothing, type Account } from '../core/accounts';
 import type { Nav } from '../nav/routes';
 
 export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
-  const { accounts, pairing, hot } = useStore();
-
-  /* Which source each chain is actually read through. Computed from the same
-   * two values `store.tsx` computes its precedence from, so this cannot drift
-   * from what the watcher is really doing. */
-  const watching = watchedSources(pairing, hot);
+  const { accounts, selectedAccount, selectAccount } = useStore();
 
   return (
     <Screen>
@@ -74,12 +62,14 @@ export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
                 <AccountRow
                   key={account.id}
                   account={account}
-                  unwatched={unwatchedChains(account, watching)}
-                  onPress={() =>
-                    /* A vault row opens the vault screen, which is still the
-                       device manager it always was. A hot row opens the words,
-                       because that is the thing a person came to this list to
-                       find. Neither is a settings page for the other. */
+                  looking={account.id === selectedAccount}
+                  /* Tapping a row looks at that account. Every screen follows,
+                     which is what makes the selection meaningful rather than a
+                     highlight. Opening the account's own screen is the second
+                     control on the row, because a list whose only gesture is
+                     "go somewhere else" is a menu rather than a list. */
+                  onPress={() => selectAccount(account.id)}
+                  onOpen={() =>
                     account.source === 'vault'
                       ? navigation.navigate('Vault')
                       : navigation.navigate('Backup')
@@ -130,12 +120,14 @@ export function AccountsScreen({ navigation }: Nav<'Accounts'>) {
  */
 function AccountRow({
   account,
-  unwatched,
+  looking,
   onPress,
+  onOpen,
 }: {
   account: Account;
-  unwatched: string[];
+  looking: boolean;
   onPress: () => void;
+  onOpen: () => void;
 }) {
   return (
     <Press onPress={onPress}>
@@ -144,6 +136,7 @@ function AccountRow({
           <Strong style={{ flex: 1 }}>{account.label}</Strong>
           <Label tone={account.signsHere ? color.warn : color.good}>{signingNote(account)}</Label>
         </View>
+        {looking ? <Label tone={color.bone}>LOOKING AT THIS ONE</Label> : null}
         <View style={{ flexDirection: 'row', gap: space.snug }}>
           {account.chains.map((chain) => (
             <Chip key={chain} tone={assetColor(chain)}>
@@ -160,15 +153,13 @@ function AccountRow({
             Paired from a vault. This phone holds the watching half and nothing that can spend.
           </Small>
         )}
-        {/* Said out loud rather than shown as a missing balance. This wallet
-            reads one account key per chain, so with both kinds of account
-            holding the same chain, one of them is not being watched. A balance
-            that is silently absent reads as a balance that is gone. */}
-        {unwatched.length > 0 ? (
-          <Small tone={color.warn}>
-            {`Not being watched: ${unwatched.join(' and ')}. This wallet reads one account per chain and is reading the other one. Its coins are safe and its words still restore it elsewhere.`}
-          </Small>
-        ) : null}
+        <Press onPress={onOpen} weight="none">
+          <View style={{ paddingTop: space.snug }}>
+            <Label tone={color.slate}>
+              {account.source === 'vault' ? 'THE VAULT' : 'THE RECOVERY WORDS'}
+            </Label>
+          </View>
+        </Press>
       </View>
       <Rule />
     </Press>

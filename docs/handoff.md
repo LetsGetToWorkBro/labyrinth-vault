@@ -255,27 +255,33 @@ happens, and `test/backup.test.ts` fails if a millisecond field named `birth`
 reappears or if the parser starts accepting one. Nothing had shipped with the
 old name, so this was free to fix and it was free exactly once.
 
-## The limitation this work leaves behind
+## The limitation this work left behind, and closed
 
-**`NodeWatcher` holds one account key per chain.** A phone with a vault paired
-*and* a seed of its own can therefore only watch one of them per chain, and
-`store.tsx` resolves that in favor of the pairing: it is the account somebody is
-more likely to have money in.
+**`NodeWatcher` held one account key per chain.** A phone with a vault paired
+*and* a seed of its own could only watch one of them, the pairing won, and the
+accounts screen printed a sentence on whichever row lost.
 
-That is a real limit rather than a bug, and it is handled by being said out
-loud. `watchedSources` in `core/accounts.ts` mirrors the store's precedence
-exactly, `unwatchedChains` turns it into the chains a row is losing, and the
-accounts screen prints a sentence on any row that is not being read. A guard in
-`test/backup.test.ts` fails if the store and that function ever disagree,
-because at that moment the screen starts describing a wallet the app is not
-running and an unwatched balance goes back to being silently absent, which is
-the failure the demo snapshot had pointing the other way.
+That is gone. `core/watchers.ts` keeps one `NodeWatcher` per account and the
+store builds one from each row in the accounts list. `NodeWatcher` itself is
+untouched, which is the point: it carries the Monero scan, the key image book,
+the spend events and the histories, all keyed to one account, and teaching it to
+hold arrays would have grown a dimension through every one of them and retired
+tests that are currently about real behavior. The account stays the unit a
+watcher watches; something above it holds several.
 
-The fix is a watcher that holds more than one account per chain. It touches
-`watcher.ts`, the snapshot shape, and every screen that reads a single balance,
-so it is a piece of work rather than a line, and it should be done before this
-wallet is offered to somebody who will plausibly hold both kinds of account at
-once.
+**Balances are not summed, and that is a product decision rather than a
+shortcut.** A vault account and an account on this phone are different wallets
+with different security properties, and one number over both would hide the only
+distinction this product exists to make. So the app looks at one account at a
+time, Home says which above the number, the accounts list is where they are seen
+together, and tapping a row changes what every screen is about.
+
+Two things that fell out of it. `persist.ts` is at schema 2, because one stored
+scan position became one per account: sharing a position hands one account's
+progress to the other, which is a scan that starts too late and a balance that
+is short. And a refresh now asks every account rather than the one on screen,
+because refreshing what is being looked at makes the other account's balance a
+thing that only updates when somebody visits it.
 
 ## Still true, still unverified
 

@@ -46,13 +46,38 @@
 import { parseNode, type NodeConfig } from '../core/nodes';
 import { parsePendingSwap, type PendingSwap } from '../core/swaptrack';
 
-/** Bumped when the shape changes in a way an older reader would misread. */
-export const SCHEMA = 1;
+/**
+ * Bumped when the shape changes in a way an older reader would misread.
+ *
+ * Two, because `moneroScan` became `moneroScans`: one scan position became one
+ * per account when the wallet learned to watch more than one. A version 1 file
+ * is dropped rather than migrated, which is this file's standing policy and
+ * costs nothing real here: a scan position is a cache of work, and the work is
+ * walking blocks the node still has. The wallet re-derives it by scanning, and
+ * the alternative, guessing which account a lone stored position belonged to,
+ * would resume the wrong account from the wrong height and silently miss every
+ * payment before it.
+ */
+export const SCHEMA = 2;
+
+/** Where one account's Monero scan got to. */
+export interface ScanPosition {
+  height: number;
+  birth: number;
+}
 
 export interface Persisted {
   nodes: { btc: NodeConfig | null; xmr: NodeConfig | null };
-  /** Where the Monero scan got to, so a relaunch does not start again. */
-  moneroScan: { height: number; birth: number } | null;
+  /**
+   * Where each account's Monero scan got to, keyed by account id.
+   *
+   * Keyed rather than a single position, because two accounts scan two
+   * different sets of blocks for two different view keys and a shared position
+   * would hand one account's progress to the other. That is not a slow scan,
+   * it is a scan that starts too late and reports a balance that is missing
+   * money.
+   */
+  moneroScans: Record<string, ScanPosition>;
   /** The one swap in flight, so a relaunch can still ask the provider about
    *  it. An order id and two amounts: no address, no key, nothing that helps
    *  anyone who reads this file. See core/swaptrack.ts for the argument. */
@@ -61,7 +86,7 @@ export interface Persisted {
 
 export const EMPTY: Persisted = {
   nodes: { btc: null, xmr: null },
-  moneroScan: null,
+  moneroScans: {},
   pendingSwap: null,
 };
 
@@ -125,7 +150,7 @@ export async function load(store: Store): Promise<Persisted> {
    * turn an empty file into a crash on launch. */
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return EMPTY;
 
-  const body = raw as { schema?: unknown; nodes?: unknown; moneroScan?: unknown; pendingSwap?: unknown };
+  const body = raw as { schema?: unknown; nodes?: unknown; moneroScans?: unknown; pendingSwap?: unknown };
   if (body.schema !== SCHEMA) return EMPTY;
 
   const stored = (body.nodes ?? {}) as { btc?: unknown; xmr?: unknown };
@@ -134,7 +159,7 @@ export async function load(store: Store): Promise<Persisted> {
       btc: revalidate('esplora', stored.btc),
       xmr: revalidate('monerod', stored.xmr),
     },
-    moneroScan: revalidateScan(body.moneroScan),
+    moneroScans: revalidateScans(body.moneroScans),
     /* Same door a fresh order comes through: the provider must be one this
      * build speaks to, the coins ones it lists, the numbers numbers. A file
      * from an older build simply has no entry here, which parses to null. */
@@ -165,7 +190,28 @@ function revalidate(kind: 'esplora' | 'monerod', value: unknown): NodeConfig | n
   return parsed.ok ? parsed.config : null;
 }
 
-function revalidateScan(value: unknown): Persisted['moneroScan'] {
+/**
+ * Every stored scan position, dropping any that does not check out.
+ *
+ * One bad entry loses one account's progress rather than the file, because the
+ * accounts are independent and there is no reason a mangled position for one
+ * should restart the other.
+ */
+function revalidateScans(value: unknown): Record<string, ScanPosition> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, ScanPosition> = {};
+  for (const [id, entry] of Object.entries(value as Record<string, unknown>)) {
+    /* The id is a key in a file, so it is untrusted text. Anything that is not
+     * one of the ids this app actually uses is dropped rather than kept: a map
+     * that accumulates junk keys is a file that grows forever. */
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(id)) continue;
+    const position = revalidateScan(entry);
+    if (position) out[id] = position;
+  }
+  return out;
+}
+
+function revalidateScan(value: unknown): ScanPosition | null {
   if (!value || typeof value !== 'object') return null;
   const entry = value as { height?: unknown; birth?: unknown };
   /* Typed, not coerced. `Number(null)` is zero and JSON writes a `NaN` as

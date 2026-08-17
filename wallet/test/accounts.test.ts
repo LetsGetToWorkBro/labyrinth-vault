@@ -14,15 +14,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import {
-  NOTHING_WATCHED,
-  accountsFrom,
-  anySignsHere,
-  signingNote,
-  unwatchedChains,
-  watchedSources,
-  watchingNothing,
-} from '../src/core/accounts';
+import { NOTHING_WATCHED, accountsFrom, anySignsHere, signingNote, watchingNothing } from '../src/core/accounts';
+import { selected } from '../src/core/watchers';
 import { makeHotRecord, type HotRecord } from '../src/core/keyvault';
 import type { Pairing } from '../src/core/pairing';
 
@@ -152,54 +145,45 @@ describe('a vault account is watch-only here even beside a hot one', () => {
   });
 });
 
-describe('which account each chain is actually watched through', () => {
-  /* The hole this closes was mine. The backup screens could make a wallet, the
-   * accounts list showed it and the signer would sign for it, and nothing ever
-   * watched it: `store.tsx` read its account key and view key from the vault
-   * pairing alone, so a hot account had no balance, no receiving address, and
-   * no way to build a payment for the signer to sign. */
+describe('every account is watched, and one of them is being looked at', () => {
+  /* This replaced a precedence. A pairing used to beat a hot record for the
+   * single account key the watcher held, and the accounts screen printed a
+   * sentence on whichever one lost. There is a watcher per account now, so
+   * nothing loses and the sentence is gone. What is left to decide is which
+   * account the interface is *about*, which is a different question with a
+   * visible answer. */
 
-  it('watches a hot account when there is no pairing', () => {
-    expect(watchedSources(null, hot())).toEqual({ BTC: 'hot', XMR: 'hot' });
+  it('has no selection when there is nothing to select', () => {
+    expect(selected([], null)).toBeNull();
   });
 
-  it('watches nothing when there is nothing', () => {
-    expect(watchedSources(null, null)).toEqual({ BTC: null, XMR: null });
+  it('honors a selection that exists', () => {
+    expect(selected(['vault', 'hot'], 'hot')).toBe('hot');
   });
 
-  it('prefers the pairing, because that is what the watcher actually does', () => {
-    /* Mirrors the precedence in `store.tsx`. If these two ever disagree, the
-     * screen is describing a wallet the app is not running. */
-    expect(watchedSources(paired(), hot())).toEqual({ BTC: 'vault', XMR: 'vault' });
+  it('falls back to the first when the wanted account is gone', () => {
+    /* Forgetting the account somebody was looking at must not leave a screen
+     * rendering a balance for a wallet that no longer exists. `accountsFrom`
+     * orders vault first, so the fallback is the one with the stronger
+     * protection rather than wherever an index happened to point. */
+    expect(selected(['vault'], 'hot')).toBe('vault');
+    expect(selected(['hot'], 'vault')).toBe('hot');
   });
 
-  it('falls through per chain, not per account', () => {
-    /* A vault that exported only Bitcoin leaves Monero to the hot record. The
-     * precedence is a chain at a time because the watcher holds one key per
-     * chain, not one account overall. */
-    expect(watchedSources(paired({ xmr: null }), hot())).toEqual({ BTC: 'vault', XMR: 'hot' });
-    expect(watchedSources(paired({ btc: null }), hot())).toEqual({ BTC: 'hot', XMR: 'vault' });
+  it('keeps the wish rather than the resolution, so an account can come back', () => {
+    /* `selected` is a function of what exists and what was wanted, not a
+     * stored index. Wanting an account that is missing and then having it
+     * again lands somebody back where they were. */
+    expect(selected(['vault'], 'hot')).toBe('vault');
+    expect(selected(['vault', 'hot'], 'hot')).toBe('hot');
   });
 
-  it('names the chains an account is losing, so no balance goes silently missing', () => {
-    /* The case that needs a sentence: both kinds of account, same chains. One
-     * of them is not being watched, and a balance that is silently absent
-     * reads as a balance that is gone. */
-    const accounts = accountsFrom(paired(), hot());
-    const watching = watchedSources(paired(), hot());
-    const vault = accounts.find((a) => a.source === 'vault')!;
-    const phone = accounts.find((a) => a.source === 'hot')!;
-    expect(unwatchedChains(vault, watching)).toEqual([]);
-    expect(unwatchedChains(phone, watching)).toEqual(['BTC', 'XMR']);
-  });
-
-  it('says nothing when there is nothing to say', () => {
-    /* Almost every wallet. A warning that appears for everybody is a warning
-     * nobody reads. */
-    const hotOnly = accountsFrom(null, hot());
-    expect(unwatchedChains(hotOnly[0]!, watchedSources(null, hot()))).toEqual([]);
-    const vaultOnly = accountsFrom(paired(), null);
-    expect(unwatchedChains(vaultOnly[0]!, watchedSources(paired(), null))).toEqual([]);
+  it('gives both kinds of account a row, which is what the watchers key off', () => {
+    const ids = accountsFrom(paired(), hot()).map((account) => account.id);
+    expect(ids).toEqual(['vault', 'hot']);
+    /* And every one of them resolves to itself, so no account is unreachable
+     * through the selection. */
+    for (const id of ids) expect(selected(ids, id)).toBe(id);
   });
 });
 

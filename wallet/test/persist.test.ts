@@ -39,7 +39,7 @@ describe('the round trip', () => {
     const store = memoryStore();
     const state: Persisted = {
       nodes: { btc: node('https://mempool.space/api'), xmr: null },
-      moneroScan: null,
+      moneroScans: {},
       pendingSwap: null,
     };
     await save(store, state);
@@ -54,7 +54,7 @@ describe('the round trip', () => {
         btc: node('https://blockstream.info/api'),
         xmr: node('https://node.monerodevs.org:18089', 'monerod'),
       },
-      moneroScan: { birth: 3_200_000, height: 3_204_881 },
+      moneroScans: { vault: { birth: 3_200_000, height: 3_204_881 } },
       pendingSwap: null,
     };
     await save(store, state);
@@ -70,8 +70,8 @@ describe('the round trip', () => {
      * stores almost nothing, and the way somebody checks that claim is by
      * opening the file. */
     const store = memoryStore();
-    await save(store, { nodes: { btc: node('https://mempool.space/api'), xmr: null }, moneroScan: null, pendingSwap: null });
-    expect(store.text).toMatch(/"schema": 1/);
+    await save(store, { nodes: { btc: node('https://mempool.space/api'), xmr: null }, moneroScans: {}, pendingSwap: null });
+    expect(store.text).toMatch(/"schema": 2/);
     expect(store.text).toMatch(/mempool\.space/);
     expect(store.text?.split('\n').length).toBeGreaterThan(5);
   });
@@ -81,7 +81,7 @@ describe('the round trip', () => {
     await save(store, {
       pendingSwap: null,
       nodes: { btc: node('https://mempool.space/api'), xmr: node('http://192.168.1.20:18081', 'monerod') },
-      moneroScan: { birth: 1, height: 2 },
+      moneroScans: { vault: { birth: 1, height: 2 } },
     });
     for (const word of ['zpub', 'xprv', 'viewSecret', 'seed', 'mnemonic', 'key']) {
       expect(store.text?.toLowerCase()).not.toContain(word.toLowerCase());
@@ -176,7 +176,7 @@ describe('nothing read back is trusted', () => {
     const mine = parseNode('monerod', 'http://192.168.1.20:18081', 'home', true);
     if (!mine.ok) throw new Error(mine.problem);
     const store = memoryStore();
-    await save(store, { nodes: { btc: null, xmr: mine.config }, moneroScan: null, pendingSwap: null });
+    await save(store, { nodes: { btc: null, xmr: mine.config }, moneroScans: {}, pendingSwap: null });
     expect((await load(memoryStore(store.text))).nodes.xmr?.mine).toBe(true);
   });
 });
@@ -215,11 +215,17 @@ describe('the stored pending swap', () => {
 });
 
 describe('the stored scan height', () => {
-  const withScan = (moneroScan: unknown) =>
-    load(stored({ schema: SCHEMA, nodes: {}, moneroScan }));
+  /* One account's position, wrapped in the keyed map the file stores now. The
+   * key is what says which account a position belongs to, and handing one
+   * account's progress to another is a scan that starts too late and reports a
+   * balance that is missing money. */
+  const withScan = async (position: unknown) => {
+    const state = await load(stored({ schema: SCHEMA, nodes: {}, moneroScans: { vault: position } }));
+    return state.moneroScans['vault'] ?? null;
+  };
 
   it('keeps a sensible one', async () => {
-    expect((await withScan({ birth: 100, height: 3_000_000 })).moneroScan).toEqual({
+    expect(await withScan({ birth: 100, height: 3_000_000 })).toEqual({
       birth: 100,
       height: 3_000_000,
     });
@@ -228,30 +234,30 @@ describe('the stored scan height', () => {
   it('drops a height above anything the chain could be', async () => {
     /* A height in the future resumes a scan past the tip and finds nothing,
      * forever. On screen that is a wallet with no money in it. */
-    expect((await withScan({ birth: 0, height: 999_999_999 })).moneroScan).toBeNull();
+    expect(await withScan({ birth: 0, height: 999_999_999 })).toBeNull();
   });
 
   it('drops a height below its own birth', async () => {
-    expect((await withScan({ birth: 500, height: 100 })).moneroScan).toBeNull();
+    expect(await withScan({ birth: 500, height: 100 })).toBeNull();
   });
 
   it('drops values that are not whole numbers', async () => {
-    expect((await withScan({ birth: 0, height: 1.5 })).moneroScan).toBeNull();
-    expect((await withScan({ birth: 'soon', height: 5 })).moneroScan).toBeNull();
-    expect((await withScan({ birth: -1, height: 5 })).moneroScan).toBeNull();
+    expect(await withScan({ birth: 0, height: 1.5 })).toBeNull();
+    expect(await withScan({ birth: 'soon', height: 5 })).toBeNull();
+    expect(await withScan({ birth: -1, height: 5 })).toBeNull();
   });
 
   it('drops a null height rather than reading it as genesis', async () => {
     /* `JSON.stringify` writes a NaN as `null` and `Number(null)` is zero, so
      * coercing here would turn a height that was never really stored into a
      * scan that walks the entire chain from block zero. */
-    expect((await withScan({ birth: 0, height: null })).moneroScan).toBeNull();
-    expect((await withScan({ birth: null, height: 5 })).moneroScan).toBeNull();
+    expect(await withScan({ birth: 0, height: null })).toBeNull();
+    expect(await withScan({ birth: null, height: 5 })).toBeNull();
   });
 
   it('drops a scan that is not an object', async () => {
-    expect((await withScan(3_000_000)).moneroScan).toBeNull();
-    expect((await withScan(null)).moneroScan).toBeNull();
+    expect(await withScan(3_000_000)).toBeNull();
+    expect(await withScan(null)).toBeNull();
   });
 });
 
@@ -311,11 +317,17 @@ describe('the store wiring', () => {
     expect(store).toMatch(/NO_NODES: WatcherNodes = \{ btc: null, xmr: null \}/);
   });
 
-  it('does not rebuild the watcher every time the scan advances', () => {
-    /* It would restart the scan and throw away every output found, on every
+  it('does not rebuild the watchers every time a scan advances', () => {
+    /* It would restart every scan and throw away every output found, on every
      * refresh, forever. The stored progress is handed over through a ref for
-     * exactly this reason. */
-    expect(store).toMatch(/scanStart = useRef/);
-    expect(store).toMatch(/\[nodes, accountKey, moneroWatch\]/);
+     * exactly this reason, and the ref is keyed by account now because two
+     * accounts scan two different sets of blocks. */
+    expect(store).toMatch(/scanStarts = useRef<Record<string, ScanState>>/);
+    expect(store).toMatch(/\[nodes, accountKeys\]/);
+    /* And the watchers must not be rebuilt when the *positions* change, which
+     * is the state that advances on every refresh. */
+    expect(store, 'a scan position in the watcher deps restarts the scan').not.toMatch(
+      /\[nodes, accountKeys, moneroScans\]/,
+    );
   });
 });

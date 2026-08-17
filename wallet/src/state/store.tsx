@@ -36,7 +36,8 @@ import type { OwnAddresses, SwapTransport } from '../core/swap';
 import type { NodeConfig, NodeKind } from '../core/nodes';
 import { openAccount, type ScanState } from '../core/moneroscan';
 import { acceptAccount, type Pairing } from '../core/pairing';
-import { NodeWatcher, type MoneroStatus, type RefreshResult, type WatcherNodes } from '../core/watcher';
+import { NodeWatcher, type MoneroStatus, type MoneroWatch, type RefreshResult, type WatcherNodes } from '../core/watcher';
+import { Watchers, emptySnapshot, problemsFrom, selected, type AccountKeys } from '../core/watchers';
 import { demoSwapTransport, DEMO_XMR_ADDRESS, DEMO_XMR_VIEW_SECRET } from '../core/demo';
 import { proxyTransport, swapConfigured } from '../net/swapproxy';
 import { DEMO, standInAccountExport, standInKeyImages } from '../demo/standin';
@@ -195,6 +196,18 @@ export interface Store {
    * is a real state with a screen attached: see `NOTHING_WATCHED`.
    */
   accounts: Account[];
+  /**
+   * Which account every other screen is about.
+   *
+   * The app looks at one account at a time rather than summing them, because a
+   * vault account and an account on this phone are different wallets with
+   * different security properties, and one number over both would hide the
+   * only distinction this product exists to make. Null only when there are no
+   * accounts at all.
+   */
+  selectedAccount: string | null;
+  /** Look at a different account. Ignored for an id that does not exist. */
+  selectAccount(id: string): void;
 
   /**
    * This wallet's own spending keys, or null when it holds none.
@@ -288,7 +301,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [nodes, setNodes] = useState<WatcherNodes>(NO_NODES);
   const [refreshing, setRefreshing] = useState(false);
   const [nodeProblems, setNodeProblems] = useState<RefreshResult['problems']>([]);
-  const [moneroScan, setMoneroScan] = useState<Persisted['moneroScan']>(null);
+  const [moneroScans, setMoneroScans] = useState<Persisted['moneroScans']>({});
   const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
   const [swapCheck, setSwapCheck] = useState<{ status: SwapStatus; at: number } | null>(null);
   const [moneroStatus, setMoneroStatus] = useState<MoneroStatus | null>(null);
@@ -323,7 +336,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * than state because the watcher must not be rebuilt every time the scan
    * advances: that would throw away the outputs it has found and restart the
    * scan, forever, on every refresh. */
-  const scanStart = useRef<ScanState | null>(null);
+  const scanStarts = useRef<Record<string, ScanState>>({});
+
+  /* Which account the interface is looking at, as asked for rather than as
+   * resolved. `selected` turns it into one that exists; keeping the raw wish
+   * means switching to an account, forgetting it, and adding it back lands
+   * somebody where they were. */
+  const [wantedAccount, setWantedAccount] = useState<string | null>(null);
 
   const keysStorage = useMemo(() => keychainStore(), []);
   const spendingStorage = useMemo(() => spendingKeyStore(), []);
@@ -349,8 +368,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let current = true;
     void Promise.all([load(storage), loadPairing(keysStorage)]).then(([stored, paired]) => {
       if (!current) return;
-      scanStart.current = stored.moneroScan;
-      setMoneroScan(stored.moneroScan);
+      scanStarts.current = stored.moneroScans;
+      setMoneroScans(stored.moneroScans);
       setPendingSwap(stored.pendingSwap);
       setNodes(stored.nodes);
       if (paired) {
@@ -371,8 +390,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!restored) return;
-    void save(storage, { ...EMPTY, nodes, moneroScan, pendingSwap });
-  }, [restored, storage, nodes, moneroScan, pendingSwap]);
+    void save(storage, { ...EMPTY, nodes, moneroScans, pendingSwap });
+  }, [restored, storage, nodes, moneroScans, pendingSwap]);
 
   /**
    * The Bitcoin account key in effect: the paired one, else the published
@@ -389,123 +408,163 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    */
   const hotWatch = useMemo(() => (hot === null ? null : watchOnlyFrom(hot)), [hot]);
 
-  /*
-   * The Bitcoin account key in effect, and the precedence is a real decision.
-   *
-   * A pairing wins. `NodeWatcher` watches one account key per chain, so a
-   * phone holding both a vault pairing and its own seed can only see one of
-   * them, and the vault is the one somebody is more likely to have money in.
-   * The accounts screen says which is being watched rather than leaving the
-   * other showing nothing and explaining nothing, because a balance that is
-   * silently absent reads as a balance that is gone.
-   *
-   * Watching both needs a watcher that holds more than one account, which is
-   * a real change rather than a line here, and it is written down in
-   * `docs/handoff.md` as the limitation it is.
-   */
-  const accountKey = pairing?.btc?.zpub ?? hotWatch?.zpub ?? (DEMO ? DEMO_ZPUB : null);
-
   /* What exists, for every screen that used to ask "is this app paired". The
    * stand-in flag is passed rather than read inside `accountsFrom`, so that
    * module stays testable under Node and free of the demo import. It is what
    * keeps the list honest in a development build, where the watcher really is
    * pointed at BIP84's published account. */
   const accounts = useMemo(
-    () => accountsFrom(pairing, hot, DEMO && pairing === null),
+    () => accountsFrom(pairing, hot, DEMO && pairing === null && hot === null),
     [pairing, hot],
   );
 
   /**
-   * The account the Monero scan is for: the paired one, else the demo one.
+   * Every account's watching keys, one entry per account.
    *
-   * The demo fallback is a real account with a real view key, so what the
-   * scanner does against a real node is the real thing rather than a
-   * rehearsal. It is also empty, so a correct scan of it finds nothing,
-   * which is why `openAccount` checks the view key belongs to the address:
-   * without that, finding nothing would be indistinguishable from being
-   * pointed at the wrong keys.
+   * This used to resolve to a single account key and a single Monero account,
+   * with a pairing beating a hot record and the accounts screen printing a
+   * sentence on whichever one lost. Both are watched now: the precedence is
+   * gone, and so is the sentence.
+   *
+   * A Monero account is opened here rather than in `watchers.ts` because
+   * `openAccount` is what proves the view key belongs to the address, and an
+   * account that fails that check is dropped rather than watched. Finding
+   * nothing with the wrong keys is indistinguishable from finding nothing with
+   * the right ones.
    */
-  const moneroWatch = useMemo(() => {
-    const source = pairing?.xmr
-      ? { address: pairing.xmr.address, view: pairing.xmr.view, birth: pairing.xmr.birth }
-      : hotWatch?.xmr
-        ? {
-            address: hotWatch.xmr.address,
-            view: hotWatch.xmr.view,
-            /* Already a block height. `watchOnlyFrom` converts, because the
-             * record stores a creation time in milliseconds and this field is
-             * in blocks, and the two are six orders of magnitude apart. */
-            birth: hotWatch.xmr.birth,
-          }
-        : DEMO
-          ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }
-          : null;
-    if (!source) return null;
-    const opened = openAccount(source.address, source.view);
-    if (!opened.ok) return null;
-    /* A wallet with no stored progress starts at its birth height, and a
-     * demo wallet with no stated birth starts a week back rather than at the
-     * tip. Starting late means silently never seeing payments that arrived
-     * first, which reads as money that did not turn up. */
-    const birth = source.birth ?? restoreHeight();
-    const stored = scanStart.current;
-    /* A stored scan from a different (earlier) pairing must not skip this
-     * account's early blocks: resume only from at or after this birth. */
-    const scanFrom = stored && stored.birth >= birth ? stored : { birth, height: birth };
-    return { account: opened.account, scan: scanFrom };
+  const accountKeys = useMemo<AccountKeys[]>(() => {
+    const openMonero = (
+      source: { address: string; view: string; birth: number | null } | null,
+      id: string,
+    ): MoneroWatch | null => {
+      if (!source) return null;
+      const opened = openAccount(source.address, source.view);
+      if (!opened.ok) return null;
+      /* An account with no stated birth starts a week back rather than at the
+       * tip. Starting late means silently never seeing payments that arrived
+       * first, which reads as money that did not turn up. */
+      const birth = source.birth ?? restoreHeight();
+      const stored = scanStarts.current[id];
+      /* A stored position from an earlier pairing of the same id must not skip
+       * this account's early blocks: resume only from at or after this birth. */
+      const scan = stored && stored.birth >= birth ? stored : { birth, height: birth };
+      return { account: opened.account, scan };
+    };
+
+    const out: AccountKeys[] = [];
+    if (pairing !== null) {
+      out.push({
+        id: 'vault',
+        zpub: pairing.btc?.zpub ?? null,
+        monero: openMonero(
+          pairing.xmr
+            ? { address: pairing.xmr.address, view: pairing.xmr.view, birth: pairing.xmr.birth }
+            : null,
+          'vault',
+        ),
+      });
+    }
+    if (hotWatch !== null) {
+      out.push({
+        id: 'hot',
+        zpub: hotWatch.zpub,
+        monero: openMonero(
+          hotWatch.xmr
+            ? {
+                address: hotWatch.xmr.address,
+                view: hotWatch.xmr.view,
+                /* Already a block height. `watchOnlyFrom` converts, because the
+                 * record stores a creation time in milliseconds and this field
+                 * is in blocks, six orders of magnitude apart. */
+                birth: hotWatch.xmr.birth,
+              }
+            : null,
+          'hot',
+        ),
+      });
+    }
+    if (DEMO && pairing === null && hot === null) {
+      out.push({
+        id: 'standin',
+        zpub: DEMO_ZPUB,
+        monero: openMonero(
+          { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null },
+          'standin',
+        ),
+      });
+    }
+    return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restored, pairing, hotWatch]);
+  }, [restored, pairing, hotWatch, hot]);
 
   /**
-   * The watcher, which is the fixture until a node is set and the node after.
+   * One watcher per account.
    *
-   * Rebuilt when the nodes change, which also throws away the previous
+   * Rebuilt when the nodes change, which also throws away every previous
    * snapshot. That is correct: a balance from a different node is not a
    * balance from this one, and showing it while the new one loads would be
    * showing somebody a number from a source they just stopped trusting.
    */
-  const watcher = useMemo(
-    /*
-     * Always the real watcher, including when no node is set.
-     *
-     * This used to return a fixture whenever both nodes were null, which meant
-     * a wallet with nothing configured showed a stranger's balance behind a
-     * chip reading DEMO DATA. People read the number and not the chip. A
-     * `NodeWatcher` with no transports is the honest version of the same
-     * state: every view empty, `stale` true from birth, and nothing on screen
-     * that looks like somebody's money.
-     */
-    () => new NodeWatcher(nodes, accountKey, undefined, Date.now(), moneroWatch),
-    [nodes, accountKey, moneroWatch],
+  const watchers = useMemo(
+    () => new Watchers(nodes, accountKeys, Date.now()),
+    [nodes, accountKeys],
   );
+
+  /* Which account the interface is looking at. Resolved through `selected`
+   * rather than read straight out of state, so forgetting the account somebody
+   * was looking at lands them on one that exists rather than on a screen
+   * rendering a balance for a wallet that is gone. */
+  const selectedAccount = selected(accounts.map((account) => account.id), wantedAccount);
+  const watcher = watchers.watcherFor(selectedAccount);
+
+  /** The Bitcoin account key of one account, for the screen that shows it and
+   *  for `prepare`, which builds change addresses from it. */
+  const accountKeyOf = (id: string | null): string | null =>
+    accountKeys.find((entry) => entry.id === id)?.zpub ?? null;
 
   /* `NodeWatcher.snapshot` takes no clock: it hands back the value the last
    * refresh built. `now` stays in the dependency list because the interface
    * around it renders relative times from the same tick. */
   const snapshot = useMemo(
-    () => watcher.snapshot(),
+    () => watcher?.snapshot() ?? emptySnapshot(now),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [watcher, now, fetched],
   );
 
+  /**
+   * Refresh every account, not only the one on screen.
+   *
+   * The alternative, refreshing what is being looked at, makes the other
+   * account's balance a thing that only updates when somebody happens to visit
+   * it. That is how a wallet shows a stale number on the accounts list and
+   * nobody notices for a week.
+   */
   const refresh = useCallback(async (): Promise<void> => {
-    if (!(watcher instanceof NodeWatcher)) return;
+    if (watchers.ids().length === 0) return;
     setRefreshing(true);
     try {
-      const result = await watcher.refresh(Date.now());
-      setNodeProblems(result.problems);
+      const results = await watchers.refreshAll(Date.now());
+      setNodeProblems(
+        problemsFrom(results, (id) => accounts.find((a) => a.id === id)?.label ?? id),
+      );
       /* Written down after every pass, including one that failed part way.
        * `scan` leaves the height on the block it did not finish, so storing it
        * resumes rather than skips, and not storing it would redo the blocks
-       * that did succeed. */
-      const progress = watcher.moneroProgress();
-      setMoneroStatus(progress);
-      if (progress) setMoneroScan(progress.scan);
+       * that did succeed. Kept per account, because two accounts scan two
+       * different sets of blocks for two different view keys. */
+      const positions: Record<string, ScanState> = {};
+      for (const id of watchers.ids()) {
+        const progress = watchers.watcherFor(id)?.moneroProgress();
+        if (progress) positions[id] = progress.scan;
+      }
+      scanStarts.current = { ...scanStarts.current, ...positions };
+      setMoneroScans((current) => ({ ...current, ...positions }));
+      setMoneroStatus(watchers.watcherFor(selectedAccount)?.moneroProgress() ?? null);
     } finally {
       setRefreshing(false);
       setFetched((count) => count + 1);
     }
-  }, [watcher]);
+  }, [watchers, accounts, selectedAccount]);
 
   /* One refresh when a node is set, and none on a timer. Polling a node every
    * thirty seconds is a wallet telling somebody's node operator exactly when
@@ -562,7 +621,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rate: feeOption(session.compose.feeKey).rate,
       utxos: view.utxos,
       balance: view.spendable,
-      zpub: accountKey ?? '',
+      zpub: accountKeyOf(selectedAccount) ?? '',
       change: { index: changeIndex.current },
       now: Date.now(),
     });
@@ -575,7 +634,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     changeIndex.current += 1;
     dispatch({ type: 'prepared', draft: result.draft, at: Date.now() });
     return null;
-  }, [session.compose, asset, snapshot, feeOption, accountKey, watcher]);
+  }, [session.compose, asset, snapshot, feeOption, selectedAccount, watcher]);
 
   const beginTransmit = useCallback(() => {
     const draft: Draft | null = session.draft;
@@ -699,6 +758,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
      * carries no id of its own. */
     const options =
       asset === 'XMR' ? { network: verified.network ?? 'mainnet', txid: verified.txid } : undefined;
+    if (!watcher) return;
     void watcher.broadcast(asset, verified.raw, options).then((result) => {
       if (result.ok && result.txid) {
         confirmed();
@@ -957,20 +1017,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     moneroStatus,
     restored,
     forgetStored: () => {
-      scanStart.current = null;
-      setMoneroScan(null);
+      scanStarts.current = {};
+      setMoneroScans({});
       setMoneroStatus(null);
       setNodes(NO_NODES);
       void storage.clear();
     },
     pairing,
-    accountKey,
+    accountKey: accountKeyOf(selectedAccount),
     acceptWirePayload,
     keyImageFrames,
     syncStandInKeyImages,
     moneroFileWaiting,
     saveMoneroFile,
     accounts,
+    selectedAccount,
+    selectAccount: setWantedAccount,
     signOnThisDevice,
     hot,
     keepHot: async (record: HotRecord) => {

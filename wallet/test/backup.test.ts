@@ -547,15 +547,18 @@ describe('the watch-only half a hot record can produce', () => {
     expect(watchOnlyFrom({ ...record, xmrSeed: null }).xmr).toBeNull();
   });
 
-  it('is what the store actually watches through, in the same precedence', () => {
-    /* The guard against the screen and the app disagreeing. `watchedSources`
-     * tells the accounts screen which account each chain is read through, and
-     * it is only true if `store.tsx` resolves its keys the same way. If one
-     * side changes, the screen starts describing a wallet the app is not
-     * running, and an unwatched balance goes back to being silently absent. */
+  it('gives the hot account a watcher of its own, rather than a share of one', () => {
+    /* This asserted a precedence: a pairing beat a hot record for the single
+     * account key the watcher held, and whichever lost was not watched. There
+     * is a watcher per account now, so the guard is that the hot record gets
+     * its own entry rather than that it loses politely. */
     const store = readFileSync('src/state/store.tsx', 'utf8');
     expect(store).toMatch(/watchOnlyFrom\(hot\)/);
-    expect(store).toMatch(/pairing\?\.btc\?\.zpub \?\? hotWatch\?\.zpub/);
-    expect(store).toMatch(/pairing\?\.xmr[\s\S]{0,120}hotWatch\?\.xmr/);
+    expect(store).toMatch(/id: 'hot',\s*\n\s*zpub: hotWatch\.zpub/);
+    expect(store).toMatch(/id: 'vault',/);
+    expect(
+      store,
+      'the single-key precedence is back and one account is unwatched again',
+    ).not.toMatch(/pairing\?\.btc\?\.zpub \?\? hotWatch\?\.zpub/);
   });
 });

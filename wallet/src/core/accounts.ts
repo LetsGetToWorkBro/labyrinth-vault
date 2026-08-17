@@ -184,45 +184,6 @@ export function signingNote(account: Account): string {
 }
 
 /**
- * Which source each chain is actually being watched through.
- *
- * The wallet can hold two accounts and `NodeWatcher` holds one account key per
- * chain, so with a vault paired *and* a seed on this phone, one of them is not
- * being watched. This says which, per chain, and it mirrors the precedence in
- * `store.tsx` exactly rather than guessing at it: a pairing wins, because it is
- * the one somebody is more likely to have money in.
- *
- * It exists so the accounts screen can say so out loud. A balance that is
- * silently absent reads as a balance that is gone, which is the same failure
- * the demo snapshot had pointing the other way: the screen showing a number
- * that is not the truth about this account.
- *
- * The real fix is a watcher that holds more than one account per chain. That is
- * a change to `watcher.ts` rather than a line here, and until it happens this
- * function is what keeps the interface honest about the limitation.
- */
-export function watchedSources(
-  pairing: Pairing | null,
-  hot: HotRecord | null,
-): Record<Asset, Source | null> {
-  return {
-    BTC: pairing?.btc ? 'vault' : hot?.btcMnemonic ? 'hot' : null,
-    XMR: pairing?.xmr ? 'vault' : hot?.xmrSeed ? 'hot' : null,
-  };
-}
-
-/**
- * The chains of an account that nothing is currently watching.
- *
- * Empty for almost every wallet. Non-empty exactly when a phone holds both
- * kinds of account and the same chain is on both, which is the case that needs
- * a sentence rather than an absence.
- */
-export function unwatchedChains(account: Account, watching: Record<Asset, Source | null>): Asset[] {
-  return account.chains.filter((chain) => watching[chain] !== account.source);
-}
-
-/**
  * The sentence for a wallet watching nothing.
  *
  * A sentence rather than a heading, and it names the two ways out, because an
