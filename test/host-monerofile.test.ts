@@ -178,8 +178,24 @@ function otherContainer(magic: string, version: number): string {
   return toHex(out);
 }
 
+/**
+ * Every test below unlocks a real vault, which is a real Argon2id derivation.
+ *
+ * Vitest's default budget is five seconds and these land near three, which is
+ * under two times' headroom on work whose cost is deliberately proportional to
+ * a machine's memory bandwidth. One of them timed out at 5105 ms the first
+ * time this suite shared a container with another, and passed at 2699 ms
+ * alone: not a defect, and not a flake either, but a budget that does not
+ * describe what the test does.
+ *
+ * Raised rather than made conditional. A number that says "an unlock plus
+ * room" is a number the next person can reason about; skipping under load is
+ * how a check stops being one.
+ */
+const UNLOCKS = { timeout: 30_000 };
+
 describe('the wallet this test builds files for', () => {
-  it('is the wallet the session actually holds', () => {
+  it('is the wallet the session actually holds', UNLOCKS, () => {
     /* The check that makes re-deriving the view secret legitimate rather than
      * a second implementation nobody compares. If `deriveSecret` or
      * `walletFromSeed` ever changes, this fails here instead of silently
@@ -190,7 +206,7 @@ describe('the wallet this test builds files for', () => {
 });
 
 describe('a real unsigned transaction set, described', () => {
-  it('opens the file and states what the sender says it does', () => {
+  it('opens the file and states what the sender says it does', UNLOCKS, () => {
     openSession();
     installKey();
     const reply = call(fileForSession(fromHex(fixture.archive)));
@@ -215,7 +231,7 @@ describe('a real unsigned transaction set, described', () => {
     expect(tx!.spendableNote).toBe('Immediately');
   });
 
-  it('carries the address the sending wallet recorded, and says what kind', () => {
+  it('carries the address the sending wallet recorded, and says what kind', UNLOCKS, () => {
     openSession();
     installKey();
     const [tx] = call(fileForSession(fromHex(fixture.archive))).transactions!;
@@ -225,7 +241,7 @@ describe('a real unsigned transaction set, described', () => {
     expect(tx!.payments[0]!.amountFormatted).toBe('2.4');
   });
 
-  it('totals the file, so a set holding several still leads with one number', () => {
+  it('totals the file, so a set holding several still leads with one number', UNLOCKS, () => {
     openSession();
     installKey();
     const reply = call(fileForSession(fromHex(fixture.archive)));
@@ -233,7 +249,7 @@ describe('a real unsigned transaction set, described', () => {
     expect(reply.feeFormatted).toBe('0.1');
   });
 
-  it('offers nothing to sign with', () => {
+  it('offers nothing to sign with', UNLOCKS, () => {
     /* The property the whole screen rests on. A digest is what `sign` and
      * `moneroSign` require, and its absence here is not an oversight to be
      * tidied up later: there is nothing to approve, because nothing in the
@@ -249,14 +265,14 @@ describe('a real unsigned transaction set, described', () => {
 });
 
 describe('the answers that are not a description', () => {
-  it('needs an unlocked vault, because the key to the file is in it', () => {
+  it('needs an unlocked vault, because the key to the file is in it', UNLOCKS, () => {
     installKey();
     const reply = call(fixture.file);
     expect(reply.ok).toBe(false);
     expect(reply.problem).toMatch(/locked/i);
   });
 
-  it('names a file it will not open, rather than failing at it', () => {
+  it('names a file it will not open, rather than failing at it', UNLOCKS, () => {
     openSession();
     const reply = call(otherContainer('Monero signed tx set', 5));
     expect(reply.ok).toBe(true);
@@ -266,7 +282,7 @@ describe('the answers that are not a description', () => {
     expect(reply.problem).toMatch(/no reader/);
   });
 
-  it('will not read a multisig container, which is not a missing reader', () => {
+  it('will not read a multisig container, which is not a missing reader', UNLOCKS, () => {
     /* Single-signature only, everywhere, deliberately. Opening this one would
      * be the first thing that made the vault look as though it might. */
     openSession();
@@ -275,7 +291,7 @@ describe('the answers that are not a description', () => {
     expect(reply.transactions).toEqual([]);
   });
 
-  it('refuses a real file that belongs to somebody else', () => {
+  it('refuses a real file that belongs to somebody else', UNLOCKS, () => {
     /* The oracle's own file, signed with the oracle's view secret. It is a
      * perfectly good `unsigned_monero_tx`; it is not this wallet's. Before the
      * signature was checked this decrypted into noise and was reported as a
@@ -290,7 +306,7 @@ describe('the answers that are not a description', () => {
     expect(reply.problem, 'it invents an archive version').not.toMatch(/archive version/);
   });
 
-  it('refuses a file of its own that somebody edited on the way', () => {
+  it('refuses a file of its own that somebody edited on the way', UNLOCKS, () => {
     /* The property the signature actually buys. ChaCha20 has no tag, so before
      * this a flipped ciphertext byte decrypted to different plaintext and the
      * vault described whatever that turned out to mean. */
@@ -302,7 +318,7 @@ describe('the answers that are not a description', () => {
     expect(reply.problem).toMatch(/damaged|different wallet/);
   });
 
-  it('refuses outright on a build with no CryptoNight, and says which failed', () => {
+  it('refuses outright on a build with no CryptoNight, and says which failed', UNLOCKS, () => {
     /* Signature first, decryption second, which is why this answer names
      * CryptoNight rather than blaming the file: the file has already proved
      * itself to be this wallet's. */
@@ -314,7 +330,7 @@ describe('the answers that are not a description', () => {
     expect(reply.problem).toMatch(/this wallet's/);
   });
 
-  it('is not a general-purpose reader for anything handed to it', () => {
+  it('is not a general-purpose reader for anything handed to it', UNLOCKS, () => {
     openSession();
     expect(call('').ok).toBe(false);
     expect(call('nothex').ok).toBe(false);
@@ -322,7 +338,7 @@ describe('the answers that are not a description', () => {
     expect(call('70736274ff0100').problem).toMatch(/not one of Monero's wallet files/);
   });
 
-  it('does not throw on a truncated file, whatever the truncation', () => {
+  it('does not throw on a truncated file, whatever the truncation', UNLOCKS, () => {
     openSession();
     installKey();
     const whole = fileForSession(fromHex(fixture.archive));

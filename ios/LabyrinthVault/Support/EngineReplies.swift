@@ -255,13 +255,6 @@ enum EngineReply {
         let bbqrFrames: [String]?
     }
 
-    struct Calibrate: Decodable {
-        let params: Params
-        struct Params: Decodable { let t: Int; let m: Int; let p: Int }
-    }
-
-    struct Check: Decodable { let state: String; let note: String? }
-
     /// Equatable for the same reason as `Sign`: `Route.keyImages` carries it.
     struct KeyImages: Decodable, Equatable {
         let answered: Int

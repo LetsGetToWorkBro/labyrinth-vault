@@ -9502,50 +9502,10 @@ globalThis.TextDecoder.prototype.decode = function (input) {
     }
     return words;
   }
-  function decodeWords(words, wordlist2) {
-    awordlist(wordlist2);
-    const entLen = words.length / 3 * 4;
-    const bytes = new Uint8Array(entLen + 1);
-    let carry = 0;
-    let bits = 0;
-    let pos = 0;
-    for (const word of words) {
-      const index = wordlist2.indexOf(word);
-      if (index === -1)
-        throw new Error("Unknown word: " + word);
-      carry = carry << 11 | index;
-      bits += 11;
-      while (bits >= 8) {
-        bits -= 8;
-        bytes[pos++] = carry >>> bits & 255;
-      }
-      carry &= (1 << bits) - 1;
-    }
-    if (bits > 0)
-      bytes[pos] = carry << 8 - bits;
-    const entropy = bytes.subarray(0, entLen);
-    if (bytes[entLen] !== calcChecksum(entropy))
-      throw new Error("Invalid checksum");
-    return Uint8Array.from(entropy);
-  }
-  function mnemonicToEntropy(mnemonic, wordlist2) {
-    const { words } = normalize2(mnemonic);
-    const entropy = decodeWords(words, wordlist2);
-    aentropy(entropy);
-    return entropy;
-  }
   function entropyToMnemonic(entropy, wordlist2) {
     aentropy(entropy);
     const words = encodeWords(entropy, wordlist2);
     return words.join(isJapanese(wordlist2) ? "\u3000" : " ");
-  }
-  function validateMnemonic(mnemonic, wordlist2) {
-    try {
-      mnemonicToEntropy(mnemonic, wordlist2);
-    } catch (e) {
-      return false;
-    }
-    return true;
   }
   var psalt = (passphrase) => {
     if (typeof passphrase !== "string")
@@ -15528,18 +15488,6 @@ zoo`.split("\n"));
     if (entropy.length !== 16) throw new Error("BIP39 entropy for a 12-word phrase is 16 bytes.");
     return entropyToMnemonic(entropy, wordlist);
   }
-  function checkMnemonic(text) {
-    const words = String(text ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean).join(" ");
-    if (!words) return { ok: false, problem: "Enter the seed words." };
-    const count = words.split(" ").length;
-    if (count !== 12 && count !== 24) {
-      return { ok: false, problem: `That is ${count} words; a Bitcoin seed is 12 (or 24).` };
-    }
-    if (!validateMnemonic(words, wordlist)) {
-      return { ok: false, problem: "Those words fail their own checksum. One is mistyped or out of order." };
-    }
-    return { ok: true, words };
-  }
   function openFromMnemonic(words) {
     const seed = mnemonicToSeedSync(words);
     try {
@@ -15554,26 +15502,6 @@ zoo`.split("\n"));
     } finally {
       wipe(seed);
     }
-  }
-  function openWatch(text) {
-    const key = String(text ?? "").trim();
-    try {
-      if (key.startsWith("zpub")) {
-        const account = HDKey.fromExtendedKey(key, ZPUB_VERSIONS);
-        return { ok: true, wallet: { kind: "watch", account, zpub: key } };
-      }
-      if (key.startsWith("xpub")) {
-        const account = HDKey.fromExtendedKey(key);
-        return {
-          ok: true,
-          wallet: { kind: "watch", account, zpub: key },
-          caution: "An xpub only works here if it is a native-segwit (BIP84) account key. This derives bc1q addresses from it; if your wallet uses 1... or 3... addresses, the balance shown will be empty even though the wallet is funded. Export the zpub instead if your wallet offers one."
-        };
-      }
-    } catch {
-      return { ok: false, problem: "That extended key does not decode. Check it and paste it again." };
-    }
-    return { ok: false, problem: "Paste a zpub (or xpub) extended public key. A single address cannot be watched as a wallet." };
   }
   function addressAt(wallet, change, index) {
     const node = wallet.account.deriveChild(change).deriveChild(index);
@@ -15601,31 +15529,6 @@ zoo`.split("\n"));
     } catch {
       return null;
     }
-  }
-  var ADDRESS_KINDS = {
-    wpkh: "bech32 address",
-    wsh: "bech32 script address",
-    tr: "taproot address",
-    pkh: "legacy address",
-    sh: "script address"
-  };
-  function checkBtcAddress(text) {
-    const raw = String(text ?? "").trim();
-    if (!raw) return { state: "empty", note: "" };
-    try {
-      const decoded = Address().decode(raw);
-      const kind = (decoded && ADDRESS_KINDS[decoded.type ?? ""]) ?? "address";
-      return { state: "ok", note: `valid Bitcoin ${kind}` };
-    } catch {
-      return { state: "bad", note: "not a valid Bitcoin address" };
-    }
-  }
-  function checkExtendedKey(text) {
-    const raw = String(text ?? "").trim();
-    if (!raw) return { state: "empty", note: "" };
-    const opened = openWatch(raw);
-    if (!opened.ok) return { state: "bad", note: "not a valid extended key" };
-    return { state: "ok", note: raw.startsWith("zpub") ? "valid zpub" : "valid xpub" };
   }
   function selfTest3() {
     const VECTOR = {
@@ -18658,19 +18561,6 @@ zoo`.split("\n"));
       wipe(key);
     }
   }
-  function calibrateKdf(targetMs, timer, runner = (params) => {
-    wipe(deriveKey(passphraseToBytes("calibration passphrase"), new Uint8Array(SALT_BYTES), params));
-  }) {
-    let m = DEFAULT_KDF.m;
-    for (; ; ) {
-      const params = { t: DEFAULT_KDF.t, m, p: 1 };
-      const before = timer();
-      runner(params);
-      const elapsed = timer() - before;
-      if (elapsed >= targetMs || m >= KDF_LIMITS.maxM) return params;
-      m = Math.min(m * 2, KDF_LIMITS.maxM);
-    }
-  }
 
   // src/selftest.ts
   function sameBytes(a, b) {
@@ -18943,11 +18833,6 @@ zoo`.split("\n"));
     selfTest: guarded("selfTest", () => {
       const checks = selfTest4();
       return done({ passed: allChecksPass(checks), checks });
-    }),
-    /** Tune the key-stretching to this device. Milliseconds in, parameters out. */
-    calibrate: guarded("calibrate", (targetMs) => {
-      const params = calibrateKdf(Math.max(250, Number(targetMs) || 1e3), () => Date.now());
-      return done({ params });
     }),
     /**
      * Make a new vault secret and seal it. Returns only the sealed blob: the
@@ -19377,23 +19262,34 @@ zoo`.split("\n"));
         outputs: result.tx.outputs,
         frames: encodeParts("XMRSIGNED", encodeSignedTx(result.tx))
       });
-    }),
-    /** Field validation, so the screen and the signer agree about what is valid. */
-    checkAddress: guarded("checkAddress", (text, chain2) => {
-      if (chain2 === "xmr") {
-        const parsed = parseAddress(text);
-        return done({
-          state: parsed.valid ? "ok" : "bad",
-          note: parsed.valid ? `valid ${parsed.network} ${parsed.kind} address` : parsed.problem
-        });
-      }
-      return done(checkBtcAddress(text));
-    }),
-    checkPhrase: guarded("checkPhrase", (text) => done(checkMnemonic(text))),
-    checkExtendedKey: guarded(
-      "checkExtendedKey",
-      (text) => done(checkExtendedKey(text))
-    )
+    })
+    /*
+     * Four functions used to live at the end of this object and no longer do:
+     * `calibrate`, `checkAddress`, `checkPhrase` and `checkExtendedKey`.
+     *
+     * They were reachable, tested and never called. Each had a wrapper in
+     * `Engine.swift`, and the wrappers were the whole of their reachability:
+     * they kept the guard in `app-wiring.test.ts` that fails on an export Swift
+     * never names, while no screen had ever named them either. A guard satisfied
+     * by dead code on the far side is measuring the wrong direction of wiring,
+     * so that file now checks both.
+     *
+     * `calibrate` walked the KDF's memory upward until a derivation took about a
+     * second. Three places argue it must never run here: `docs/storage-format.md`
+     * and `docs/native-primitives.md` both say the derivation is native and fast,
+     * so calibrating to a one-second target would mean choosing parameters in
+     * order to be slow, and `app-wiring.test.ts` fails if a tuning row returns to
+     * Settings. A bridge method for it was the one step between a decision
+     * against something and doing it. `calibrateKdf` itself stays in `seal.ts`,
+     * with its tests, because it is a correct function about a real question.
+     *
+     * The three `check` functions validated typed text. The only text typed into
+     * the vault is a passphrase: an address arrives inside a payload this engine
+     * parsed itself, an account key leaves rather than arrives, and there is no
+     * route that takes a recovery phrase back. The wallet is the half with
+     * fields in it and it has its own, in `wallet/src/core/addresses.ts`. The
+     * functions underneath are untouched in `keys/`, where their tests are.
+     */
   };
   var lastDescribed = null;
   var lastMoneroDescribed = null;

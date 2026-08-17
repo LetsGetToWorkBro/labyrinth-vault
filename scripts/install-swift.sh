@@ -89,6 +89,20 @@ fi
 command -v curl >/dev/null || die "curl is needed to download the toolchain."
 command -v gpg  >/dev/null || die "gpg is needed to verify the toolchain, and this script does not skip that."
 
+# `--compressed` on every fetch below, and it is not about saving bandwidth.
+#
+# A proxy between here and swift.org may gzip a response whether or not the
+# client asked for one. Without this flag curl writes those bytes to disk
+# still compressed: the key file then holds gzip rather than an armored key
+# block, and the failure surfaces four lines later as "those keys did not
+# import", which points at the keys and is not about the keys at all. It cost
+# a session to find once.
+#
+# It is also the safer default for the tarball. The digest below is over the
+# release's own bytes, so a transfer encoding left in place would fail the
+# comparison against a file that is, underneath, exactly right.
+CURL=(curl -fsSL --compressed --retry 3)
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -96,10 +110,10 @@ trap 'rm -rf "$work"' EXIT
 # Fetch
 
 say "downloading ${NAME}.tar.gz"
-curl -fsSL --retry 3 -o "${work}/toolchain.tar.gz" "${BASE}/${NAME}.tar.gz" \
+"${CURL[@]}" -o "${work}/toolchain.tar.gz" "${BASE}/${NAME}.tar.gz" \
   || die "the download failed."
 say "downloading its signature"
-curl -fsSL --retry 3 -o "${work}/toolchain.tar.gz.sig" "${BASE}/${NAME}.tar.gz.sig" \
+"${CURL[@]}" -o "${work}/toolchain.tar.gz.sig" "${BASE}/${NAME}.tar.gz.sig" \
   || die "the signature could not be fetched, so nothing can be verified."
 
 # ---------------------------------------------------------------------------
@@ -114,7 +128,7 @@ mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
 
 say "fetching the Swift release keys"
-curl -fsSL --retry 3 -o "${work}/keys.asc" https://swift.org/keys/all-keys.asc \
+"${CURL[@]}" -o "${work}/keys.asc" https://swift.org/keys/all-keys.asc \
   || die "the Swift signing keys could not be fetched."
 gpg --quiet --import "${work}/keys.asc" 2>/dev/null || die "those keys did not import."
 

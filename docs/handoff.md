@@ -217,6 +217,40 @@ one of them uploads: `true` in a manifest is what made Apple refuse four
 uploads of the vault. Both apps answer YES in App Store Connect per build now,
 and both are rows on one BIS report.
 
+### 6. Restoring the vault from its own words
+
+Found later, by reading the Swift for uncalled bridge wrappers. Not planned by
+anyone: it is a hole, and the sentence on the passphrase screen is the thing
+that makes it one.
+
+The vault can be created and its words can be read. Nothing takes them back.
+`Route` goes `setup` then `recovery` with nothing between; `host.ts` has
+`create`, which takes randomness, and no `restore`; the only field a person can
+type into in the whole app is the passphrase. Meanwhile the passphrase screen
+says, of a forgotten passphrase, "there is no reset: forgetting it means
+recovering from the words on paper."
+
+The shape of the fix is short, which is the argument for doing it rather than
+rewording the screen:
+
+- The vault secret is `btcEntropy || xmrSeed` and nothing else. `openSession`
+  slices it in exactly that order and `revealBackup` hands back the two phrases
+  those bytes encode, so the words are a complete, lossless copy of the secret.
+  A `restore` in `host.ts` is: read both phrases back to bytes, concatenate,
+  seal under a new passphrase. It is `create` with the randomness supplied
+  rather than drawn.
+- The Swift is a setup stage that takes two phrases and a wrapper for the new
+  bridge method.
+
+Two things make it a decision rather than a task. It is the first screen in the
+vault that accepts typed key material, which is a threat surface that app has
+never had, and it needs the phrase check that was just deleted from the bridge
+for having no caller. And **nobody's money is at risk meanwhile**: the words
+restore both wallets into Sparrow, Cake or Feather today, because they are
+ordinary BIP39 and Monero seed phrases. What is at stake is whether the
+sentence on that screen is true about this app. Reword it or build the route,
+but not neither.
+
 ## Three things this session learned the hard way
 
 Worth reading because each one is a class of bug rather than an incident.
@@ -340,6 +374,21 @@ they still need hardware or a network this container does not have.
   word rather than holding a stopwatch.
 - **No real Cake or Feather has imported a key-image file.** `wallet2` has, and
   `wallet2` is the library rather than the application.
+- **The vault shows recovery words it cannot take back.** Not an unverified
+  claim like the rest of this list: a checked one, and the answer is no. The
+  passphrase screen says "there is no reset: forgetting it means recovering
+  from the words on paper", and there is no route, no screen and no bridge
+  method that accepts a phrase. `Route` has `setup` and `recovery` and nothing
+  between them; `host.ts` has `create`, which takes randomness, and no
+  `restore`; the only typed field in the whole app is the passphrase.
+
+  Nobody loses money over it. The vault secret is exactly the Bitcoin entropy
+  followed by the Monero seed, which is what those words encode, so the phrases
+  restore both wallets into Sparrow, Cake or Feather. What they do not do is
+  restore *this app*, which is what the sentence on that screen offers. The
+  fix is a real piece of work across the engine, the bridge and two screens,
+  and it is a product decision before it is a change: see section 6 under
+  "What is not built" below.
 
 Three more, added by the work above and stated plainly because the whole point
 of this section is that it is current:

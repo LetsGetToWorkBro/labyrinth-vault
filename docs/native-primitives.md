@@ -102,8 +102,10 @@ never a weaker vault.
 lived in `app/storage.ts` and targeted 1000 ms, while the default already cost
 1554 ms on hardware far faster than a phone, so the walk exited on its first
 iteration every time and achieved nothing but one full derivation at setup. The
-React Native shell that called it has been deleted; `calibrateKdf` remains in
-`src/keys/seal.ts`, tested and unused. Now that a derivation is native and
+React Native shell that called it has been deleted, and so are the bridge's
+`calibrate` reply and the `Engine.swift` wrapper that named it, which were the
+last two things in the tree that could have started a calibration.
+`calibrateKdf` remains in `src/keys/seal.ts`, tested and unused. Now that a derivation is native and
 costs a fraction of a second, calibrating to a one-second target would mean
 walking the memory parameter *up*, which is a real design question and a
 separate piece of work.

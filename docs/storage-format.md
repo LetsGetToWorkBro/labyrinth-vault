@@ -46,9 +46,11 @@ time without costing an attacker anything.
 
 **One set of parameters, not a calibrated one.** `calibrateKdf` exists in
 `seal.ts` and walks memory upward from the default until a derivation costs
-about a second, and nothing calls it: the bridge exposes a `calibrate` reply,
-but `seal` takes no parameters across that bridge, so there is no path from a
-measurement to a sealed blob. Every vault is sealed at the default above,
+about a second, and nothing calls it. The bridge used to expose a `calibrate`
+reply, and `seal` takes no parameters across that bridge, so there was never a
+path from a measurement to a sealed blob; the reply and its Swift wrapper are
+both gone, because a method for a thing three documents argue against is the
+one step between deciding against it and doing it. Every vault is sealed at the default above,
 which is RFC 9106's second recommendation and is a fine answer rather than a
 regression. It is written here because this document described calibration as
 a live property for longer than it was one, and

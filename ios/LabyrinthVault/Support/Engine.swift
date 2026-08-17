@@ -227,19 +227,36 @@ final class Engine {
     typealias DescribeReply = EngineReply.Describe
     typealias MoneroSignReply = EngineReply.MoneroSign
     typealias SignReply = EngineReply.Sign
-    typealias CalibrateReply = EngineReply.Calibrate
-    typealias CheckReply = EngineReply.Check
     typealias KeyImagesReply = EngineReply.KeyImages
     typealias KeyImageFileReply = EngineReply.KeyImageFile
 
     // MARK: - The API
     //
     // Deliberately one Swift method per host function, same name, no
-    // convenience wrappers that call two. `test/app-wiring.test.ts` checks that
-    // every name used here exists in host.ts.
+    // convenience wrappers that call two. `test/app-wiring.test.ts` checks
+    // that every name used here exists in host.ts, and now also that every
+    // method here is called from somewhere outside this file.
+    //
+    // That second check is why `calibrate`, `checkAddress`, `checkPhrase` and
+    // `checkExtendedKey` are gone. All four wrapped a real host function, all
+    // four compiled, and no screen had ever called one:
+    //
+    //   - `calibrate` walks the KDF's memory upward until a derivation takes
+    //     about a second. Three documents argue against ever running it here
+    //     (docs/native-primitives.md, docs/storage-format.md, and the guard in
+    //     app-wiring that fails if a tuning row returns to Settings) because
+    //     the derivation is native and fast, so calibrating to a one-second
+    //     target would mean choosing parameters to be slow. A wrapper is the
+    //     one step between a decision against something and doing it.
+    //   - the three `check` calls validate typed text. Nothing is typed into
+    //     this app but a passphrase: addresses arrive inside a signed payload
+    //     the engine parsed itself, account keys leave rather than arrive, and
+    //     there is no route that takes a recovery phrase back.
+    //
+    // They are in host.ts, tested there, and the wallet is the half with
+    // fields in it. If a screen here ever grows one, the wrapper is one line.
 
     func selfTest() throws -> SelfTestReply { try call("selfTest") }
-    func calibrate(targetMs: Int) throws -> CalibrateReply { try call("calibrate", [targetMs]) }
 
     /// Make a vault.
     ///
@@ -369,10 +386,4 @@ final class Engine {
     func moneroKeyImageFile(randomHex: String) throws -> KeyImageFileReply {
         try call("moneroKeyImageFile", [randomHex])
     }
-
-    func checkAddress(_ text: String, chain: String) throws -> CheckReply {
-        try call("checkAddress", [text, chain])
-    }
-    func checkPhrase(_ text: String) throws -> CheckReply { try call("checkPhrase", [text]) }
-    func checkExtendedKey(_ text: String) throws -> CheckReply { try call("checkExtendedKey", [text]) }
 }

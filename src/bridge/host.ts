@@ -71,9 +71,6 @@ import {
   type VaultUnsignedSet,
 } from '../keys/monerobuild';
 import {
-  checkBtcAddress,
-  checkExtendedKey,
-  checkMnemonic,
   closeWallet,
   mnemonicFromStoredEntropy,
   openFromMnemonic,
@@ -81,7 +78,6 @@ import {
   type BtcWallet,
 } from '../keys/bitcoin';
 import {
-  parseAddress,
   revealMnemonic,
   walletFromSeed,
   wipeWallet,
@@ -91,7 +87,6 @@ import { MONERO_UNSUPPORTED, readContainer, readContainerText } from '../keys/mo
 import { readUnsignedTxSetFile } from '../keys/monerounsigned';
 import { demoUnsignedPsbt, describePsbt, signPsbt, type PsbtSummary } from '../keys/psbt';
 import {
-  calibrateKdf,
   looksSealed,
   kdfSource,
   seal,
@@ -369,12 +364,6 @@ export const api = {
   selfTest: guarded('selfTest', () => {
     const checks = selfTest();
     return done({ passed: allChecksPass(checks), checks });
-  }),
-
-  /** Tune the key-stretching to this device. Milliseconds in, parameters out. */
-  calibrate: guarded('calibrate', (targetMs: number) => {
-    const params = calibrateKdf(Math.max(250, Number(targetMs) || 1000), () => Date.now());
-    return done({ params });
   }),
 
   /**
@@ -956,23 +945,34 @@ export const api = {
     });
   }),
 
-  /** Field validation, so the screen and the signer agree about what is valid. */
-  checkAddress: guarded('checkAddress', (text: string, chain: string) => {
-    if (chain === 'xmr') {
-      const parsed = parseAddress(text);
-      return done({
-        state: parsed.valid ? 'ok' : 'bad',
-        note: parsed.valid ? `valid ${parsed.network} ${parsed.kind} address` : parsed.problem,
-      });
-    }
-    return done(checkBtcAddress(text) as unknown as Record<string, unknown>);
-  }),
 
-  checkPhrase: guarded('checkPhrase', (text: string) => done(checkMnemonic(text) as unknown as Record<string, unknown>)),
-
-  checkExtendedKey: guarded('checkExtendedKey', (text: string) =>
-    done(checkExtendedKey(text) as unknown as Record<string, unknown>),
-  ),
+  /*
+   * Four functions used to live at the end of this object and no longer do:
+   * `calibrate`, `checkAddress`, `checkPhrase` and `checkExtendedKey`.
+   *
+   * They were reachable, tested and never called. Each had a wrapper in
+   * `Engine.swift`, and the wrappers were the whole of their reachability:
+   * they kept the guard in `app-wiring.test.ts` that fails on an export Swift
+   * never names, while no screen had ever named them either. A guard satisfied
+   * by dead code on the far side is measuring the wrong direction of wiring,
+   * so that file now checks both.
+   *
+   * `calibrate` walked the KDF's memory upward until a derivation took about a
+   * second. Three places argue it must never run here: `docs/storage-format.md`
+   * and `docs/native-primitives.md` both say the derivation is native and fast,
+   * so calibrating to a one-second target would mean choosing parameters in
+   * order to be slow, and `app-wiring.test.ts` fails if a tuning row returns to
+   * Settings. A bridge method for it was the one step between a decision
+   * against something and doing it. `calibrateKdf` itself stays in `seal.ts`,
+   * with its tests, because it is a correct function about a real question.
+   *
+   * The three `check` functions validated typed text. The only text typed into
+   * the vault is a passphrase: an address arrives inside a payload this engine
+   * parsed itself, an account key leaves rather than arrives, and there is no
+   * route that takes a recovery phrase back. The wallet is the half with
+   * fields in it and it has its own, in `wallet/src/core/addresses.ts`. The
+   * functions underneath are untouched in `keys/`, where their tests are.
+   */
 };
 
 /** The description the person is currently looking at. Never crosses. */

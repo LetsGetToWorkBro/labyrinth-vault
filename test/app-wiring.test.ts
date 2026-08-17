@@ -1249,6 +1249,37 @@ describe('Swift calls only functions the engine actually has', () => {
     expect([...unwired].filter((name) => swiftCalls.has(name)), 'this is wired now, take it off the list').toEqual([]);
   });
 
+  it('has a caller for every method it wraps', () => {
+    /* The third direction, and the one the other two were quietly propping up.
+     *
+     * `Engine.swift` carried wrappers for `calibrate`, `checkAddress`,
+     * `checkPhrase` and `checkExtendedKey`. Every one compiled, named a real
+     * host function, and had never been called by a screen. They were what
+     * kept the check above green: the engine exported four functions nothing
+     * used, and four Swift methods nothing used were the proof that something
+     * did. A guard satisfied by dead code on the far side is measuring the
+     * wrong thing, so this asks the question the other two cannot.
+     *
+     * Private plumbing is excluded by the `private` keyword rather than by a
+     * list, so a new helper does not have to be registered anywhere. Anything
+     * a caller could reach has to have one. */
+    const elsewhere = sourcesUnder('ios/LabyrinthVault', ['.swift'])
+      .filter((file) => !file.path.endsWith('Support/Engine.swift'))
+      .map((file) => file.code)
+      .join('\n');
+    expect(elsewhere.length, 'no Swift outside Engine.swift, so this guard is checking nothing').toBeGreaterThan(
+      5000,
+    );
+
+    const methods = [...codeOnly(engine).matchAll(/^ {4}(?:static )?func (\w+)/gm)].map((m) => m[1]!);
+    expect(methods.length, 'Engine.swift declares no methods, so this guard is checking nothing').toBeGreaterThan(
+      12,
+    );
+
+    const uncalled = methods.filter((name) => !new RegExp(`\\.${name}\\b`).test(elsewhere)).sort();
+    expect(uncalled, 'Engine.swift wraps these and no screen or model calls them').toEqual([]);
+  });
+
   it('pins the engine contract version on both sides', () => {
     const hostVersion = /export const HOST_VERSION = (\d+)/.exec(host)?.[1];
     const swiftVersion = /static let expectedVersion = (\d+)/.exec(engine)?.[1];

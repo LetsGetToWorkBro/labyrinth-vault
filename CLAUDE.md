@@ -97,6 +97,15 @@ again, or if the count check stops running after them.
 `ios/LabyrinthVault/Support/BundleDigest.swift`. Skipping it and then building
 in Xcode produces an app that correctly refuses to launch.
 
+**`swift:check` inside it skips on a container with no Swift, and says so.**
+`./scripts/install-swift.sh` puts one there: an 840 MB download, verified
+against the Swift project's signature and this repository's pinned digest,
+neither skippable. It is worth the couple of minutes on any container where
+you touch `ios/`, because with a toolchain that step compiles the
+platform-free model, runs its 67 Swift tests, and parses every Apple-only
+file for syntax. Without one it is silent, which is the shape of check that
+stops being a check.
+
 **After any pull that touches `ios/`, run `xcodegen generate`.** The
 `.xcodeproj` is generated and never committed, so new Swift files are invisible
 until it is regenerated, and the errors that produces name entirely different

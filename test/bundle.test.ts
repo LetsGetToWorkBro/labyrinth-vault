@@ -357,11 +357,15 @@ describe('nothing crosses the bridge as an exception', () => {
 
   it('answers every entry point with JSON, however bad the input', { timeout: 30_000 }, () => {
     const junk = ['', 'zzzz', '\\u0000', 'ur:nonsense', '{}', 'ffff'.repeat(200)];
-    /* `calibrate` is excluded because it is *supposed* to be slow: it walks
-     * the key-stretching cost upward doing real Argon2 work at each step, so
-     * even a junk argument means many seconds of honest computation. It gets
-     * its own test below, with a small target. */
-    for (const name of Object.keys(api).filter((n) => n !== 'calibrate')) {
+    /* No exclusions. `calibrate` used to need one because it is supposed to
+     * be slow, walking the key-stretching cost upward with real Argon2 work at
+     * each step, so even a junk argument meant many seconds of honest
+     * computation. It is gone from the bridge: nothing in the app ever called
+     * it, and calibrating a derivation that is already native and fast would
+     * mean choosing parameters in order to be slow. `calibrateKdf` keeps its
+     * tests in seal.test.ts, where the question is about the function rather
+     * than about a bridge nobody reaches it through. */
+    for (const name of Object.keys(api)) {
       for (const bad of junk) {
         let raw: string;
         expect(() => {
@@ -372,14 +376,6 @@ describe('nothing crosses the bridge as an exception', () => {
         if (!parsed.ok) expect(typeof parsed.problem).toBe('string');
       }
     }
-  });
-
-  it('calibrates to parameters this build will actually run', { timeout: 60_000 }, () => {
-    const result = call(api, 'calibrate', 250);
-    expect(result.ok).toBe(true);
-    // Never weaker than the default, whatever the device reports.
-    expect(result.params.m).toBeGreaterThanOrEqual(65536);
-    expect(result.params.p).toBe(1);
   });
 });
 
