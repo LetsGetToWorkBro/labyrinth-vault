@@ -22,11 +22,24 @@
  *
  * This wallet is a networked application that a person opens several times a
  * day, and its realistic loss is a phone taken while unlocked. Argon2id does
- * nothing against that, and it cannot be run here anyway at parameters worth
- * having: the vault measured one derivation at roughly 57 seconds interpreted
- * on a server CPU, and this app has no native module for it. A minute per
- * unlock is not a wallet, and lowering the parameters to make it fast is a
- * weak seal on a seed, which is worse than an honest one.
+ * nothing against that: the device is in exactly the state the passphrase
+ * prompt would already have been satisfied by.
+ *
+ * The speed argument this file used to lead with has expired, and saying so
+ * matters more than keeping a tidy paragraph. It read: one derivation costs
+ * roughly 57 seconds interpreted, so a minute per unlock is not a wallet. That
+ * was true of the vault before it shipped a native port, and the vault has
+ * shipped one: `CArgon2` is a target in `Package.swift` and `Argon2id.swift`
+ * carries it, so the vault's own unlock is compiled C and takes well under a
+ * second. Anybody reading the old sentence would conclude the whole family is
+ * slow, and would be wrong about the half that isn't.
+ *
+ * What survives is a cost, not an impossibility. Doing the same here means
+ * shipping that C into a React Native build that `expo prebuild --clean`
+ * regenerates, which is real work and a real maintenance surface rather than a
+ * physics problem. Until somebody does it, lowering the parameters to make a
+ * pure-JavaScript derivation fast would be a weak seal on a seed, which is
+ * worse than an honest absence of one.
  *
  * So the seed is held by the platform keychain with
  * `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, which means the Secure Enclave, the device

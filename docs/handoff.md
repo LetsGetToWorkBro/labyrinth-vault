@@ -35,10 +35,19 @@ produce a signature against an account somebody believes is offline.
 
 `seal.ts` cannot be the wallet's lock. Its `DEFAULT_KDF` is Argon2id at 64 MiB
 and three passes, which the vault runs through a native module and this app has
-no module for; the vault measured one derivation at roughly 57 seconds
-interpreted **on a server CPU**. A minute per unlock is not a wallet, and
-lowering the parameters is a weak seal on a seed, which is worse than an honest
-absence of one.
+no module for.
+
+**The 57-second figure this section used to lead with is retired.** It measured
+the derivation interpreted, before the vault's native port, and the port has
+landed: the vault's unlock is compiled C and takes well under a second. Quoting
+it now would say the whole family is slow and be wrong about the half that is
+not.
+
+What is left is a cost rather than an impossibility. The same C would have to go
+into a React Native build that `expo prebuild --clean` regenerates, which is
+work and an ongoing maintenance surface, not a wall. Until somebody does it,
+lowering the parameters to make a pure-JavaScript derivation fast would be a
+weak seal on a seed, which is worse than an honest absence of one.
 
 So: keychain storage at `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, and **Face ID per
 signature** via `core/signgate.ts`. That closes the one hole keychain storage
