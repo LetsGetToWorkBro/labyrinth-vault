@@ -197,8 +197,15 @@ describe('the listings say what the code does', () => {
     const standin = readFileSync('wallet/src/demo/standin.ts', 'utf8');
     expect(standin).toMatch(/export const DEMO =[^\n]*__DEV__/);
     expect(standin).toMatch(/if \(!DEMO\) return null;/);
-    const send = readFileSync('wallet/src/screens/Send.tsx', 'utf8');
-    expect(send).toMatch(/\{DEMO && \(/);
+    /* Found rather than named. This asserted `Send.tsx` by filename until the
+     * send flow was split and the vault handoff moved to `SendHandoff.tsx`,
+     * at which point the guard was testing where a component lived rather than
+     * whether it was gated. What matters is that the controls exist behind the
+     * flag somewhere, and the loop below covers everywhere. */
+    const gated = readdirSync('wallet/src/screens').filter((screen) =>
+      /\{DEMO && \(/.test(readFileSync(`wallet/src/screens/${screen}`, 'utf8')),
+    );
+    expect(gated, 'no screen renders the stand-in controls under the DEMO flag').not.toEqual([]);
     /* Every screen that offers a stand-in lever gates it the same way, or a
      * release build grows a button that acts on nothing. The grep is for the
      * label because that is what a person would tap: a STAND-IN control in a

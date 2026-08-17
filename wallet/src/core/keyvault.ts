@@ -22,11 +22,24 @@
  *
  * This wallet is a networked application that a person opens several times a
  * day, and its realistic loss is a phone taken while unlocked. Argon2id does
- * nothing against that, and it cannot be run here anyway at parameters worth
- * having: the vault measured one derivation at roughly 57 seconds interpreted
- * on a server CPU, and this app has no native module for it. A minute per
- * unlock is not a wallet, and lowering the parameters to make it fast is a
- * weak seal on a seed, which is worse than an honest one.
+ * nothing against that: the device is in exactly the state the passphrase
+ * prompt would already have been satisfied by.
+ *
+ * The speed argument this file used to lead with has expired, and saying so
+ * matters more than keeping a tidy paragraph. It read: one derivation costs
+ * roughly 57 seconds interpreted, so a minute per unlock is not a wallet. That
+ * was true of the vault before it shipped a native port, and the vault has
+ * shipped one: `CArgon2` is a target in `Package.swift` and `Argon2id.swift`
+ * carries it, so the vault's own unlock is compiled C and takes well under a
+ * second. Anybody reading the old sentence would conclude the whole family is
+ * slow, and would be wrong about the half that isn't.
+ *
+ * What survives is a cost, not an impossibility. Doing the same here means
+ * shipping that C into a React Native build that `expo prebuild --clean`
+ * regenerates, which is real work and a real maintenance surface rather than a
+ * physics problem. Until somebody does it, lowering the parameters to make a
+ * pure-JavaScript derivation fast would be a weak seal on a seed, which is
+ * worse than an honest absence of one.
  *
  * So the seed is held by the platform keychain with
  * `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, which means the Secure Enclave, the device
@@ -47,6 +60,7 @@
  */
 
 import {
+  restoreHeight,
   revealSecretHex,
   seedFromMnemonic,
   walletFromSeed,
@@ -91,8 +105,25 @@ export interface HotRecord {
   btcMnemonic: string | null;
   /** Which Monero network this seed is for. */
   network: Network;
-  /** Milliseconds. Where a Monero scan may start, since a new wallet has no past. */
-  birth: number;
+  /**
+   * When this wallet was made, in **milliseconds**.
+   *
+   * Named `createdAt` and not `birth`, and the difference is not cosmetic.
+   * Every other `birth` in this codebase is a Monero **block height**:
+   * `pairing.ts`, `persist.ts`, `moneroscan.ts` and `findcoins.ts` all mean
+   * blocks by it, and two of them bound the value at a hundred million to say
+   * so. A field of the same name and the same `number` type meaning
+   * milliseconds sat next to those for exactly one commit, and in that commit
+   * it was passed straight into a scan as a height: the wallet would have
+   * started scanning at block 1,760,000,000,000, found nothing, and reported
+   * zero for an account with money in it.
+   *
+   * `Draft.createdAt` already meant milliseconds. This name joins that
+   * convention so the units are legible at every call site rather than in a
+   * comment somebody has to go and find. `watchOnlyFrom` is where it becomes a
+   * height.
+   */
+  createdAt: number;
 }
 
 export type ReadResult =
@@ -161,12 +192,12 @@ export function parseHotRecord(text: string | null): ReadResult {
     return { ok: false, problem: 'The stored keys do not say which network they are for.' };
   }
 
-  const birth = record['birth'];
-  if (typeof birth !== 'number' || !Number.isFinite(birth) || birth < 0) {
+  const createdAt = record['createdAt'];
+  if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt < 0) {
     return { ok: false, problem: 'The stored keys have no usable creation time.' };
   }
 
-  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, birth } };
+  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, createdAt } };
 }
 
 /** The text to hand the keychain. Separate from writing it, so it is testable. */
@@ -217,7 +248,7 @@ export function makeHotRecord(
     return { ok: false, problem: `Generated a Bitcoin phrase that does not check out: ${phrase.problem ?? 'unknown'}` };
   }
 
-  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, birth: when } };
+  return { ok: true, record: { v: KEYVAULT_SCHEMA, xmrSeed, btcMnemonic, network, createdAt: when } };
 }
 
 /**
@@ -245,6 +276,72 @@ export function openMonero(record: HotRecord) {
   const wallet = walletFromSeed(seed, record.network);
   seed.fill(0);
   return wallet;
+}
+
+/**
+ * The watch-only half of a hot record, derived on demand.
+ *
+ * A wallet that can sign but has no addresses is not a wallet. Until this
+ * existed, a record made by the backup screens was listed, backed up,
+ * restorable and signable, and never *watched*: `store.tsx` read its account
+ * key and its Monero view key from the vault pairing alone, so a hot account
+ * had no balance, no receiving address, and no way to build a payment for the
+ * signer to sign. The keys were on the phone and the wallet could not see them.
+ *
+ * What comes back is exactly what a vault exports across the airgap: an account
+ * key and a view key. Neither can spend. Deriving them from a seed we already
+ * hold is not a widening of what this device knows, it is the same watching
+ * capability arriving by a shorter route.
+ *
+ * Both wallets are opened, read, and closed here. The caller gets strings.
+ *
+ * ## The unit that has to be converted here and not at the call site
+ *
+ * `HotRecord.birth` is **milliseconds**, because that is what a creation time
+ * is. A Monero scan start is a **block height**. Those are different numbers by
+ * six orders of magnitude, and passing one where the other is expected does not
+ * throw: it produces a scan that starts at block 1,760,000,000,000, finds
+ * nothing, and reports a balance of zero for a wallet with money in it. That is
+ * the exact failure `withRestored` refuses to risk by starting a restored
+ * wallet at zero, arriving by a different door.
+ *
+ * So the conversion happens here, once, and what comes out is a height. A
+ * record with no creation time, which is every restored one, converts to zero,
+ * which means scan from the beginning: slow and correct, rather than fast and
+ * silently short.
+ */
+export interface WatchOnly {
+  /** The BIP84 account key, or null when this record holds no Bitcoin. */
+  zpub: string | null;
+  /** Address, private view key, and a scan start **in blocks**. */
+  xmr: { address: string; view: string; birth: number } | null;
+}
+
+export function watchOnlyFrom(record: HotRecord): WatchOnly {
+  let zpub: string | null = null;
+  const btc = openBitcoin(record);
+  if (btc !== null) {
+    zpub = btc.zpub;
+    closeBitcoin(btc);
+  }
+
+  let xmr: { address: string; view: string; birth: number } | null = null;
+  const monero = openMonero(record);
+  if (monero !== null) {
+    xmr = {
+      address: monero.address,
+      view: revealSecretHex(monero.viewSecret),
+      /* Milliseconds in, blocks out. `restoreHeight` also backs off by a week,
+       * which matters for a wallet made moments ago: an estimate that lands a
+       * few blocks late misses the first payment into it. Zero milliseconds is
+       * before genesis and converts to zero, so a restored record keeps
+       * scanning from the beginning. */
+      birth: restoreHeight(record.createdAt),
+    };
+    wipeWallet(monero);
+  }
+
+  return { zpub, xmr };
 }
 
 /**
@@ -384,17 +481,17 @@ export function withRestored(
     xmrSeed: null,
     btcMnemonic: null,
     network,
-    /* A restored wallet has a past, and nobody typing a phrase knows the
-     * height it was made at. Zero means scan from the beginning, which is slow
-     * and correct; guessing a recent height would be fast and would silently
-     * miss every coin received before it. */
-    birth: 0,
+    /* A restored wallet has a past, and nobody typing a phrase knows when it
+     * was made. Zero converts to block zero, which means scan from the
+     * beginning: slow and correct, where guessing a recent point would be fast
+     * and would silently miss every coin received before it. */
+    createdAt: 0,
   };
 
   const record: HotRecord =
     restored.chain === 'xmr'
-      ? { ...base, xmrSeed: restored.xmrSeed, birth: existing ? base.birth : 0 }
-      : { ...base, btcMnemonic: restored.btcMnemonic, birth: existing ? base.birth : when };
+      ? { ...base, xmrSeed: restored.xmrSeed, createdAt: existing ? base.createdAt : 0 }
+      : { ...base, btcMnemonic: restored.btcMnemonic, createdAt: existing ? base.createdAt : when };
 
   return { ok: true, record };
 }

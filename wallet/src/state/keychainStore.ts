@@ -21,19 +21,50 @@
 import { deleteItemAsync, getItemAsync, setItemAsync, WHEN_UNLOCKED_THIS_DEVICE_ONLY } from 'expo-secure-store';
 import type { Store } from './persist';
 
-const KEY = 'labyrinth-pairing';
+/**
+ * Two items, and they are not allowed to become one.
+ *
+ * The pairing is a vault's watch-only keys. The spending record is this
+ * wallet's own seed. They arrive by different routes, they mean different
+ * things, and one of them can move money.
+ *
+ * Sharing a keychain item would make unpairing a vault delete a seed, which is
+ * a wipe wearing the word "unpair", and it would make the two records overwrite
+ * each other in whichever order they happened to be written. Separate names
+ * cost nothing and there is no version of this where they should be merged.
+ */
+const PAIRING_KEY = 'labyrinth-pairing';
+const SPENDING_KEY = 'labyrinth-spending-keys';
 
-export function keychainStore(): Store {
+function itemStore(key: string): Store {
   const options = { keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY };
   return {
     async read(): Promise<string | null> {
-      return getItemAsync(KEY, options);
+      return getItemAsync(key, options);
     },
     async write(text: string): Promise<void> {
-      await setItemAsync(KEY, text, options);
+      await setItemAsync(key, text, options);
     },
     async clear(): Promise<void> {
-      await deleteItemAsync(KEY, options);
+      await deleteItemAsync(key, options);
     },
   };
+}
+
+/** The vault pairing: an account key and a view key, which cannot spend. */
+export function keychainStore(): Store {
+  return itemStore(PAIRING_KEY);
+}
+
+/**
+ * This wallet's own spending keys.
+ *
+ * The same accessibility class as the pairing, and `keyvault.ts` is the file
+ * that argues for it: a hot seed is protected by the device rather than by
+ * something a person knows, and the hole that leaves, a phone taken while
+ * unlocked, is closed by the Face ID prompt on every signature rather than by
+ * a stronger keychain class.
+ */
+export function spendingKeyStore(): Store {
+  return itemStore(SPENDING_KEY);
 }

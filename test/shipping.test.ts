@@ -321,13 +321,47 @@ describe('the wallet is shaped like something that can be uploaded', () => {
     });
   });
 
-  it('answers export compliance differently from the vault, on purpose', () => {
-    /* The wallet holds no secret and encrypts nothing at rest. It is watch
-     * only: an extended public key, a view key, addresses. Different app,
-     * different true answer, and the difference is the point rather than an
-     * inconsistency. docs/shipping.md carries the reasoning. */
-    expect(ios.infoPlist['ITSAppUsesNonExemptEncryption']).toBe(false);
-    expect(readFileSync('docs/shipping.md', 'utf8')).toMatch(/watch only/i);
+  it('no longer claims to hold no secret, because it holds one', () => {
+    /* This asserted `false` for as long as the wallet was watch only, and that
+     * was the right assertion for that app. The wallet generates and stores a
+     * seed as of `core/backup.ts`, so `false` became a misstatement on a US
+     * export form, and a test asserting it would have held the misstatement in
+     * place. The key is absent rather than `true` for the reason the vault's
+     * is absent: `true` in a manifest is what made Apple refuse four uploads.
+     *
+     * This test is the pair of the one above it for the vault. If somebody
+     * ever adds the key back to stop Connect asking per build, both fail. */
+    expect(
+      ios.infoPlist['ITSAppUsesNonExemptEncryption'],
+      'a manifest answer here is what failed four vault uploads: answer in Connect instead',
+    ).toBeUndefined();
+  });
+
+  it('has a key store, which is the fact the export answer turns on', () => {
+    /* The guard against the reasoning silently reversing. If the wallet ever
+     * goes back to holding no keys, this fails and whoever is doing that work
+     * gets sent to reconsider the export answer rather than leaving it wrong
+     * in the other direction. */
+    expect(existsSync('wallet/src/core/keyvault.ts')).toBe(true);
+    expect(existsSync('wallet/src/core/backup.ts')).toBe(true);
+    expect(readFileSync('wallet/src/state/keychainStore.ts', 'utf8')).toMatch(/spendingKeyStore/);
+  });
+
+  it('lists both apps on the BIS report, since both hold key material now', () => {
+    /* The report and the answer given to Apple are the same claim made to two
+     * agencies, so they cannot disagree. The wallet used to be deliberately
+     * absent from this file and the README used to explain why. */
+    const report = readFileSync('store/bis/self-classification-report.csv', 'utf8');
+    const rows = report.trim().split('\n');
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toMatch(/^Labyrinth Vault,vision\.labyrinth\.vault,SELF,5D992,MMKT,/);
+    expect(rows[2]).toMatch(/^Labyrinth Wallet,vision\.labyrinth\.wallet,SELF,5D992,MMKT,/);
+
+    /* Twelve columns exactly, on every row. The format is fixed by Supplement
+     * No. 8 and a row with the wrong count fails to parse at the other end. */
+    for (const row of rows) expect(row.split(',')).toHaveLength(12);
+
+    expect(readFileSync('store/bis/README.md', 'utf8')).toMatch(/Why both apps are listed now/);
   });
 
   it('carries every dependency its own config leans on', () => {

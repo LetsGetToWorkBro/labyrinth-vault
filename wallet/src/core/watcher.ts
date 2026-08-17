@@ -491,7 +491,6 @@ export class NodeWatcher implements Watcher {
        * snapshot full of zeroes is the most misleading state this app can be
        * in. */
       stale: true,
-      demo: false,
     };
   }
 

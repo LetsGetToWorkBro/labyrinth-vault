@@ -28,7 +28,7 @@ import { prepareMoneroDraft, verifySignedMonero } from '../core/monerodraft';
 import { readStatus, type SwapOrder, type SwapStatus } from '../core/swap';
 import type { PendingSwap } from '../core/swaptrack';
 import type { ChainSnapshot, FeeOption } from '../core/chain';
-import { DemoWatcher, DEMO_ZPUB } from '../core/demo';
+import { DEMO_ZPUB } from '../core/demo';
 import type { Asset, Draft, VaultLink } from '../core/model';
 import { parseAmount } from '../core/units';
 import { reduce, START, type SessionEvent, type SessionState } from '../core/session';
@@ -46,12 +46,14 @@ import { saveVaultFile } from './vaultFileStore';
 import { digestOf } from '@vault/airgap/envelope';
 import { EMPTY, load, save, type Persisted } from './persist';
 import { fileStore } from './fileStore';
-import { keychainStore } from './keychainStore';
+import { keychainStore, spendingKeyStore } from './keychainStore';
 import { clearPairing, loadPairing, savePairing } from './persistKeys';
+import { forgetHot, loadHot, saveHot, watchOnlyFrom, type HotRecord } from '../core/keyvault';
+import { accountsFrom, type Account } from '../core/accounts';
+import { signHere as signWithHotKeys } from '../core/hotsign';
+import { nativeGate } from './biometrics';
 import { transmit, Transmission } from '../core/wire';
 import { arrived, confirmed, refused } from '../design/haptics';
-
-const demoWatcher = new DemoWatcher();
 
 /**
  * There is no node until somebody sets one.
@@ -59,8 +61,9 @@ const demoWatcher = new DemoWatcher();
  * The constant every other wallet ships with an address in it. This one is
  * empty and stays empty: picking a node for everybody is picking who gets to
  * watch everybody's addresses, and it is a decision this app makes on screen
- * rather than in a source file. With nothing set the app shows the fixture and
- * says `DEMO DATA` at the top of the home screen.
+ * rather than in a source file. With nothing set the app watches nothing and
+ * says so: empty views, a stale snapshot, and a home screen that offers the
+ * way out rather than a number.
  */
 const NO_NODES: WatcherNodes = { btc: null, xmr: null };
 
@@ -103,7 +106,7 @@ export interface Store {
   offerSignature(raw: Uint8Array | null): void;
   broadcast(): void;
 
-  /** Which nodes are set. Null on both means the fixture is showing. */
+  /** Which nodes are set. Null on both means nothing can be fetched. */
   nodes: WatcherNodes;
   /** True while a refresh is in flight, for the one spinner in the app. */
   refreshing: boolean;
@@ -183,6 +186,56 @@ export interface Store {
   moneroFileWaiting: { what: string; filename: string; bytes: number } | null;
   /** Write the waiting file and hand it to the share sheet. */
   saveMoneroFile(): Promise<{ ok: boolean; note: string }>;
+
+  /**
+   * Everything this wallet watches, vault accounts and hot ones alike.
+   *
+   * Derived rather than stored, from the pairing and the hot record, so there
+   * is no third place for the truth about what exists to drift. An empty list
+   * is a real state with a screen attached: see `NOTHING_WATCHED`.
+   */
+  accounts: Account[];
+
+  /**
+   * This wallet's own spending keys, or null when it holds none.
+   *
+   * Null is the ordinary state and stays the ordinary state: a wallet paired
+   * to a vault never needs this, and `canSignHere` refuses a vault account
+   * whatever is stored here. See core/keyvault.ts, which is written as a
+   * security document because that is what it is.
+   */
+  hot: HotRecord | null;
+  /**
+   * Write a record to the keychain.
+   *
+   * Called at the end of creation, and only after the words have been shown:
+   * `core/backup.ts` holds that ordering in a transition table, so this
+   * function is the effect rather than the rule.
+   */
+  keepHot(record: HotRecord): Promise<void>;
+  /**
+   * Forget the spending keys on this device.
+   *
+   * `forget` rather than `delete`, the same word `keyvault.ts` chose and for
+   * the same reason: the coins stay on the chain and the words on paper still
+   * restore them. A screen that says "delete wallet" invites somebody to
+   * believe they destroyed something they did not.
+   */
+  forgetHotKeys(): Promise<void>;
+
+  /**
+   * Sign the current draft with this phone's own keys.
+   *
+   * The whole of the hot path between review and a signature, where the vault
+   * path has a walk across a room. It asks Face ID, signs, and then puts what
+   * it produced through the *same* `offerSignature` a camera would: there is
+   * one gate into a broadcastable state and this does not add a second.
+   *
+   * Refuses for a vault account, twice over. `core/session.ts` has no
+   * transition for it and `core/hotsign.ts` checks `canSignHere` before it
+   * reads anything, so the airgap survives both a new button and a new caller.
+   */
+  signOnThisDevice(): Promise<void>;
 
   /** Pair with the stand-in vault. DEMO only; the real path is the camera. */
   pairVault(label: string): void;
@@ -273,6 +326,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const scanStart = useRef<ScanState | null>(null);
 
   const keysStorage = useMemo(() => keychainStore(), []);
+  const spendingStorage = useMemo(() => spendingKeyStore(), []);
+
+  /* What this wallet can sign for itself. Read at launch beside the pairing,
+   * because a screen that offers to back up a wallet has to know whether there
+   * is one before it renders rather than after. */
+  const [hot, setHot] = useState<HotRecord | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void loadHot(spendingStorage).then((result) => {
+      /* A record that fails to parse loads as nothing, the same rule the node
+       * file and the pairing follow. The words on paper are what restores a
+       * wallet; a half-read record would derive addresses from a seed that is
+       * not the seed and then report zero for money that is there. */
+      if (current && result.ok) setHot(result.record);
+    });
+    return () => { current = false; };
+  }, [spendingStorage]);
 
   useEffect(() => {
     let current = true;
@@ -309,7 +380,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * refuses to prepare and the vault screen says to pair, which are the
    * right two consequences of that state.
    */
-  const accountKey = pairing?.btc?.zpub ?? (DEMO ? DEMO_ZPUB : null);
+  /*
+   * The watch-only half of whatever this phone holds its own keys for.
+   *
+   * Derived rather than stored, and memoized on the record so it is not a key
+   * schedule per render. `watchOnlyFrom` opens both wallets, reads an account
+   * key and a view key, and closes them; what it hands back cannot spend.
+   */
+  const hotWatch = useMemo(() => (hot === null ? null : watchOnlyFrom(hot)), [hot]);
+
+  /*
+   * The Bitcoin account key in effect, and the precedence is a real decision.
+   *
+   * A pairing wins. `NodeWatcher` watches one account key per chain, so a
+   * phone holding both a vault pairing and its own seed can only see one of
+   * them, and the vault is the one somebody is more likely to have money in.
+   * The accounts screen says which is being watched rather than leaving the
+   * other showing nothing and explaining nothing, because a balance that is
+   * silently absent reads as a balance that is gone.
+   *
+   * Watching both needs a watcher that holds more than one account, which is
+   * a real change rather than a line here, and it is written down in
+   * `docs/handoff.md` as the limitation it is.
+   */
+  const accountKey = pairing?.btc?.zpub ?? hotWatch?.zpub ?? (DEMO ? DEMO_ZPUB : null);
+
+  /* What exists, for every screen that used to ask "is this app paired". The
+   * stand-in flag is passed rather than read inside `accountsFrom`, so that
+   * module stays testable under Node and free of the demo import. It is what
+   * keeps the list honest in a development build, where the watcher really is
+   * pointed at BIP84's published account. */
+  const accounts = useMemo(
+    () => accountsFrom(pairing, hot, DEMO && pairing === null),
+    [pairing, hot],
+  );
 
   /**
    * The account the Monero scan is for: the paired one, else the demo one.
@@ -324,9 +428,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const moneroWatch = useMemo(() => {
     const source = pairing?.xmr
       ? { address: pairing.xmr.address, view: pairing.xmr.view, birth: pairing.xmr.birth }
-      : DEMO
-        ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }
-        : null;
+      : hotWatch?.xmr
+        ? {
+            address: hotWatch.xmr.address,
+            view: hotWatch.xmr.view,
+            /* Already a block height. `watchOnlyFrom` converts, because the
+             * record stores a creation time in milliseconds and this field is
+             * in blocks, and the two are six orders of magnitude apart. */
+            birth: hotWatch.xmr.birth,
+          }
+        : DEMO
+          ? { address: DEMO_XMR_ADDRESS, view: revealSecretHex(DEMO_XMR_VIEW_SECRET), birth: null }
+          : null;
     if (!source) return null;
     const opened = openAccount(source.address, source.view);
     if (!opened.ok) return null;
@@ -341,7 +454,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const scanFrom = stored && stored.birth >= birth ? stored : { birth, height: birth };
     return { account: opened.account, scan: scanFrom };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restored, pairing]);
+  }, [restored, pairing, hotWatch]);
 
   /**
    * The watcher, which is the fixture until a node is set and the node after.
@@ -351,13 +464,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
    * balance from this one, and showing it while the new one loads would be
    * showing somebody a number from a source they just stopped trusting.
    */
-  const watcher = useMemo(() => {
-    if (!nodes.btc && !nodes.xmr) return demoWatcher;
-    return new NodeWatcher(nodes, accountKey, undefined, Date.now(), moneroWatch);
-  }, [nodes, accountKey, moneroWatch]);
+  const watcher = useMemo(
+    /*
+     * Always the real watcher, including when no node is set.
+     *
+     * This used to return a fixture whenever both nodes were null, which meant
+     * a wallet with nothing configured showed a stranger's balance behind a
+     * chip reading DEMO DATA. People read the number and not the chip. A
+     * `NodeWatcher` with no transports is the honest version of the same
+     * state: every view empty, `stale` true from birth, and nothing on screen
+     * that looks like somebody's money.
+     */
+    () => new NodeWatcher(nodes, accountKey, undefined, Date.now(), moneroWatch),
+    [nodes, accountKey, moneroWatch],
+  );
 
+  /* `NodeWatcher.snapshot` takes no clock: it hands back the value the last
+   * refresh built. `now` stays in the dependency list because the interface
+   * around it renders relative times from the same tick. */
   const snapshot = useMemo(
-    () => watcher.snapshot(now),
+    () => watcher.snapshot(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [watcher, now, fetched],
   );
@@ -518,6 +644,51 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [session.draft, watcher],
   );
+
+  /**
+   * Sign here, for an account whose keys are on this phone.
+   *
+   * Reads the source off the accounts list rather than from "is there a hot
+   * record", because those are different questions and only one of them is the
+   * airgap rule. A phone holding a seed while watching a vault answers yes to
+   * the second and must still answer no for the vault's account.
+   */
+  const signOnThisDevice = useCallback(async (): Promise<void> => {
+    const draft = session.draft;
+    if (!draft || hot === null) return;
+
+    const spending = accounts.find((account) => account.signsHere);
+    if (!spending) return;
+
+    dispatch({ type: 'sign-here', signsHere: true, at: Date.now() });
+
+    const signed = await signWithHotKeys({
+      source: spending.source,
+      record: hot,
+      draft,
+      gate: nativeGate(spending.source, `Sign this ${draft.asset} payment`),
+      /* The platform CSPRNG, the same source the decoy selection above draws
+       * from. Passed in rather than reached for inside the signer, so the
+       * signer can be run against a fixed input in a test. */
+      scalars: (count) =>
+        Array.from({ length: count }, () => {
+          const bytes = new Uint8Array(32);
+          crypto.getRandomValues(bytes);
+          return bytes;
+        }),
+    });
+
+    if (!signed.ok) {
+      refused();
+      dispatch({ type: 'failed', problem: signed.problem, at: Date.now() });
+      return;
+    }
+
+    /* Through the same door a camera's bytes go through. `offerSignature`
+     * runs `verifySigned`, and a signature this device made gets no more
+     * credit than one that arrived from across a room. */
+    offerSignature(signed.raw);
+  }, [session.draft, hot, accounts, offerSignature]);
 
   const broadcast = useCallback(() => {
     const verified = session.verified;
@@ -799,6 +970,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     syncStandInKeyImages,
     moneroFileWaiting,
     saveMoneroFile,
+    accounts,
+    signOnThisDevice,
+    hot,
+    keepHot: async (record: HotRecord) => {
+      /* Written before the state moves, so a keychain that refuses leaves the
+       * app agreeing with the keychain. The other order gives a wallet that
+       * shows a funded account until it is relaunched, which is the worst
+       * possible time to find out nothing was saved. */
+      await saveHot(spendingStorage, record);
+      setHot(record);
+    },
+    forgetHotKeys: async () => {
+      await forgetHot(spendingStorage);
+      setHot(null);
+    },
+
     /* The demo pairing runs the stand-in's export through the same
      * acceptance path a scanned one takes, so the button exercises the real
      * checks rather than flipping a flag. */

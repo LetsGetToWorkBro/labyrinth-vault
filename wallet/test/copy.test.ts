@@ -84,20 +84,51 @@ describe('the copy the app shows', () => {
 
 describe('a wallet with no chain behind it says so, everywhere it shows a number', () => {
   /* The claim the store metadata makes and the App Store listing repeats. It
-   * has to be true on screen, and it has to stay true when a node is set and
-   * the fixture stops being what is shown.
+   * has to be true on screen, and it has to stay true as the app grows keys of
+   * its own.
    *
-   * Three states and three different sentences: fixture data, a node whose
-   * last answer did not arrive, and a live one. A wallet that showed nothing
-   * in the middle case would be presenting yesterday's balance as today's. */
+   * Two states and two different sentences now, where there were three. The
+   * one that went is fixture data, which was never a state of the chain but a
+   * state of this app's own honesty. What is left: a node whose last answer
+   * did not arrive, and a live one. A wallet that showed nothing in the first
+   * case would be presenting yesterday's balance as today's. */
 
   const home = readFileSync('src/screens/Home.tsx', 'utf8');
   const nodes = readFileSync('src/screens/Nodes.tsx', 'utf8');
   const watcher = readFileSync('src/core/watcher.ts', 'utf8');
 
-  it('labels fixture data and offers the way out of it', () => {
-    expect(home).toMatch(/DEMO DATA/);
-    expect(home).toMatch(/SET A NODE/);
+  it('shows no number at all rather than a fixture behind a label', () => {
+    /* This asserted the opposite until the accounts list existed: a chip
+     * reading DEMO DATA over a home screen rendered from `core/demo.ts`. The
+     * audit's finding was that the label loses to the balance, every time, and
+     * a screenshot of the two is indistinguishable from a screenshot of money.
+     *
+     * So the fixture is gone from the running app and the empty state is a
+     * sentence. The assertions are inverted deliberately: the strings that
+     * used to be required are now forbidden. */
+    const accounts = readFileSync('src/core/accounts.ts', 'utf8');
+    expect(accounts).toMatch(/No accounts yet/);
+    expect(home).toMatch(/NOTHING_WATCHED/);
+    expect(home).toMatch(/watchingNothing\(accounts\)/);
+
+    const code = codeOnly(home);
+    expect(code, 'the fixture chip is back').not.toMatch(/DEMO DATA/);
+    expect(code, 'a home screen may not read a demo flag off the snapshot').not.toMatch(
+      /snapshot\.demo/,
+    );
+  });
+
+  it('never lets a fixture reach the running app through the store', () => {
+    /* The other half, and the one that matters more: the chip could go while
+     * the fixture stayed, which would be worse than before. The store must
+     * build a `NodeWatcher` unconditionally, and no screen may read a `demo`
+     * flag that no longer exists. */
+    const store = codeOnly(readFileSync('src/state/store.tsx', 'utf8'));
+    expect(store, 'the demo watcher is back in the running app').not.toMatch(/DemoWatcher/);
+    expect(store).toMatch(/new NodeWatcher\(nodes, accountKey/);
+
+    const chain = readFileSync('src/core/chain.ts', 'utf8');
+    expect(chain, 'ChainSnapshot has a demo flag again').not.toMatch(/demo: boolean/);
   });
 
   it('labels a snapshot that did not come back', () => {

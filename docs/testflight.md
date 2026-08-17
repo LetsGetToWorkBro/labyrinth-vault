@@ -518,6 +518,78 @@ in.
   the same screen plus a PAY FROM THIS WALLET lever. **Do not send anything**;
   this is a reading test, and the order can be abandoned.
 
+- **Accounts.** The list that replaced "is this app paired". On a phone with
+  nothing set up, expect no balance anywhere: no zeroes, no fixture, a sentence
+  saying no accounts yet and two ways out of it. **A large $0.00 would be the
+  defect**, because it reads as money that has gone rather than as a wallet
+  nobody has set up, and those two need to look completely different.
+
+  Then pair a vault and make a wallet on the phone, so both kinds are on screen
+  at once. Expect two rows: the vault first, saying SIGNS ON YOUR VAULT, and the
+  phone saying SIGNS ON THIS PHONE. **That difference is the test.** A phone
+  holding a seed for one wallet must never present the vault's account as
+  something it can sign for, and these two lines are where a person sees that.
+
+- **Signing on the phone.** Only possible once a wallet made here holds coins,
+  so this comes after the restore test and after funding it. Compose a payment
+  from the account that signs here and read the review screen: it must say the
+  keys are on this phone and the button must say SIGN ON THIS PHONE, not SEND
+  TO VAULT. Expect a Face ID prompt, then the ordinary READY screen with the
+  transaction checked and not yet broadcast.
+
+  **The test that matters is the negative one.** With a vault paired as well,
+  compose a payment from the *vault's* account on the same phone. The review
+  screen must say the transaction is not signed and offer SEND TO VAULT. A
+  phone holding a seed for one wallet must never offer to sign for the other,
+  and if SIGN ON THIS PHONE ever appears there, stop and report it: that is the
+  airgap failing, and it is the most serious defect this app could have.
+
+  **Watch for:** a second Face ID prompt for one payment, or none at all. Also
+  cancel the prompt deliberately and expect a sentence saying nothing was
+  signed and the payment is still there, rather than a dead screen.
+
+- **Recovery words.** SECURITY, then MAKE A WALLET. This is the companion
+  holding a spending seed of its own, so read the screen before touching
+  anything: it should say the words are the only copy not on the phone, and it
+  should warn against screenshotting them, which the vault's equivalent does
+  not need to say. Expect 25 Monero words and 12 Bitcoin words, numbered,
+  concealed as rows of dashes until you hold HOLD TO REVEAL, and concealed
+  again the moment you lift your finger.
+
+  **Try to finish without revealing them.** I HAVE WRITTEN THEM DOWN should be
+  dead until the words have actually been on screen. That is the one rule this
+  screen exists to enforce, and a build where the button works immediately is a
+  build that can store a seed nobody has written down.
+
+  **Watch for:** a word you can select, or a Copy item appearing on a long
+  press. Neither should be possible. Also watch the count: 25 and 12. A grid
+  rendering 24 is the same defect test 3 watches for on the vault, and it is
+  silent until somebody needs the backup.
+
+- **Restore from words.** This is the second test in this plan where a failure
+  costs money rather than time, and it is the other direction of test 12.
+
+  Write down the words from the step above, forget the wallet, and type them
+  back in on SECURITY, then RESTORE FROM WORDS. One field, no picker asking
+  which chain: it should work that out from the count. Expect the same Monero
+  address you saw before.
+
+  **Then do the part that actually proves something.** Type those same 25 words
+  into Feather or Cake and check the address matches. Our own software agreeing
+  with itself is not evidence; another implementation reaching the same address
+  is. Do the same for the 12 Bitcoin words in any BIP84 wallet.
+
+  **Watch for:** a phrase with one word deliberately mistyped being accepted, or
+  quietly corrected. It must fail, and the refusal should name the count it
+  found. Paste 24 words and expect a sentence saying it cannot tell whether that
+  is a Bitcoin phrase or a Monero phrase missing one, because that is genuinely
+  ambiguous and guessing sends somebody to check the wrong list.
+
+  **Watch for, hardest:** restoring a Monero phrase onto a phone that already
+  holds a Bitcoin one must leave the Bitcoin one alone. The screen says so
+  before you tap. If the Bitcoin wallet is gone afterward, that is a wipe
+  wearing the word restore, and it is the worst bug this screen could have.
+
 **Swap and its status screen are deliberately out of scope here.** They talk to
 third-party exchanges over the network, which is a different trust question
 from anything else in this document, and mixing it into an airgap test plan

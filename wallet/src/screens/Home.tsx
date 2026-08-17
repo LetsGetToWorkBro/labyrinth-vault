@@ -40,6 +40,7 @@ import { ActivityIcon, AssetsIcon, ReceiveIcon, ScanIcon, SendIcon, VaultIcon, S
 import { assetColor, color, space } from '../design/tokens';
 import { fiatCents, formatFiat, hasPrice } from '../core/units';
 import { useStore } from '../state/store';
+import { NOTHING_WATCHED, watchingNothing } from '../core/accounts';
 import type { Nav } from '../nav/routes';
 
 /* The gutter is 24 either side, so the readout column is whatever is left.
@@ -48,7 +49,7 @@ import type { Nav } from '../nav/routes';
 const COLUMN = Dimensions.get('window').width - space.gutter * 2;
 
 export function HomeScreen({ navigation }: Nav<'Home'>) {
-  const { snapshot, vault, now, setAsset } = useStore();
+  const { snapshot, vault, now, setAsset, accounts } = useStore();
   const bitcoin = snapshot.assets.BTC;
   const monero = snapshot.assets.XMR;
 
@@ -67,6 +68,23 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
 
   const recent = snapshot.transactions.slice(0, 3);
 
+  /*
+   * A wallet watching nothing gets its own screen rather than a dimmed
+   * version of this one.
+   *
+   * The alternative, which this replaces, was to render the whole home screen
+   * against a fixture and put a chip on it reading DEMO DATA. That is the
+   * finding: a warning label over a balance loses to the balance every time,
+   * and a screenshot of it is indistinguishable from a screenshot of money.
+   *
+   * An early return rather than conditionals threaded through the hero,
+   * because the two states have nothing in common below the wordmark. One is
+   * about a number and the other is about there being no number yet.
+   */
+  if (watchingNothing(accounts)) {
+    return <NothingYet navigation={navigation} vault={vault} now={now} />;
+  }
+
   return (
     <Screen>
       <StatusBar style="light" />
@@ -78,15 +96,11 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <Wordmark />
             <View style={{ flex: 1 }} />
-            {/* Three states, three different things to say. Fixture data, a
-                node whose last answer did not arrive, and a live one. A wallet
-                that showed nothing in the middle case would be presenting an
-                old balance as a current one. */}
-            {snapshot.demo ? (
-              <Press onPress={() => navigation.navigate('Nodes')}>
-                <Chip tone={color.warn}>DEMO DATA · SET A NODE</Chip>
-              </Press>
-            ) : snapshot.stale ? (
+            {/* Two states now, where there used to be three. The one that
+                went is DEMO DATA, which sat over a stranger's balance and
+                asked a chip to do the work a number was undoing. A wallet
+                watching nothing says so below, in a sentence, instead. */}
+            {snapshot.stale && !watchingNothing(accounts) ? (
               <Press onPress={() => navigation.navigate('Nodes')}>
                 <Chip tone={color.warn}>NOT UP TO DATE</Chip>
               </Press>
@@ -94,7 +108,7 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
           </View>
 
           <Gap size={space.snug} />
-          <VaultStatus vault={vault} now={now} onPress={() => navigation.navigate('Vault')} />
+          <VaultStatus vault={vault} now={now} onPress={() => navigation.navigate('Accounts')} />
         </View>
 
         <Rule />
@@ -281,11 +295,15 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
               glyph={<AssetsIcon tone={color.ash} />}
               onPress={() => navigation.navigate('Asset', { asset: 'BTC' })}
             />
+            {/* ACCOUNTS rather than VAULT. The vault is one row in that list
+                now, and a rail button named after one kind of account was the
+                last place in the interface still treating it as the mode the
+                app is in. */}
             <Cell
-              label="VAULT"
+              label="ACCOUNTS"
               tone={color.ash}
               glyph={<VaultIcon tone={color.ash} />}
-              onPress={() => navigation.navigate('Vault')}
+              onPress={() => navigation.navigate('Accounts')}
             />
           </ActionRow>
 
@@ -294,6 +312,79 @@ export function HomeScreen({ navigation }: Nav<'Home'>) {
             <View style={{ paddingVertical: space.step }}>
               <Label tone={color.slate}>SECURITY · HOW THIS WALLET IS ARRANGED</Label>
             </View>
+          </Press>
+        </View>
+      </ScrollView>
+    </Screen>
+  );
+}
+
+/**
+ * The screen for a wallet that is not watching anything.
+ *
+ * It says the state, names both ways out of it, and shows nothing that could
+ * be mistaken for a balance. No zeroes: a large `$0.00` reads as "your money
+ * is gone" rather than as "nothing has been set up", and the two need to look
+ * completely different because one of them is an emergency.
+ */
+function NothingYet({
+  navigation,
+  vault,
+  now,
+}: {
+  navigation: Nav<'Home'>['navigation'];
+  vault: ReturnType<typeof useStore>['vault'];
+  now: number;
+}) {
+  return (
+    <Screen>
+      <StatusBar style="light" />
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: space.chapter }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={{ paddingHorizontal: space.gutter, paddingTop: space.snug }}>
+          <Wordmark />
+          <Gap size={space.snug} />
+          <VaultStatus vault={vault} now={now} onPress={() => navigation.navigate('Accounts')} />
+        </View>
+
+        <Rule />
+
+        <View style={{ paddingHorizontal: space.gutter, paddingTop: space.chapter }}>
+          <Label>NOTHING WATCHED</Label>
+          <Gap size={space.step} />
+          <Body>{NOTHING_WATCHED}</Body>
+
+          <Gap size={space.section} />
+          <ActionRow>
+            <Cell
+              label="PAIR A VAULT"
+              glyph={<VaultIcon size={22} tone={color.bone} />}
+              onPress={() => navigation.navigate('Pair')}
+            />
+            <Cell
+              label="ON THIS PHONE"
+              glyph={<AssetsIcon size={22} tone={color.bone} />}
+              onPress={() => navigation.navigate('CreateWallet')}
+            />
+          </ActionRow>
+
+          <Gap size={space.gap} />
+          <Small tone={color.dim}>
+            Already have a phrase? Restore it from SECURITY. A wallet on this phone signs with
+            Face ID and is meant for smaller amounts; a vault signs on a device with no network
+            on it.
+          </Small>
+
+          <Gap size={space.section} />
+          <Rule />
+          <Gap size={space.gap} />
+          <Press onPress={() => navigation.navigate('Nodes')}>
+            <Small tone={color.slate}>
+              No node is set either. Balances arrive from a node you choose, and this wallet
+              picks one for nobody.
+            </Small>
           </Press>
         </View>
       </ScrollView>

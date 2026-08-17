@@ -77,6 +77,8 @@ export function Gap({ size = space.gap }: { size?: number }) {
 export function Press({
   children,
   onPress,
+  onPressIn,
+  onPressOut,
   disabled,
   style,
   weight = 'light',
@@ -84,6 +86,17 @@ export function Press({
 }: {
   children: ReactNode;
     onPress?: (() => void) | undefined;
+  /**
+   * For the one interaction that is about the holding rather than the tap.
+   *
+   * Hold-to-reveal on the recovery screen: the words are on the glass while a
+   * finger is down and gone when it lifts, so the press *is* the control and
+   * `onPress` never fires meaningfully. Routed through here rather than around
+   * it, because a second pressable in the codebase is how an application ends
+   * up with two vocabularies of touch.
+   */
+    onPressIn?: (() => void) | undefined;
+    onPressOut?: (() => void) | undefined;
     disabled?: boolean | undefined;
     style?: StyleProp<ViewStyle> | undefined;
     weight?: 'light' | 'medium' | 'none' | undefined;
@@ -100,9 +113,11 @@ export function Press({
       disabled={disabled}
       onPressIn={() => {
         pressed.value = withSpring(1, motion.quick);
+        onPressIn?.();
       }}
       onPressOut={() => {
         pressed.value = withSpring(0, motion.quick);
+        onPressOut?.();
       }}
       onPress={() => {
         if (weight !== 'none') tap(weight);

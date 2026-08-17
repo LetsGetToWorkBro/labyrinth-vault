@@ -306,7 +306,6 @@ export class DemoWatcher implements Watcher {
       centsPerUnit: CENTS,
       at: now,
       stale: true,
-      demo: true,
     };
   }
 

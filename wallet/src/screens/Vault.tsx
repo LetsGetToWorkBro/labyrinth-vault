@@ -42,7 +42,7 @@ import type { Nav } from '../nav/routes';
 
 export function VaultScreen({ navigation }: Nav<'Vault'>) {
   const store = useStore();
-  const { vault, now, snapshot } = store;
+  const { vault, now } = store;
   const paired = vault.state !== 'unpaired';
   const [syncNote, setSyncNote] = useState<string | null>(null);
 
@@ -112,36 +112,38 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
                 <Small tone={color.slate}>Nothing scanned yet. Set a Monero node first.</Small>
               )}
               <Gap size={8} />
-              {snapshot.demo ? null : (
+              {/* Offered whenever a vault is paired, which the branch above
+                  already establishes. This used to be hidden while the app was
+                  showing fixture data, a gate that stopped meaning what it
+                  said the moment the fixture went: the screens behind these
+                  levers say for themselves when nothing has been scanned yet,
+                  which is the better place for that sentence anyway. */}
+              <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
+              <Gap size={space.snug} />
+              {/* Read only, and labelled so. This hands the vault a file
+                  another Monero wallet wrote so it can say what is in it;
+                  no signature comes back, because a wallet2 file is the
+                  sending wallet describing itself and a signature has to
+                  be over what the vault re-derived. The screen says the
+                  same thing at more length. */}
+              <Action label="SHOW A MONERO FILE (READ ONLY)" quiet onPress={() => navigation.navigate('MoneroFile')} />
+              <Gap size={space.snug} />
+              {/* The stand-in's lever renders only where the stand-in can
+                  act. In a release build the signer behind this is
+                  compiled out, and a control whose only possible answer
+                  is "this does not exist here" is chrome pretending to be
+                  a feature. Same gate, same reasoning, as the stand-in
+                  vault controls on the send flow. */}
+              {DEMO ? (
                 <>
-                  <Action label="SHOW OUTPUTS TO VAULT" quiet onPress={() => navigation.navigate('KeyImages')} />
+                  <Action
+                    label="SYNC WITH THE STAND-IN (DEMO)"
+                    quiet
+                    onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
+                  />
                   <Gap size={space.snug} />
-                  {/* Read only, and labelled so. This hands the vault a file
-                      another Monero wallet wrote so it can say what is in it;
-                      no signature comes back, because a wallet2 file is the
-                      sending wallet describing itself and a signature has to
-                      be over what the vault re-derived. The screen says the
-                      same thing at more length. */}
-                  <Action label="SHOW A MONERO FILE (READ ONLY)" quiet onPress={() => navigation.navigate('MoneroFile')} />
-                  <Gap size={space.snug} />
-                  {/* The stand-in's lever renders only where the stand-in can
-                      act. In a release build the signer behind this is
-                      compiled out, and a control whose only possible answer
-                      is "this does not exist here" is chrome pretending to be
-                      a feature. Same gate, same reasoning, as the stand-in
-                      vault controls on the send flow. */}
-                  {DEMO ? (
-                    <>
-                      <Action
-                        label="SYNC WITH THE STAND-IN (DEMO)"
-                        quiet
-                        onPress={() => setSyncNote(store.syncStandInKeyImages().note)}
-                      />
-                      <Gap size={space.snug} />
-                    </>
-                  ) : null}
                 </>
-              )}
+              ) : null}
               {syncNote ? (
                 <>
                   <Small tone={color.slate}>{syncNote}</Small>
@@ -175,15 +177,11 @@ export function VaultScreen({ navigation }: Nav<'Vault'>) {
           <SectionHead>WHAT EACH HALF DOES</SectionHead>
           <Halves />
 
-          {snapshot.demo ? (
-            <>
-              <Gap size={space.gap} />
-              <Small tone={color.dim}>
-                This build has no vault to pair with. The state above is a fixture, and the send flow signs
-                for itself with a published test key so the screens after the handoff can be walked.
-              </Small>
-            </>
-          ) : null}
+          {/* The note that used to live here described the fixture: "the state
+              above is a fixture, and the send flow signs for itself with a
+              published test key". There is no fixture any more. What is left of
+              that idea is the stand-in signer, which is gated on DEMO and says
+              so at its own control. */}
         </View>
         <Gap size={space.chapter} />
       </ScrollView>
@@ -314,7 +312,7 @@ function Step({ number, title, body }: { number: string; title: string; body: st
 // ---------------------------------------------------------- security center
 
 export function SecurityScreen({ navigation }: Nav<'Security'>) {
-  const { vault, now } = useStore();
+  const { vault, now, hot } = useStore();
 
   return (
     <Screen>
@@ -324,9 +322,36 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
         <Gap size={space.gap} />
 
         <View style={{ paddingHorizontal: space.gutter }}>
-          <Statement label="PRIVATE KEYS" value="VAULT ONLY" tone={color.good}>
-            No key, seed phrase or signature has ever been generated on this phone. There is no screen in
-            this application that imports one, and no field that would accept one.
+          {/* Two different true statements, and which one is shown is read
+              from what is actually stored rather than from what this app used
+              to be. Until there was a key store, this screen said no key had
+              ever been generated on this phone, full stop. That sentence was
+              the product, and it is now conditional: it is still true of a
+              wallet that only watches a vault, and false the moment somebody
+              makes a hot wallet. A security screen that kept printing the
+              stronger claim would be the worst copy in the application. */}
+          {hot === null ? (
+            <Statement label="PRIVATE KEYS" value="VAULT ONLY" tone={color.good}>
+              No key or seed phrase is stored on this phone. It watches accounts that are signed
+              for on a device with no network on it, and that is the whole design.
+            </Statement>
+          ) : (
+            <Statement label="PRIVATE KEYS" value="SOME ON THIS PHONE" tone={color.warn}>
+              This phone holds a spending seed for one wallet, in the keychain, under the device
+              passcode, and asks for Face ID before every signature. That is protection by the
+              device rather than by something you know, and it is a real reduction against the
+              vault. Anything worth more than this phone belongs on the other half.
+            </Statement>
+          )}
+
+          <Statement
+            label="ACCOUNTS PAIRED FROM A VAULT"
+            value="WATCH-ONLY, ALWAYS"
+            tone={color.good}
+          >
+            Unchanged by any of the above, and unchangeable. An account paired from a vault cannot
+            be signed for on this device even while a seed for a different wallet is sitting in this
+            phone's keychain. The two are unrelated wallets and this half refuses to confuse them.
           </Statement>
 
           <Statement label="THIS WALLET" value="WATCH AND BROADCAST" tone={color.bone}>
@@ -356,6 +381,32 @@ export function SecurityScreen({ navigation }: Nav<'Security'>) {
             the destination and the fee precisely so that a compromised wallet cannot pay somebody else
             quietly, but nothing in either half substitutes for reading that screen.
           </Notice>
+
+          <Gap size={space.section} />
+          <SectionHead>KEYS ON THIS PHONE</SectionHead>
+          <Gap size={space.step} />
+          {hot === null ? (
+            <>
+              <Small tone={color.dim}>
+                A wallet this phone can spend from, for the amounts that are not worth a walk to
+                the vault. The words go on paper before anything is stored.
+              </Small>
+              <Gap size={space.step} />
+              <Action label="MAKE A WALLET" quiet onPress={() => navigation.navigate('CreateWallet')} />
+              <Gap size={space.snug} />
+              <Action label="RESTORE FROM WORDS" quiet onPress={() => navigation.navigate('Restore')} />
+            </>
+          ) : (
+            <>
+              <Small tone={color.dim}>
+                The words that restore this wallet are the only backup of it that exists.
+              </Small>
+              <Gap size={space.step} />
+              <Action label="SHOW THE RECOVERY WORDS" quiet onPress={() => navigation.navigate('Backup')} />
+              <Gap size={space.snug} />
+              <Action label="RESTORE ANOTHER CHAIN" quiet onPress={() => navigation.navigate('Restore')} />
+            </>
+          )}
 
           <Gap size={space.section} />
           <Action label="THE VAULT" quiet onPress={() => navigation.navigate('Vault')} />

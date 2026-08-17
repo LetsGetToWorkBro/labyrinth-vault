@@ -182,3 +182,76 @@ describe('the journey glyph', () => {
     expect(journeyReached(stuck)).toBe(0);
   });
 });
+
+describe('signing on this device, instead of walking to a vault', () => {
+  /* The hot path. It adds one step between `review` and a signature, and the
+   * thing worth holding is that it adds no second route into `ready`: what it
+   * produces goes through `verifySigned` exactly as a signature returning over
+   * a camera does. */
+
+  const reviewed = (): SessionState => {
+    const composed = reduce(reduce(START, { type: 'recipient', value: 'bc1q', source: 'typed' }), {
+      type: 'amount',
+      value: '0.01',
+    });
+    return reduce(composed, { type: 'prepared', draft, at: 1 });
+  };
+
+  it('reaches the signing step only from review, and only when it may', () => {
+    expect(reduce(reviewed(), { type: 'sign-here', signsHere: true, at: 2 }).step).toBe('signing');
+    expect(reduce(START, { type: 'sign-here', signsHere: true, at: 2 }).step).toBe('compose');
+  });
+
+  it('refuses a vault account, in the transition table rather than in a button', () => {
+    /* The airgap. There is no state a "sign it here anyway" control could lead
+     * to, which is the same shape as `mismatch` being terminal. */
+    const state = reduce(reviewed(), { type: 'sign-here', signsHere: false, at: 2 });
+    expect(state.step).toBe('review');
+    expect(canBroadcast(state)).toBe(false);
+  });
+
+  it('still needs a verified signature to become broadcastable', () => {
+    const signing = reduce(reviewed(), { type: 'sign-here', signsHere: true, at: 2 });
+    const bad = reduce(signing, {
+      type: 'returned',
+      verified: mismatched,
+      at: 3,
+    });
+    expect(bad.step).toBe('mismatch');
+    expect(canBroadcast(bad)).toBe(false);
+  });
+
+  it('becomes ready on a signature that verifies, by the same route as the camera', () => {
+    const signing = reduce(reviewed(), { type: 'sign-here', signsHere: true, at: 2 });
+    const good = reduce(signing, { type: 'returned', verified: matched, at: 3 });
+    expect(good.step).toBe('ready');
+    expect(canBroadcast(good)).toBe(true);
+  });
+
+  it('goes back to review, so a refused Face ID is not a dead end', () => {
+    const signing = reduce(reviewed(), { type: 'sign-here', signsHere: true, at: 2 });
+    expect(reduce(signing, { type: 'back' }).step).toBe('review');
+  });
+
+  it('never lets the local path skip the check, from any step', () => {
+    /* The property, searched rather than asserted on one path: no sequence of
+     * events reaches a broadcastable state without a verified signature. */
+    const events: SessionEvent[] = [
+      { type: 'sign-here', signsHere: true, at: 1 },
+      { type: 'sign-here', signsHere: false, at: 1 },
+      { type: 'broadcast', at: 1 },
+      { type: 'handed-over', at: 1 },
+      { type: 'read-back', at: 1 },
+      { type: 'back' },
+    ];
+    let state = reviewed();
+    for (const first of events) {
+      for (const second of events) {
+        const reached = reduce(reduce(state, first), second);
+        expect(canBroadcast(reached), `${first.type} then ${second.type} broadcast`).toBe(false);
+      }
+    }
+    state = reduce(state, { type: 'sign-here', signsHere: true, at: 2 });
+    expect(canBroadcast(state)).toBe(false);
+  });
+});
