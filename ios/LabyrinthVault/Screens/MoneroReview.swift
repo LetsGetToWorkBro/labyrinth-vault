@@ -431,13 +431,6 @@ struct XmrApproveView: View {
     @State private var attested: Set<String> = []
     private let required = ["THE DESTINATION", "THE AMOUNT", "THE FEE", "THE CHANGE"]
 
-    private var toLine: String {
-        let payees = tx.paid
-        if payees.count == 1 { return "…" + payees[0].address.suffix(10) }
-        if payees.isEmpty { return "SELF" }
-        return "\(payees.count) RECIPIENTS"
-    }
-
     var body: some View {
         Screen {
             VStack(spacing: 0) {
@@ -452,7 +445,7 @@ struct XmrApproveView: View {
                         }
 
                         FieldRow(label: "AMOUNT", value: "\(tx.payingFormatted) XMR").padding(.top, 22)
-                        FieldRow(label: "TO", value: toLine)
+                        FieldRow(label: "TO", value: tx.approvalDestination)
                         FieldRow(label: "FEE", value: "\(tx.feeFormatted) XMR")
                         FieldRow(label: "SET DIGEST", value: String(reviewedDigest.prefix(16)).uppercased())
 

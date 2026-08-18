@@ -102,7 +102,7 @@ in Xcode produces an app that correctly refuses to launch.
 against the Swift project's signature and this repository's pinned digest,
 neither skippable. It is worth the couple of minutes on any container where
 you touch `ios/`, because with a toolchain that step compiles the
-platform-free model, runs its 67 Swift tests, and parses every Apple-only
+platform-free model, runs its 91 Swift tests, and parses every Apple-only
 file for syntax. Without one it is silent, which is the shape of check that
 stops being a check.
 
@@ -132,9 +132,23 @@ that reaching for an unmodeled member throws rather than yielding `undefined`.
 `Vault.swift` and every screen are on its `exclude:` list because they import
 SwiftUI. They are parsed for syntax and type-checked by nobody until Xcode
 opens. Three Mac-only build errors reached `main` through a green suite. Two
-specific holes now have guards; the general one needs a Mac in CI. This is now
-the only layer of either app where nothing runs the interface: the companion's
+specific holes now have guards; the general one needs a Mac in CI. This is the
+only layer of either app where nothing runs the interface: the companion's
 screens are mounted, the vault's are not.
+
+**The move that shrinks it is moving decisions out of the views.** Anything on
+`Package.swift`'s `sources:` list compiles on Linux and is tested on every
+push, and because `ios/project.yml` sets `SWIFT_VERSION: "5.9"` and
+`Package.swift` is `swift-tools-version: 5.9`, the two builds agree about the
+language: compiling there is real evidence about compiling in Xcode.
+`RestoreEntry` is the worked example, and `TxSummary.approvalDestination` is
+the argument for doing more of it: it was four branches inside a SwiftUI view,
+on the last screen before a signature, and moving it surfaced a case that
+printed "1 RECIPIENTS" where a person was attesting to a destination.
+
+The shape worth hunting is a chain of `if`s ending in a fallback, where a case
+can be missed. An exhaustive `switch` over an enum is already checked by the
+compiler and moving one buys nothing.
 
 The same shape of gap at other layers is listed under "Still true, still
 unverified" in `docs/handoff.md`: no daemon has accepted a broadcast, no

@@ -293,16 +293,72 @@ specific things to expect on the first build:
   against `PhraseFocus`. `moveTo` clears one when setting the other. If SwiftUI
   disagrees about a `FocusState` binding's type here, this is where.
 - `PhraseField` uses `TextField(_:text:axis:)` with `lineLimit(2...6)`, which
-  is iOS 16 and up. Check the deployment target.
+  is iOS 16 and up. The deployment target is 17.0, checked, so this is fine;
+  it is listed because it is the kind of thing worth knowing was checked.
 - `Vault.sealAndOpen` is a `nonisolated` instance method called from a
   detached task, and it hops back with `await MainActor.run` exactly where
   `beginCreate` did before the extraction. It took a progress closure at
-  first, which is the shape Swift 6's concurrency checking has the most
-  opinions about; the closure is gone for that reason and this is still the
-  most likely place in the change to need an adjustment.
+  first, which is the shape strict concurrency has the most opinions about,
+  and the closure is gone for that reason.
+
+  One correction to an earlier draft of this list, which said to expect a
+  Swift 6 concurrency complaint here. Both builds are Swift 5 language mode:
+  `ios/project.yml` sets `SWIFT_VERSION: "5.9"` for both targets and
+  `Package.swift` is `swift-tools-version: 5.9`. So the toolchain in CI and
+  the toolchain in Xcode agree about the rules, strict concurrency is not on,
+  and **anything in `LabyrinthVaultCore` that compiles on Linux is real
+  evidence it compiles in Xcode.** What that says nothing about is the
+  SwiftUI-only files, which is the whole point of the exclude list.
 
 And nothing has run: no vault has been restored on a device, which is the only
 place the whole path exists at once.
+
+### 7. Moving the vault's decisions where a compiler can see them
+
+Not a feature: a method, and the first two applications of it.
+
+Every screen in `ios/LabyrinthVault/Screens/` imports SwiftUI, so all 4,555
+lines of them are parsed for syntax and type-checked by nobody until Xcode
+opens. That is the last layer of either app where nothing runs the interface,
+and the companion's answer (mount the screens) is not available here.
+
+The answer that is available: move the decisions into `Package.swift`'s
+`sources:` list, where they compile on Linux and are tested on every push. Two
+facts make this worth more than it sounds. `ios/project.yml` sets
+`SWIFT_VERSION: "5.9"` and `Package.swift` is `swift-tools-version: 5.9`, so
+both builds are Swift 5 language mode and compiling on Linux is real evidence
+about compiling in Xcode. And a decision that has moved has tests, which a
+decision inside a `body` never will.
+
+`TxSummary.approvalDestination` is the first one and it paid for the exercise.
+It was `toLine` inside `ApproveView`: four branches deciding what a person
+reads next to TO at the moment they attest "THE DESTINATION". The chain was
+
+    if payees.count == 1, let address = payees[0].address { …tail }
+    if payees.isEmpty { "SELF" }
+    "\(payees.count) RECIPIENTS"
+
+so a single payee whose address does not decode falls past the first branch and
+prints **"1 RECIPIENTS"**. Ungrammatical, and worse than ungrammatical: it
+reads like an ordinary payment to one person on the last screen before a
+signature. It is reachable exactly once, because `psbt.ts` makes an unreadable
+output fatal when it carries money and merely notes it when it carries none, so
+the shape is a transaction whose only non-change output is a data carrier. It
+says `NOBODY · DATA OUTPUT` now.
+
+`MoneroSummary.approvalDestination` is the twin, moved for the same reason and
+with the same tests. It did **not** have the bug, and why is the useful part:
+`MoneroOutput.address` is not optional, so there is no shape where the
+single-payee branch is skipped. The test that says so is there anyway, because
+what makes it unreachable is a type and a type can change.
+
+**The shape worth hunting is a chain of `if`s ending in a fallback.** An
+exhaustive `switch` over an enum is already checked by the compiler, and
+`Signed.swift`, `Export.swift` and `KeyImages.swift` are all that shape, so
+moving them would be churn. A sweep for two-or-more-`if` bodies across the
+screens and `Vault.swift` returns three functions; the two `toLine`s were two
+of them, and `Scanner.feedNext` and `Unlock.attempt` are procedures rather than
+decisions.
 
 ## Three things this session learned the hard way
 

@@ -311,9 +311,10 @@ enum PhraseFocus { case bitcoin, monero }
 /// typed. A corrected phrase fails its checksum, and the person is looking at
 /// words that read correctly.
 ///
-/// `.textContentType(.none)` keeps the keychain from offering to fill or save
-/// this, and `.spellChecking` off keeps the red underlines off twenty-five
-/// perfectly good words.
+/// `.textContentType(nil)` keeps the keychain from offering to fill or save
+/// this. Written as `nil` rather than `.none`: `UITextContentType` is a struct
+/// with no `none` member, so `.none` resolves to `Optional.none` and means the
+/// same thing, by a route that reads like a case somebody looked up.
 struct PhraseField: View {
     let label: String
     let hint: String?
@@ -334,7 +335,7 @@ struct PhraseField: View {
                 .tint(Ink.paper)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .textContentType(.none)
+                .textContentType(nil)
                 .keyboardType(.asciiCapable)
                 .focused(focus, equals: equals)
                 .submitLabel(submitLabel)

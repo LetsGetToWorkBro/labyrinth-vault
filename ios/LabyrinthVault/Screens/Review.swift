@@ -433,17 +433,6 @@ struct ApproveView: View {
     @State private var attested: Set<String> = []
     private let required = ["THE DESTINATION", "THE AMOUNT", "THE FEE", "THE CHANGE"]
 
-    /// A one-line answer to "to whom": the single payee's tail, or a count when
-    /// there is more than one and no single tail can stand for all of them.
-    private var toLine: String {
-        let payees = tx.payees
-        if payees.count == 1, let address = payees[0].address {
-            return "…" + address.suffix(10)
-        }
-        if payees.isEmpty { return "SELF" }
-        return "\(payees.count) RECIPIENTS"
-    }
-
     var body: some View {
         Screen {
             VStack(spacing: 0) {
@@ -458,7 +447,7 @@ struct ApproveView: View {
                         }
 
                         FieldRow(label: "AMOUNT", value: "\(tx.leaving) \(tx.asset.rawValue)").padding(.top, 22)
-                        FieldRow(label: "TO", value: toLine)
+                        FieldRow(label: "TO", value: tx.approvalDestination)
                         FieldRow(label: "FEE", value: "\(tx.fee ?? "0") \(tx.asset.rawValue)")
                         FieldRow(label: "SUMMARY DIGEST", value: reviewedDigest)
 

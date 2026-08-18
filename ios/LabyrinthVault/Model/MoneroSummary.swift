@@ -60,4 +60,29 @@ extension MoneroSummary {
     /// by the engine; the screen says so rather than re-checking what the
     /// summary cannot carry.
     var returning: [MoneroOutput] { outputs.filter(\.change) }
+
+    /// The one line the approval screen puts next to TO.
+    ///
+    /// The Monero twin of `TxSummary.approvalDestination`, here for the same
+    /// reason: it was four branches inside `XmrApproveView`, on the last
+    /// screen before a signature, and that file imports SwiftUI so nothing
+    /// type-checks it. This one compiles and is tested on every push.
+    ///
+    /// One difference from the Bitcoin side, and it is why that one had a bug
+    /// and this one did not: `MoneroOutput.address` is not optional. There is
+    /// no shape here where the single-payee branch is skipped and the count
+    /// answers instead, so "1 RECIPIENTS" was never reachable. The test that
+    /// says so is here anyway, because the thing that made it unreachable is
+    /// a type, and a type can change.
+    ///
+    /// `paid` already drops change *and* dummy outputs. A Monero transaction
+    /// carries a zero-value decoy output to itself when it would otherwise
+    /// have one output, and counting that as somebody being paid would put
+    /// "2 RECIPIENTS" in front of a person paying one.
+    var approvalDestination: String {
+        let payees = paid
+        if payees.isEmpty { return "SELF" }
+        if payees.count > 1 { return "\(payees.count) RECIPIENTS" }
+        return "…" + payees[0].address.suffix(10)
+    }
 }

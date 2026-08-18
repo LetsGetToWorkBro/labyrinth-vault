@@ -94,4 +94,43 @@ struct TxSummary: Equatable, Decodable {
     var paysSeveral: Bool { payees.count > 1 }
     /// True when any output has no address a person could read.
     var hasUnreadableOutput: Bool { outputs.contains { $0.address == nil } }
+
+    /// The one line the approval screen puts next to TO.
+    ///
+    /// ## Why this is here and not on the screen
+    ///
+    /// It was four branches inside `ApproveView`, on the last screen before a
+    /// signature, deciding what a person reads when they attest "THE
+    /// DESTINATION". `ApproveView` imports SwiftUI, so it is parsed for syntax
+    /// and type-checked by nobody; this file compiles and is tested on every
+    /// push. Text on the signing path is not decoration.
+    ///
+    /// ## What it says, and the case that was wrong
+    ///
+    /// A single readable payee shows its tail, which is what the screens
+    /// before this one showed in full. Several payees show a count, because no
+    /// single tail can stand for all of them and pretending otherwise is how
+    /// money leaves to an address nobody saw.
+    ///
+    /// The case that was wrong is a single payee with no readable address. The
+    /// old branch fell through to the count and printed "1 RECIPIENTS": both
+    /// ungrammatical and, worse, a sentence that reads like an ordinary
+    /// payment to one person. It is reachable exactly once: `psbt.ts` makes an
+    /// unreadable output *fatal* when it carries money, so approval is out of
+    /// reach for those, and leaves it merely noted when it carries none. So
+    /// the reachable shape is a transaction whose only non-change output is a
+    /// data carrier, which pays nobody and says so now.
+    var approvalDestination: String {
+        let payees = self.payees
+        if payees.isEmpty { return "SELF" }
+        if payees.count > 1 { return "\(payees.count) RECIPIENTS" }
+        guard let address = payees[0].address else {
+            /* No address and still approvable means no money: `psbt.ts`
+             * refuses the other case outright. Naming the data carrier is
+             * the honest line, and it is also the one that cannot be misread
+             * as somebody's wallet. */
+            return "NOBODY · DATA OUTPUT"
+        }
+        return "…" + address.suffix(10)
+    }
 }
